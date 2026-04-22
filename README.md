@@ -1,6 +1,6 @@
 # Hearthlight (Standalone Backend)
 
-![Hearthlight logo](docs/assets/hearthlight-logo.png)
+![Hearthlight logo](docs/assets/hearthlight.png)
 
 Real-time security backend for detecting and tracking people, bags, and related incidents from
 CCTV feeds in a screening environment.
@@ -42,6 +42,7 @@ More detail:
 - Security notes: `docs/security.md`
 - Testing guide: `docs/testing.md`
 - Deployment seeds/init assets: `deploy/README.md`
+- Project roadmap: `TODO.md`
 
 ## Current State of the Docs
 

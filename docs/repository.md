@@ -24,6 +24,12 @@ frontend/web control plane.
 - `frontend/src/components/MonitoringPage.js`: monitoring and model health
 - `webapp/routes/external_routes.py`: main control-plane API
 
+## Branding assets
+
+- Documentation logo: `docs/assets/hearthlight.png`
+- Dashboard favicon/app icon source: `frontend/public/hearthlight.png`
+- Product roadmap: `TODO.md`
+
 ## Startup layers
 
 There are two different startup layers on purpose:
