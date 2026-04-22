@@ -2,8 +2,8 @@
 
 ![Hearthlight logo](docs/assets/hearthlight.png)
 
-Real-time security backend for detecting and tracking people, bags, and related incidents from
-CCTV feeds in a screening environment.
+Real-time anomaly-detection backend for analyzing CCTV feeds, identifying unusual activity, and
+supporting incident workflows in screening environments.
 
 ## Repository Overview
 
