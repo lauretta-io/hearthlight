@@ -1,9 +1,7 @@
-# Hearthlight (Standalone Backend)
-
+# Hearthlight
 ![Hearthlight logo](docs/assets/hearthlight.png)
-
 Real-time anomaly-detection backend for analyzing CCTV feeds, identifying unusual activity, and
-supporting incident workflows in screening environments.
+supporting incident workflows.
 
 ## Repository Overview
 
@@ -56,7 +54,6 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
   inference
 - A populated runtime config at `shared/configs/config.yaml`
 - `.env` at the repository root
-- `foia.env` only if you plan to run the optional FOIA profile
 
 Minimum practical local tooling:
 
@@ -77,8 +74,6 @@ POSTGRES_PORT=5432
 RABBITMQ_HOST=rabbitmq
 RABBITMQ_EXCHANGE=test
 ```
-
-Create `foia.env` only if you plan to run the optional FOIA profile:
 
 ```env
 POSTGRES_USER=postgres
