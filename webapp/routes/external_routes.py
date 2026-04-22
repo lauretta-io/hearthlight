@@ -32,6 +32,7 @@ from ...shared.models.APIModels import (
     AlgorithmEntityFeedItem,
     AlgorithmFeed,
     AssetReference as APIAssetReference,
+    AnomalyPromptSettings,
     AnomalyEvent as APIAnomalyEvent,
     AlgorithmIncidentFeedItem,
     Camera,
@@ -138,6 +139,28 @@ MAX_UPLOAD_BYTES = int(os.environ.get("SOURCE_UPLOAD_MAX_BYTES", str(512 * 1024 
 SOURCE_PROBE_TIMEOUT_MS = max(
     250, int(os.environ.get("SOURCE_PROBE_TIMEOUT_MS", "5000"))
 )
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+def resolve_project_path(path_like: str | Path) -> Path:
+    path = Path(path_like)
+    if path.is_absolute():
+        return path
+    return (PROJECT_ROOT / path).resolve()
+
+
+ANOMALY_TEXT_PROMPT_PATH = Path(
+    resolve_project_path(
+        os.environ.get("ANOMALY_TEXT_PROMPT_PATH", "shared/prompts/prompt_v2.yaml")
+    )
+)
+ANOMALY_TYPE_PROMPT_PATH = Path(
+    resolve_project_path(
+        os.environ.get("ANOMALY_TYPE_PROMPT_PATH", "shared/prompts/anomaly_list.yaml")
+    )
+)
+STANDARD_ANOMALY_TEXT_PROMPT_PATH = resolve_project_path("shared/prompts/prompt_v2.yaml")
+STANDARD_ANOMALY_TYPE_PROMPT_PATH = resolve_project_path("shared/prompts/anomaly_list.yaml")
 MODULE_RESTART_DELAY_SEC = float(os.environ.get("MODULE_RESTART_DELAY_SEC", "1.0"))
 REQUIRE_GPU_FOR_START = os.environ.get("WEBAPP_REQUIRE_GPU", "false").lower() in {
     "1",
@@ -843,7 +866,8 @@ def build_input_source_response(
         detector_model_key=source_row.detector_model_key,
         tracker_model_key=source_row.tracker_model_key,
         reid_model_key=source_row.reid_model_key,
-        anomaly_model_key=source_row.anomaly_model_key,
+        anomaly_stage_1_model_key=source_row.anomaly_stage_1_model_key,
+        anomaly_stage_2_model_key=source_row.anomaly_stage_2_model_key,
         state=derive_source_state(
             source_row,
             recording,
@@ -1044,7 +1068,8 @@ def replace_sources(db: Session, sources: list[InputSource]):
         row.detector_model_key = source.detector_model_key
         row.tracker_model_key = source.tracker_model_key
         row.reid_model_key = source.reid_model_key
-        row.anomaly_model_key = source.anomaly_model_key
+        row.anomaly_stage_1_model_key = source.anomaly_stage_1_model_key
+        row.anomaly_stage_2_model_key = source.anomaly_stage_2_model_key
         row.last_error = None
         row.is_deleted = False
         row.deleted_at = None
@@ -1086,9 +1111,66 @@ def append_source(db: Session, source: InputSource):
         detector_model_key=source.detector_model_key,
         tracker_model_key=source.tracker_model_key,
         reid_model_key=source.reid_model_key,
-        anomaly_model_key=source.anomaly_model_key,
+        anomaly_stage_1_model_key=source.anomaly_stage_1_model_key,
+        anomaly_stage_2_model_key=source.anomaly_stage_2_model_key,
     )
     return upsert_sources_and_build_response(db, [*existing_sources, new_source])
+
+
+def _load_yaml_text(path: Path) -> str:
+    if not path.exists():
+        raise HTTPException(status_code=404, detail=f"prompt file not found at {path}")
+    return path.read_text()
+
+
+def _validate_prompt_yaml_payload(payload: AnomalyPromptSettings):
+    try:
+        prompt_cfg = OmegaConf.to_container(
+            OmegaConf.create(payload.text_prompt_yaml),
+            resolve=True,
+        )
+        anomaly_type_cfg = OmegaConf.to_container(
+            OmegaConf.create(payload.anomaly_type_yaml),
+            resolve=True,
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="invalid anomaly prompt yaml") from exc
+
+    if not isinstance(prompt_cfg, dict) or not str(prompt_cfg.get("template", "")).strip():
+        raise HTTPException(status_code=400, detail="text prompt yaml must include a non-empty template")
+    if not isinstance(anomaly_type_cfg, dict):
+        raise HTTPException(status_code=400, detail="anomaly type yaml must be a mapping")
+
+    object_list = anomaly_type_cfg.get("anomaly_object_list")
+    activity_list = anomaly_type_cfg.get("anomaly_activity_list")
+    if not isinstance(object_list, list) or not isinstance(activity_list, list):
+        raise HTTPException(
+            status_code=400,
+            detail="anomaly type yaml must include anomaly_object_list and anomaly_activity_list arrays",
+        )
+
+
+def read_anomaly_prompt_settings() -> AnomalyPromptSettings:
+    return AnomalyPromptSettings(
+        text_prompt_yaml=_load_yaml_text(ANOMALY_TEXT_PROMPT_PATH),
+        anomaly_type_yaml=_load_yaml_text(ANOMALY_TYPE_PROMPT_PATH),
+    )
+
+
+def read_standard_anomaly_prompt_settings() -> AnomalyPromptSettings:
+    return AnomalyPromptSettings(
+        text_prompt_yaml=_load_yaml_text(STANDARD_ANOMALY_TEXT_PROMPT_PATH),
+        anomaly_type_yaml=_load_yaml_text(STANDARD_ANOMALY_TYPE_PROMPT_PATH),
+    )
+
+
+def write_anomaly_prompt_settings(payload: AnomalyPromptSettings) -> AnomalyPromptSettings:
+    _validate_prompt_yaml_payload(payload)
+    ANOMALY_TEXT_PROMPT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ANOMALY_TYPE_PROMPT_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ANOMALY_TEXT_PROMPT_PATH.write_text(payload.text_prompt_yaml.rstrip() + "\n")
+    ANOMALY_TYPE_PROMPT_PATH.write_text(payload.anomaly_type_yaml.rstrip() + "\n")
+    return read_anomaly_prompt_settings()
 
 
 async def store_uploaded_source_video(
@@ -1221,7 +1303,8 @@ def build_runtime_cfg(db: Session, run_identifier: str):
         defaults=defaults,
     )
     runtime_cfg.model_registry = registry_bundle.get("models", {})
-    runtime_cfg.anomaly_models = registry_bundle.get("models", {}).get("anomaly", {})
+    runtime_cfg.anomaly_stage_1_models = registry_bundle.get("models", {}).get("anomaly_stage_1", {})
+    runtime_cfg.anomaly_stage_2_models = registry_bundle.get("models", {}).get("anomaly_stage_2", {})
     return runtime_cfg, source_rows
 
 
@@ -1550,6 +1633,7 @@ def build_anomaly_feed_items(
                 event_id=anomaly_row.event_key,
                 run_id=run_row.run_identifier,
                 source_id=anomaly_row.source_template_id,
+                camera_id=anomaly_row.camera_id,
                 frame_id=anomaly_row.frame_id,
                 event_time=anomaly_row.created_at.isoformat()
                 if anomaly_row.created_at is not None
@@ -1560,6 +1644,8 @@ def build_anomaly_feed_items(
                     visible_activities,
                 ),
                 model_key=anomaly_row.model_key,
+                stage_1_model_key=anomaly_row.stage_1_model_key,
+                stage_2_model_key=anomaly_row.stage_2_model_key,
                 category=anomaly_row.category,
                 score=anomaly_row.score,
                 reasoning=anomaly_row.reasoning,
@@ -1768,10 +1854,26 @@ def add_settings_input_source(source: InputSource, db: Session = Depends(get_db)
     return append_source(db, source)
 
 
+@external_router.get("/settings/anomaly-prompts", response_model=AnomalyPromptSettings)
+def get_anomaly_prompt_settings():
+    return read_anomaly_prompt_settings()
+
+
+@external_router.get("/settings/anomaly-prompts/standard", response_model=AnomalyPromptSettings)
+def get_standard_anomaly_prompt_settings():
+    return read_standard_anomaly_prompt_settings()
+
+
+@external_router.put("/settings/anomaly-prompts", response_model=AnomalyPromptSettings)
+def update_anomaly_prompt_settings(payload: AnomalyPromptSettings):
+    return write_anomaly_prompt_settings(payload)
+
+
 @external_router.get("/sources/{source_id}/preview.mjpeg")
 async def get_source_preview(source_id: int, request: Request, db: Session = Depends(get_db)):
     source_row = get_source_row_by_id(source_id, db)
     preview_candidates = resolve_preview_source_candidates(source_row, db)
+    prefer_live_edge_seek = source_row.kind != SOURCE_KIND_VIDEO_UPLOAD
 
     capture = None
     preview_source = None
@@ -1791,7 +1893,7 @@ async def get_source_preview(source_id: int, request: Request, db: Session = Dep
         raise HTTPException(status_code=503, detail="source preview could not be opened")
 
     def seek_to_live_edge():
-        if not is_local_file:
+        if not is_local_file or not prefer_live_edge_seek:
             return
         try:
             frame_count = int(capture.get(cv2.CAP_PROP_FRAME_COUNT))

@@ -22,7 +22,13 @@ SOURCE_KINDS = {
     SOURCE_KIND_VIDEO_UPLOAD,
     SOURCE_KIND_WEBCAM,
 }
-MODEL_BINDING_STAGES = {"detector", "tracker", "reid", "anomaly"}
+MODEL_BINDING_STAGES = {
+    "detector",
+    "tracker",
+    "reid",
+    "anomaly_stage_1",
+    "anomaly_stage_2",
+}
 
 
 def normalize_source_kind(value: str) -> str:
@@ -84,7 +90,8 @@ class InputSource(BaseModel):
     detector_model_key: str | None = None
     tracker_model_key: str | None = None
     reid_model_key: str | None = None
-    anomaly_model_key: str | None = None
+    anomaly_stage_1_model_key: str | None = None
+    anomaly_stage_2_model_key: str | None = None
     state: str = "idle"
     frames_processed: int | None = None
     total_frames: int | None = None
@@ -181,7 +188,9 @@ class ModelBinding(BaseModel):
     def validate_stage(cls, value):
         normalized = validate_non_empty_string(value, "stage").lower()
         if normalized not in MODEL_BINDING_STAGES:
-            raise ValueError("stage must be one of detector, tracker, reid, anomaly")
+            raise ValueError(
+                "stage must be one of detector, tracker, reid, anomaly_stage_1, anomaly_stage_2"
+            )
         return normalized
 
 
@@ -207,9 +216,12 @@ class AnomalyEvent(BaseModel):
     event_id: str
     run_id: str | None = None
     source_id: int | None = None
+    camera_id: int | None = None
     frame_id: int | None = None
     event_time: str | None = None
     title: str | None = None
+    stage_1_model_key: str | None = None
+    stage_2_model_key: str | None = None
     model_key: str
     category: str
     score: float
@@ -269,6 +281,15 @@ class ResourceSnapshot(BaseModel):
 
 class UploadResponse(BaseModel):
     upload: UploadedMedia
+
+
+class AnomalyPromptSettings(BaseModel):
+    text_prompt_yaml: str
+    anomaly_type_yaml: str
+
+    @field_validator("text_prompt_yaml", "anomaly_type_yaml")
+    def validate_yaml_payload(cls, value):
+        return validate_non_empty_string(value, "yaml")
 
 
 class FeedLocation(BaseModel):

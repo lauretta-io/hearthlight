@@ -766,7 +766,8 @@ class ModelRegistryTests(unittest.TestCase):
             detector_model_key="builtin_rtdetr",
             tracker_model_key="builtin_cmtrack",
             reid_model_key="builtin_reid",
-            anomaly_model_key="heuristic_presence",
+            anomaly_stage_1_model_key="heuristic_presence_stage_1",
+            anomaly_stage_2_model_key="prompt_rules_stage_2",
         )
         bundle["models"][MODEL_STAGE_TRACKER]["builtin_cmtrack"]["capabilities"] = {
             "tasks": ["PERSON"],
@@ -789,7 +790,8 @@ class ModelRegistryTests(unittest.TestCase):
             detector_model_key="builtin_rtdetr",
             tracker_model_key="builtin_cmtrack",
             reid_model_key="builtin_reid",
-            anomaly_model_key="heuristic_presence",
+            anomaly_stage_1_model_key="heuristic_presence_stage_1",
+            anomaly_stage_2_model_key="prompt_rules_stage_2",
         )
         bundle["models"][MODEL_STAGE_TRACKER]["builtin_cmtrack"]["capabilities"] = {
             "tasks": ["PERSON", "BAG"],
@@ -808,7 +810,8 @@ class ModelRegistryTests(unittest.TestCase):
             detector_model_key="builtin_rtdetr",
             tracker_model_key=None,
             reid_model_key="builtin_reid",
-            anomaly_model_key="heuristic_presence",
+            anomaly_stage_1_model_key="heuristic_presence_stage_1",
+            anomaly_stage_2_model_key="prompt_rules_stage_2",
         )
 
         binding_block = build_runtime_binding_block([source_row], bundle)

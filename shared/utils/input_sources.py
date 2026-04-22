@@ -68,7 +68,8 @@ def build_runtime_camera_entry(
         "detector_model_key": getattr(source_row, "detector_model_key", None),
         "tracker_model_key": getattr(source_row, "tracker_model_key", None),
         "reid_model_key": getattr(source_row, "reid_model_key", None),
-        "anomaly_model_key": getattr(source_row, "anomaly_model_key", None),
+        "anomaly_stage_1_model_key": getattr(source_row, "anomaly_stage_1_model_key", None),
+        "anomaly_stage_2_model_key": getattr(source_row, "anomaly_stage_2_model_key", None),
     }
 
 

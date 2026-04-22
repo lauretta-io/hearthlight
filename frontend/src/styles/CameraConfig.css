@@ -285,6 +285,20 @@
   color: #5f6b7a;
 }
 
+.endpoint-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 8px;
+  text-align: left;
+}
+
+.endpoint-info strong,
+.endpoint-info .muted-text {
+  width: 100%;
+  text-align: left;
+}
+
 .command-preview pre {
   margin: 10px 0 0;
   padding: 12px 14px;

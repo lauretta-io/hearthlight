@@ -15,9 +15,14 @@ const MODEL_STAGE_OPTIONS = [
   { stage: 'detector', label: 'Detector', field: 'detector_model_key' },
   { stage: 'tracker', label: 'Tracker', field: 'tracker_model_key' },
   { stage: 'reid', label: 'Person ReID', field: 'reid_model_key' },
-  { stage: 'anomaly', label: 'Anomaly', field: 'anomaly_model_key' },
+  { stage: 'anomaly_stage_1', label: 'Anomaly Stage 1', field: 'anomaly_stage_1_model_key' },
+  { stage: 'anomaly_stage_2', label: 'Anomaly Stage 2', field: 'anomaly_stage_2_model_key' },
 ];
 const TEMPLATE_OPTIONS = ['active', 'example', 'master_config', 'office_config'];
+const EMPTY_PROMPT_SETTINGS = {
+  text_prompt_yaml: '',
+  anomaly_type_yaml: '',
+};
 const SETTINGS_TABS = [
   { key: 'sources', label: 'Sources' },
   { key: 'run', label: 'Run' },
@@ -39,7 +44,8 @@ const createSourceDraft = (kind = 'camera_url') => ({
   detector_model_key: null,
   tracker_model_key: null,
   reid_model_key: null,
-  anomaly_model_key: null,
+  anomaly_stage_1_model_key: null,
+  anomaly_stage_2_model_key: null,
 });
 
 const hydrateSource = (source, fallbackIndex = 0) => ({
@@ -56,7 +62,8 @@ const hydrateSource = (source, fallbackIndex = 0) => ({
   detector_model_key: source.detector_model_key ?? null,
   tracker_model_key: source.tracker_model_key ?? null,
   reid_model_key: source.reid_model_key ?? null,
-  anomaly_model_key: source.anomaly_model_key ?? null,
+  anomaly_stage_1_model_key: source.anomaly_stage_1_model_key ?? null,
+  anomaly_stage_2_model_key: source.anomaly_stage_2_model_key ?? null,
 });
 
 const sanitizeSourcesForApi = (sources) =>
@@ -72,7 +79,8 @@ const sanitizeSourcesForApi = (sources) =>
     detector_model_key: source.detector_model_key || null,
     tracker_model_key: source.tracker_model_key || null,
     reid_model_key: source.reid_model_key || null,
-    anomaly_model_key: source.anomaly_model_key || null,
+    anomaly_stage_1_model_key: source.anomaly_stage_1_model_key || null,
+    anomaly_stage_2_model_key: source.anomaly_stage_2_model_key || null,
   }));
 
 const sourcePlaceholder = (kind) => {
@@ -120,11 +128,15 @@ const SettingsPage = () => {
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingBindings, setIsSavingBindings] = useState(false);
+  const [isSavingAnomalyPrompts, setIsSavingAnomalyPrompts] = useState(false);
   const [banner, setBanner] = useState(null);
   const [rowErrors, setRowErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [modelRegistrations, setModelRegistrations] = useState([]);
   const [defaultBindings, setDefaultBindings] = useState({});
+  const [anomalyTextPromptYaml, setAnomalyTextPromptYaml] = useState('');
+  const [anomalyTypeYaml, setAnomalyTypeYaml] = useState('');
+  const [standardPromptSettings, setStandardPromptSettings] = useState(EMPTY_PROMPT_SETTINGS);
   const [launchPlan, setLaunchPlan] = useState(() => {
     const saved = localStorage.getItem('settingsLaunchPlanDraft');
     if (!saved) {
@@ -186,6 +198,28 @@ const SettingsPage = () => {
             nextDefaults[binding.stage] = binding.model_key || '';
           });
         setDefaultBindings(nextDefaults);
+        try {
+          let standardPromptData = EMPTY_PROMPT_SETTINGS;
+          const standardPromptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts/standard`);
+          if (standardPromptResponse.ok) {
+            standardPromptData = await standardPromptResponse.json();
+            setStandardPromptSettings({
+              text_prompt_yaml: standardPromptData.text_prompt_yaml || '',
+              anomaly_type_yaml: standardPromptData.anomaly_type_yaml || '',
+            });
+          }
+          const promptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts`);
+          if (promptResponse.ok) {
+            const promptData = await promptResponse.json();
+            setAnomalyTextPromptYaml(promptData.text_prompt_yaml || '');
+            setAnomalyTypeYaml(promptData.anomaly_type_yaml || '');
+          } else {
+            setAnomalyTextPromptYaml(standardPromptData.text_prompt_yaml || '');
+            setAnomalyTypeYaml(standardPromptData.anomaly_type_yaml || '');
+          }
+        } catch {
+          // Keep model and source controls available even if prompt files are unavailable.
+        }
       } catch (error) {
         setBanner({ kind: 'error', text: error.message });
       }
@@ -308,6 +342,51 @@ const SettingsPage = () => {
     } finally {
       setIsSavingBindings(false);
     }
+  };
+
+  const saveAnomalyPrompts = async () => {
+    setIsSavingAnomalyPrompts(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/anomaly-prompts`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          text_prompt_yaml: anomalyTextPromptYaml,
+          anomaly_type_yaml: anomalyTypeYaml,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save anomaly prompts');
+      }
+      setAnomalyTextPromptYaml(data.text_prompt_yaml || '');
+      setAnomalyTypeYaml(data.anomaly_type_yaml || '');
+      setBanner({ kind: 'success', text: 'Anomaly prompts saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingAnomalyPrompts(false);
+    }
+  };
+
+  const loadStandardTextPrompt = () => {
+    if (!standardPromptSettings.text_prompt_yaml) {
+      setBanner({ kind: 'error', text: 'Standard text prompt is unavailable.' });
+      return;
+    }
+    setAnomalyTextPromptYaml(standardPromptSettings.text_prompt_yaml);
+    setBanner({ kind: 'success', text: 'Loaded standard text prompt.' });
+  };
+
+  const loadStandardAnomalyTypePrompt = () => {
+    if (!standardPromptSettings.anomaly_type_yaml) {
+      setBanner({ kind: 'error', text: 'Standard anomaly type prompt is unavailable.' });
+      return;
+    }
+    setAnomalyTypeYaml(standardPromptSettings.anomaly_type_yaml);
+    setBanner({ kind: 'success', text: 'Loaded standard anomaly type prompt.' });
   };
 
   const saveSources = async () => {
@@ -566,7 +645,7 @@ const SettingsPage = () => {
                     <div className="card-header">
                       <div>
                         <h3>Default Model Bindings</h3>
-                        <p>Set the default detector, tracker, ReID, and anomaly models for new runs.</p>
+                        <p>Set default detector, tracker, ReID, anomaly Stage 1, and anomaly Stage 2 models for new runs.</p>
                       </div>
                     </div>
                     <div className="model-binding-grid">
@@ -605,17 +684,71 @@ const SettingsPage = () => {
                   <div className="card">
                     <div className="card-header">
                       <div>
+                        <h3>Anomaly Prompt Settings</h3>
+                        <p>Edit the text template and anomaly type prompt lists used by Stage 2 anomaly enrichment.</p>
+                      </div>
+                    </div>
+                    <div className="model-binding-grid">
+                      <label>
+                        <span>Text Prompt YAML</span>
+                        <textarea
+                          value={anomalyTextPromptYaml}
+                          onChange={(event) => setAnomalyTextPromptYaml(event.target.value)}
+                          rows={10}
+                        />
+                      </label>
+                      <label>
+                        <span>Anomaly Type YAML</span>
+                        <textarea
+                          value={anomalyTypeYaml}
+                          onChange={(event) => setAnomalyTypeYaml(event.target.value)}
+                          rows={10}
+                        />
+                      </label>
+                    </div>
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={loadStandardTextPrompt}
+                        className="secondary-button"
+                        disabled={!standardPromptSettings.text_prompt_yaml}
+                      >
+                        Use Standard Text Prompt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={loadStandardAnomalyTypePrompt}
+                        className="secondary-button"
+                        disabled={!standardPromptSettings.anomaly_type_yaml}
+                      >
+                        Use Standard Anomaly Type Prompt
+                      </button>
+                      <button
+                        type="button"
+                        onClick={saveAnomalyPrompts}
+                        className="secondary-button"
+                        disabled={isSavingAnomalyPrompts}
+                      >
+                        {isSavingAnomalyPrompts ? 'Saving...' : 'Save Anomaly Prompts'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
                         <h3>Integration Endpoint</h3>
                         <p>Other systems can append a source directly.</p>
                       </div>
                     </div>
-                    <div className="empty-state">
+                    <div className="empty-state endpoint-info">
                       <strong>POST {`${BaseURL}/settings/input-sources`}</strong>
                       <div className="muted-text">
                         Send an `InputSource` JSON payload to add a camera stream, webcam, or uploaded video reference.
                       </div>
                       <div className="muted-text">GET {`${BaseURL}/models`}</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/model-bindings`}</div>
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/anomaly-prompts`}</div>
                     </div>
                   </div>
 
@@ -626,7 +759,7 @@ const SettingsPage = () => {
                         <p>Stage video before attaching it to a source.</p>
                       </div>
                     </div>
-                    <div className="empty-state">
+                    <div className="empty-state endpoint-info">
                       <strong>POST {`${BaseURL}/settings/input-sources/uploads`}</strong>
                       <div className="muted-text">
                         Upload multipart video and use the returned `upload.id` as `upload_id` when adding a `video_upload` source.

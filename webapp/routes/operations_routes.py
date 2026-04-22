@@ -721,7 +721,7 @@ def get_associated_entities_incident(incident: SQLModels.Incident, db: Session):
             )
             if crop is None and entity_card.crop is not None:
                 crop = entity_card.crop
-    elif incident.incident_type != IncidentType.UNATTENDED_BAG:
+    elif incident.incident_type not in {IncidentType.UNATTENDED_BAG, IncidentType.ANOMALY}:
         raise HTTPException(status_code=404, detail="associated persons not found")
     bag_mapping = (
         db.query(SQLModels.IncidentBagMapping).filter_by(incident_id=incident.id).all()

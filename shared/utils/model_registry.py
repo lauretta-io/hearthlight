@@ -12,12 +12,14 @@ from ..constants import Tasks
 MODEL_STAGE_DETECTOR = "detector"
 MODEL_STAGE_TRACKER = "tracker"
 MODEL_STAGE_REID = "reid"
-MODEL_STAGE_ANOMALY = "anomaly"
+MODEL_STAGE_ANOMALY_STAGE_1 = "anomaly_stage_1"
+MODEL_STAGE_ANOMALY_STAGE_2 = "anomaly_stage_2"
 MODEL_BINDING_STAGES = (
     MODEL_STAGE_DETECTOR,
     MODEL_STAGE_TRACKER,
     MODEL_STAGE_REID,
-    MODEL_STAGE_ANOMALY,
+    MODEL_STAGE_ANOMALY_STAGE_1,
+    MODEL_STAGE_ANOMALY_STAGE_2,
 )
 
 SHARED_ROOT = Path(__file__).resolve().parents[1]
@@ -29,14 +31,16 @@ REGISTRY_FILE_MAP = {
     MODEL_STAGE_DETECTOR: "detectors.yaml",
     MODEL_STAGE_TRACKER: "trackers.yaml",
     MODEL_STAGE_REID: "reid_models.yaml",
-    MODEL_STAGE_ANOMALY: "anomaly_models.yaml",
+    MODEL_STAGE_ANOMALY_STAGE_1: "anomaly_stage_1_models.yaml",
+    MODEL_STAGE_ANOMALY_STAGE_2: "anomaly_stage_2_models.yaml",
 }
 
 STAGE_FIELD_MAP = {
     MODEL_STAGE_DETECTOR: "detector_model_key",
     MODEL_STAGE_TRACKER: "tracker_model_key",
     MODEL_STAGE_REID: "reid_model_key",
-    MODEL_STAGE_ANOMALY: "anomaly_model_key",
+    MODEL_STAGE_ANOMALY_STAGE_1: "anomaly_stage_1_model_key",
+    MODEL_STAGE_ANOMALY_STAGE_2: "anomaly_stage_2_model_key",
 }
 
 LEGACY_TRACKER_NAME_MAP = {

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections import defaultdict, deque
+from collections import defaultdict
 import logging
 import queue
 from threading import Thread
@@ -8,17 +8,28 @@ import time
 
 from omegaconf import DictConfig
 
-from .adapters import build_adapter
+from .adapters import PromptCatalog, build_adapter
 from .output_threads import OutputThread
+from ..shared.constants import (
+    ANOMALY_EVAL_INTERVAL,
+    FPS_INTERVAL,
+    FRAME_UPDATE_INTERVAL,
+    ModuleNames,
+    QUEUE_TIMEOUT,
+)
 from ..shared.database.database_worker import DatabaseWorker
-from ..shared.constants import FPS_INTERVAL, FRAME_UPDATE_INTERVAL, ModuleNames, QUEUE_TIMEOUT, ANOMALY_EVAL_INTERVAL
 from ..shared.models.DataModels import Status, StatusMessage
-from ..shared.rabbit_messenger import RoutingKey, StatusPublisher, get_anomaly_message_consumer
+from ..shared.rabbit_messenger import (
+    RoutingKey,
+    StatusPublisher,
+    get_anomaly_message_consumer,
+)
 from ..shared.slave import run_command_listener
 from ..shared.utils.backpressure import summarize_queue_backpressure
 from ..shared.utils.logger import set_run_logging
 from ..shared.utils.model_registry import (
-    MODEL_STAGE_ANOMALY,
+    MODEL_STAGE_ANOMALY_STAGE_1,
+    MODEL_STAGE_ANOMALY_STAGE_2,
     build_default_bindings,
     get_registration,
     load_registry_bundle,
@@ -41,45 +52,83 @@ class Anomaly(Thread):
             self.run_identifier = getattr(cfg, "run_id", None)
             if self.run_identifier:
                 DatabaseWorker.set_run_id(self.run_identifier)
+
             self.registry_bundle = load_registry_bundle()
             defaults = build_default_bindings(
                 self.registry_bundle,
                 runtime_model_bindings=getattr(cfg, "model_bindings", None),
             )
-            self.default_model_key = defaults.get(MODEL_STAGE_ANOMALY)
-            self.camera_source_ids = {}
-            self.camera_model_keys = {}
-            self.adapters = {}
-            self.track_frames = {}
-            self.track_time = {}
-            self.cam_last_eval = {}
-            self.eval_interval = None
+            self.default_stage_1_model_key = defaults.get(MODEL_STAGE_ANOMALY_STAGE_1)
+            self.default_stage_2_model_key = defaults.get(MODEL_STAGE_ANOMALY_STAGE_2)
+
+            if not self.default_stage_1_model_key or not self.default_stage_2_model_key:
+                raise ValueError("missing anomaly stage model defaults")
+
+            self.camera_source_ids: dict[int, int | None] = {}
+            self.camera_stage_one_model_keys: dict[int, str] = {}
+            self.camera_stage_two_model_keys: dict[int, str] = {}
+            self.camera_eval_interval: dict[int, float] = {}
+            self.track_time: dict[int, float] = {}
+            self.cam_last_eval: dict[int, float | None] = {}
+
+            self.stage_one_adapters = {}
+            self.stage_two_adapters = {}
+            self.prompt_catalog_by_stage_two_key: dict[str, PromptCatalog] = {}
+            self.frame_update_interval = float(
+                getattr(getattr(cfg, "anomaly", {}), "frame_update_interval", FRAME_UPDATE_INTERVAL)
+            )
+
             for cam_id, camera_cfg in cfg.input.cameras.items():
                 camera_dict = dict(camera_cfg)
                 source_id = camera_dict.get("source_template_id")
-                model_key = camera_dict.get("anomaly_model_key") or self.default_model_key
+                stage_1_model_key = (
+                    camera_dict.get("anomaly_stage_1_model_key") or self.default_stage_1_model_key
+                )
+                stage_2_model_key = (
+                    camera_dict.get("anomaly_stage_2_model_key") or self.default_stage_2_model_key
+                )
                 self.camera_source_ids[cam_id] = source_id
-                self.camera_model_keys[cam_id] = model_key
-                if model_key not in self.adapters:
-                    registration = get_registration(
-                        self.registry_bundle,
-                        MODEL_STAGE_ANOMALY,
-                        model_key,
-                    )
-                    if registration is None:
-                        raise ValueError(f"missing anomaly registration {model_key}")
-                    self.adapters[model_key] = build_adapter(registration)
-                    if self.eval_interval is None:
-                        self.eval_interval = registration.get("runtime", {}).get("eval_interval", ANOMALY_EVAL_INTERVAL)
-                self.track_frames[cam_id] = deque(maxlen=30) # track 1 frame per second for the last 30 seconds 
-                self.track_time[cam_id] = 0
+                self.camera_stage_one_model_keys[cam_id] = stage_1_model_key
+                self.camera_stage_two_model_keys[cam_id] = stage_2_model_key
+                self.track_time[cam_id] = 0.0
                 self.cam_last_eval[cam_id] = None
+
+                stage_1_registration = get_registration(
+                    self.registry_bundle,
+                    MODEL_STAGE_ANOMALY_STAGE_1,
+                    stage_1_model_key,
+                )
+                if stage_1_registration is None:
+                    raise ValueError(f"missing anomaly stage_1 registration {stage_1_model_key}")
+                if stage_1_model_key not in self.stage_one_adapters:
+                    self.stage_one_adapters[stage_1_model_key] = build_adapter(stage_1_registration)
+                self.camera_eval_interval[cam_id] = float(
+                    (stage_1_registration.get("runtime") or {}).get(
+                        "eval_interval",
+                        ANOMALY_EVAL_INTERVAL,
+                    )
+                )
+
+                stage_2_registration = get_registration(
+                    self.registry_bundle,
+                    MODEL_STAGE_ANOMALY_STAGE_2,
+                    stage_2_model_key,
+                )
+                if stage_2_registration is None:
+                    raise ValueError(f"missing anomaly stage_2 registration {stage_2_model_key}")
+                if stage_2_model_key not in self.stage_two_adapters:
+                    self.stage_two_adapters[stage_2_model_key] = build_adapter(stage_2_registration)
+                    runtime = stage_2_registration.get("runtime") or {}
+                    self.prompt_catalog_by_stage_two_key[stage_2_model_key] = PromptCatalog(
+                        runtime.get("prompt_yaml_path", "shared/prompts/prompt_v2.yaml"),
+                        runtime.get("anomaly_list_yaml_path", "shared/prompts/anomaly_list.yaml"),
+                    )
         except Exception:
             logger.exception("Failed to initialize", extra={"task": self.name})
             raise
 
     def run(self):
-        print("is this even running?")
+        logger.info("Starting", extra={"task": self.name})
         self.process = True
         self.consumer.start()
         self.output_thread.start()
@@ -112,20 +161,11 @@ class Anomaly(Thread):
             except queue.Empty:
                 continue
             timer.time("fetch")
-            frames = message.get(RoutingKey.FRAME_INFO)
-            if frames is None:
+            frame_message = message.get(RoutingKey.FRAME_INFO)
+            if frame_message is None:
                 continue
-            for frame_id, frame in frames:
-                cam_id = frame.cam_id
-                if frame.timestamp - self.track_time[cam_id] >= FRAME_UPDATE_INTERVAL:
-                    self.track_time[cam_id] = frame.timestamp
-                    self.track_frames[cam_id].append(frame.array)
+            frames = frame_message.frames
 
-                    if ((self.cam_last_eval[cam_id] is None and len(self.track_frames[cam_id]) >= self.eval_interval)
-                          or (frame.timestamp - self.cam_last_eval[cam_id] >= self.eval_interval)):
-                        adapter = self.adapters.get(self.camera_model_keys.get(cam_id, self.default_model_key))
-                        adapter.evaluate(self.track_frames[cam_id][-16:])
-                        self.cam_last_eval[cam_id] = frame.timestamp
             person_message = message.get(RoutingKey.PERSON)
             bag_message = message.get(RoutingKey.BAG)
             person_tracks_by_cam = defaultdict(list)
@@ -136,23 +176,45 @@ class Anomaly(Thread):
                 bag_tracks_by_cam[track.cam_id].append(track)
 
             events = []
-            for frame in frames.frames:
-                model_key = self.camera_model_keys.get(frame.cam_id, self.default_model_key)
-                source_id = self.camera_source_ids.get(frame.cam_id)
-                adapter = self.adapters[model_key]
-                events.extend(
-                    adapter.evaluate(
-                        model_key=model_key,
-                        source_id=source_id,
-                        frame_id=frame_id,
-                        timestamp=frame.timestamp,
-                        person_tracks=person_tracks_by_cam.get(frame.cam_id, []),
-                        bag_tracks=bag_tracks_by_cam.get(frame.cam_id, []),
-                        frame_save_path=getattr(frame, "save_path", None),
-                        run_id=self.run_identifier,
-                    )
+            for frame in frames:
+                cam_id = frame.cam_id
+                if cam_id not in self.camera_stage_one_model_keys:
+                    continue
+
+                if frame.timestamp - self.track_time[cam_id] < self.frame_update_interval:
+                    continue
+                self.track_time[cam_id] = frame.timestamp
+
+                eval_interval = self.camera_eval_interval.get(cam_id, ANOMALY_EVAL_INTERVAL)
+                last_eval = self.cam_last_eval.get(cam_id)
+                if last_eval is not None and frame.timestamp - last_eval < eval_interval:
+                    continue
+                self.cam_last_eval[cam_id] = frame.timestamp
+
+                stage_1_model_key = self.camera_stage_one_model_keys[cam_id]
+                stage_2_model_key = self.camera_stage_two_model_keys[cam_id]
+                stage_1_adapter = self.stage_one_adapters[stage_1_model_key]
+                stage_2_adapter = self.stage_two_adapters[stage_2_model_key]
+                prompt_catalog = self.prompt_catalog_by_stage_two_key[stage_2_model_key]
+                prompts = prompt_catalog.load()
+
+                stage_1_candidates = stage_1_adapter.evaluate(
+                    stage_1_model_key=stage_1_model_key,
+                    stage_2_model_key=stage_2_model_key,
+                    source_id=self.camera_source_ids.get(cam_id),
+                    camera_id=cam_id,
+                    frame_id=frame_id,
+                    timestamp=frame.timestamp,
+                    person_tracks=person_tracks_by_cam.get(cam_id, []),
+                    bag_tracks=bag_tracks_by_cam.get(cam_id, []),
+                    frame_save_path=getattr(frame, "save_path", None),
+                    run_id=self.run_identifier,
                 )
-            self.output_thread.queue.put((frame_id, events))
+                for candidate in stage_1_candidates:
+                    events.append(stage_2_adapter.build_event(candidate=candidate, prompts=prompts))
+
+            if events:
+                self.output_thread.queue.put((frame_id, events))
             timer.time("detect")
 
             current_time = time.time()
@@ -181,6 +243,7 @@ class Anomaly(Thread):
         self.output_thread.stop()
         self.consumer.join()
         self.output_thread.join()
+        logger.info("Stopped", extra={"task": self.name})
 
     def stop(self):
         self.process = False

@@ -6,11 +6,15 @@ from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
-from .routes.external_routes import external_router
+from .routes.external_routes import MAX_UPLOAD_BYTES, external_router
 from .routes.operations_routes import operations_router
 
 app = FastAPI()
 MAX_REQUEST_BYTES = int(os.environ.get("WEBAPP_MAX_REQUEST_BYTES", str(5 * 1024 * 1024)))
+UPLOAD_REQUEST_PATHS = {
+    "/sources/uploads",
+    "/settings/input-sources/uploads",
+}
 
 DEFAULT_ORIGINS = [
     "http://localhost:8080",
@@ -18,11 +22,13 @@ DEFAULT_ORIGINS = [
     "http://localhost:5500",
     "http://localhost:3000",
     "http://localhost:3001",
+    "http://localhost:3100",
     "http://127.0.0.1:8080",
     "http://127.0.0.1:8000",
     "http://127.0.0.1:5500",
     "http://127.0.0.1:3000",
     "http://127.0.0.1:3001",
+    "http://127.0.0.1:3100",
 ]
 
 
@@ -62,7 +68,10 @@ async def require_api_key(request: Request, call_next):
             request_size = int(content_length)
         except ValueError:
             return JSONResponse(status_code=400, content={"detail": "invalid content-length"})
-        if request_size > MAX_REQUEST_BYTES:
+        max_request_bytes = (
+            MAX_UPLOAD_BYTES if request.url.path in UPLOAD_REQUEST_PATHS else MAX_REQUEST_BYTES
+        )
+        if request_size > max_request_bytes:
             return JSONResponse(status_code=413, content={"detail": "request too large"})
     provided_key = request.headers.get("x-api-key")
     if API_KEY and not (provided_key and secrets.compare_digest(provided_key, API_KEY)):

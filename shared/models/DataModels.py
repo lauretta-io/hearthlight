@@ -252,7 +252,10 @@ class AnomalyEvent(BaseModel):
     event_id: str
     run_id: str | None = None
     source_id: int | None = None
+    camera_id: int | None = None
     frame_id: int | None = None
+    stage_1_model_key: str | None = None
+    stage_2_model_key: str | None = None
     title: str | None = None
     model_key: str
     category: str
@@ -294,7 +297,8 @@ class Camera(BaseModel):
     detector_model_key: str | None = None
     tracker_model_key: str | None = None
     reid_model_key: str | None = None
-    anomaly_model_key: str | None = None
+    anomaly_stage_1_model_key: str | None = None
+    anomaly_stage_2_model_key: str | None = None
 
     @model_validator(mode="after")
     def set_type(self) -> Self:

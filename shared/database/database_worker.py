@@ -11,7 +11,7 @@ from ..models import SQLModels
 from ..models.SQLModels import Base
 from ..models import DataModels
 from ..utils.backoff import with_exponential_backoff
-from ..constants import DetectorClasses, IncidentStatus
+from ..constants import DetectorClasses, IncidentStatus, IncidentType
 
 logger = logging.getLogger(__name__)
 SQLModel = TypeVar("SQLModel", bound=Base)
@@ -315,13 +315,26 @@ class DatabaseWorker:
         self.create(mapping)
 
     def create_anomaly_event(self, event: DataModels.AnomalyEvent):
+        existing = (
+            self.db.query(SQLModels.AnomalyEvent)
+            .filter_by(
+                run_id=DatabaseWorker.run_id,
+                event_key=event.event_id,
+                is_deleted=False,
+            )
+            .first()
+        )
+        if existing is not None:
+            return None
         anomaly_model = SQLModels.AnomalyEvent(
             run_id=DatabaseWorker.run_id,
             source_template_id=event.source_id,
-            camera_id=None,
+            camera_id=event.camera_id,
             frame_id=event.frame_id,
             event_key=event.event_id,
             model_key=event.model_key,
+            stage_1_model_key=event.stage_1_model_key,
+            stage_2_model_key=event.stage_2_model_key,
             category=event.category,
             title=event.title,
             score=event.score,
@@ -332,7 +345,19 @@ class DatabaseWorker:
                 [asset.model_dump() for asset in event.asset_references]
             ),
         )
-        self.create(anomaly_model)
+        return self.create(anomaly_model)
+
+    def create_incident_from_anomaly_event(self, event: DataModels.AnomalyEvent):
+        incident_model = SQLModels.Incident(
+            run_id=DatabaseWorker.run_id,
+            incident_type=IncidentType.ANOMALY,
+            status=IncidentStatus.UNCONFIRMED,
+            camera_id=event.camera_id,
+            zone_id=None,
+            timestamp=None,
+            updated_by="system",
+        )
+        self.create(incident_model)
 
     # Update Functions
 
@@ -451,7 +476,9 @@ class DatabaseWorker:
     def publish_anomaly_data(self, anomaly_events: list[DataModels.AnomalyEvent]):
         with self.SessionLocal() as self.db:
             for event in anomaly_events:
-                self.create_anomaly_event(event)
+                created_event = self.create_anomaly_event(event)
+                if created_event is not None:
+                    self.create_incident_from_anomaly_event(event)
 
     def check_for_resolutions(self, incidents: set | list):
         resolved_incidents = set()

@@ -73,7 +73,8 @@ def seed_input_sources() -> int:
                     detector_model_key=source.get("detector_model_key"),
                     tracker_model_key=source.get("tracker_model_key"),
                     reid_model_key=source.get("reid_model_key"),
-                    anomaly_model_key=source.get("anomaly_model_key"),
+                    anomaly_stage_1_model_key=source.get("anomaly_stage_1_model_key"),
+                    anomaly_stage_2_model_key=source.get("anomaly_stage_2_model_key"),
                 )
             )
         db.commit()

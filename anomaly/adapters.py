@@ -4,9 +4,16 @@ from collections import defaultdict
 from dataclasses import dataclass
 from importlib import import_module
 from importlib.util import find_spec
+import logging
+from pathlib import Path
+from typing import Any
+
+from omegaconf import OmegaConf
 
 from ..shared.models.DataModels import AnomalyEvent, AssetReference
-# from ..shared.model_zoo.anomaly_detectors import AnomalyDetector
+
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class AdapterState:
@@ -14,15 +21,83 @@ class AdapterState:
     last_empty_at: float | None = None
     last_event_at: float | None = None
 
-# class FlashbackAdapter:
-#     def __init__(self, registration: dict):
-#         cfg = registration.get("config")
-#         self.model = AnomalyDetector(cfg)
 
-#     def evaluate(self, frames, **kwargs):
-#         return self.model(frames)
+@dataclass
+class StageOneCandidate:
+    event_id: str
+    run_id: str | None
+    source_id: int | None
+    camera_id: int
+    frame_id: int
+    stage_1_model_key: str
+    stage_2_model_key: str
+    category: str
+    score: float
+    reasoning: str | None
+    visible_items: list[str]
+    visible_activities: list[str]
+    asset_references: list[AssetReference]
 
-class HeuristicPresenceAdapter:
+
+@dataclass
+class PromptBundle:
+    template: str
+    anomaly_object_list: list[str]
+    anomaly_activity_list: list[str]
+
+
+def _load_yaml(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    raw = OmegaConf.load(path)
+    if raw is None:
+        return {}
+    return OmegaConf.to_container(raw, resolve=True)  # type: ignore[return-value]
+
+
+class PromptCatalog:
+    def __init__(self, prompt_yaml_path: str, anomaly_list_yaml_path: str):
+        self.prompt_yaml_path = Path(prompt_yaml_path).expanduser().resolve()
+        self.anomaly_list_yaml_path = Path(anomaly_list_yaml_path).expanduser().resolve()
+        self._cache: PromptBundle | None = None
+        self._cache_signature: tuple[float | None, float | None] | None = None
+
+    def load(self) -> PromptBundle:
+        prompt_mtime = (
+            self.prompt_yaml_path.stat().st_mtime if self.prompt_yaml_path.exists() else None
+        )
+        anomaly_mtime = (
+            self.anomaly_list_yaml_path.stat().st_mtime
+            if self.anomaly_list_yaml_path.exists()
+            else None
+        )
+        signature = (prompt_mtime, anomaly_mtime)
+        if self._cache is not None and self._cache_signature == signature:
+            return self._cache
+
+        prompt_cfg = _load_yaml(self.prompt_yaml_path)
+        anomaly_cfg = _load_yaml(self.anomaly_list_yaml_path)
+        template = str(prompt_cfg.get("template") or "").strip()
+        object_list = [
+            str(item).strip()
+            for item in list(anomaly_cfg.get("anomaly_object_list") or [])
+            if str(item).strip()
+        ]
+        activity_list = [
+            str(item).strip()
+            for item in list(anomaly_cfg.get("anomaly_activity_list") or [])
+            if str(item).strip()
+        ]
+        self._cache = PromptBundle(
+            template=template,
+            anomaly_object_list=object_list,
+            anomaly_activity_list=activity_list,
+        )
+        self._cache_signature = signature
+        return self._cache
+
+
+class HeuristicPresenceStageOneAdapter:
     def __init__(self, registration: dict):
         runtime = registration.get("runtime") or {}
         self.quiet_period_seconds = float(runtime.get("quiet_period_seconds", 30.0))
@@ -33,15 +108,17 @@ class HeuristicPresenceAdapter:
     def evaluate(
         self,
         *,
-        model_key: str,
+        stage_1_model_key: str,
+        stage_2_model_key: str,
         source_id: int | None,
+        camera_id: int,
         frame_id: int,
         timestamp: float,
         person_tracks: list,
         bag_tracks: list,
         frame_save_path: str | None = None,
         run_id: str | None = None,
-    ) -> list[AnomalyEvent]:
+    ) -> list[StageOneCandidate]:
         track_count = len(person_tracks) + len(bag_tracks)
         state = self.state_by_source[source_id]
         if track_count <= 0:
@@ -67,7 +144,9 @@ class HeuristicPresenceAdapter:
             return []
 
         state.last_event_at = timestamp
-        category = "presence_resume" if resumed_after_quiet or first_activity else "sustained_activity"
+        category = (
+            "presence_resume" if resumed_after_quiet or first_activity else "sustained_activity"
+        )
         visible_items = []
         if person_tracks:
             visible_items.append("person")
@@ -85,12 +164,14 @@ class HeuristicPresenceAdapter:
                 )
             )
         return [
-            AnomalyEvent(
-                event_id=f"{model_key}:{source_id}:{frame_id}:{category}",
+            StageOneCandidate(
+                event_id=f"{stage_1_model_key}:{source_id}:{frame_id}:{category}",
                 run_id=run_id,
                 source_id=source_id,
+                camera_id=camera_id,
                 frame_id=frame_id,
-                model_key=model_key,
+                stage_1_model_key=stage_1_model_key,
+                stage_2_model_key=stage_2_model_key,
                 category=category,
                 score=score,
                 reasoning=f"Observed {track_count} tracked objects after inactivity window.",
@@ -101,7 +182,100 @@ class HeuristicPresenceAdapter:
         ]
 
 
-class VLMAnomalyDemoAdapter:
+def _select_best_prompt_match(
+    candidates: list[str],
+    prompt_terms: list[str],
+) -> str | None:
+    if not candidates or not prompt_terms:
+        return None
+    lowered_terms = [term.lower() for term in prompt_terms]
+    for candidate in candidates:
+        lowered_candidate = candidate.lower()
+        if lowered_candidate in lowered_terms:
+            return candidate
+        for term in prompt_terms:
+            lowered_term = term.lower()
+            if lowered_term in lowered_candidate or lowered_candidate in lowered_term:
+                return term
+    return None
+
+
+class PromptRulesStageTwoAdapter:
+    def __init__(self, registration: dict):
+        runtime = registration.get("runtime") or {}
+        self.default_category = str(runtime.get("default_category", "suspicious_activity"))
+
+    def build_event(
+        self,
+        *,
+        candidate: StageOneCandidate,
+        prompts: PromptBundle,
+    ) -> AnomalyEvent:
+        matched_activity = _select_best_prompt_match(
+            candidate.visible_activities,
+            prompts.anomaly_activity_list,
+        )
+        matched_item = _select_best_prompt_match(
+            candidate.visible_items,
+            prompts.anomaly_object_list,
+        )
+        category = matched_activity or matched_item or candidate.category or self.default_category
+        title_parts = [item for item in [matched_item, matched_activity] if item]
+        title = f"Anomaly found: {'; '.join(title_parts)}" if title_parts else category
+        prompt_hint = prompts.template.splitlines()[0].strip() if prompts.template else None
+        reasoning_parts = [candidate.reasoning or "Potential anomaly candidate detected."]
+        if prompt_hint:
+            reasoning_parts.append(f"Prompt focus: {prompt_hint}")
+        return AnomalyEvent(
+            event_id=candidate.event_id,
+            run_id=candidate.run_id,
+            source_id=candidate.source_id,
+            camera_id=candidate.camera_id,
+            frame_id=candidate.frame_id,
+            stage_1_model_key=candidate.stage_1_model_key,
+            stage_2_model_key=candidate.stage_2_model_key,
+            title=title,
+            model_key=candidate.stage_2_model_key,
+            category=category,
+            score=candidate.score,
+            reasoning=" ".join(reasoning_parts),
+            visible_items=candidate.visible_items,
+            visible_activities=candidate.visible_activities,
+            asset_references=candidate.asset_references,
+        )
+
+
+class PassThroughStageTwoAdapter:
+    def __init__(self, _registration: dict):
+        pass
+
+    def build_event(
+        self,
+        *,
+        candidate: StageOneCandidate,
+        prompts: PromptBundle,
+    ) -> AnomalyEvent:
+        del prompts
+        return AnomalyEvent(
+            event_id=candidate.event_id,
+            run_id=candidate.run_id,
+            source_id=candidate.source_id,
+            camera_id=candidate.camera_id,
+            frame_id=candidate.frame_id,
+            stage_1_model_key=candidate.stage_1_model_key,
+            stage_2_model_key=candidate.stage_2_model_key,
+            title=candidate.category,
+            model_key=candidate.stage_2_model_key,
+            category=candidate.category,
+            score=candidate.score,
+            reasoning=candidate.reasoning,
+            visible_items=candidate.visible_items,
+            visible_activities=candidate.visible_activities,
+            asset_references=candidate.asset_references,
+        )
+
+
+class VLMAnomalyDemoStageTwoAdapter(PassThroughStageTwoAdapter):
     def __init__(self, registration: dict):
         runtime = registration.get("runtime") or {}
         package_name = runtime.get("package", "vlm_anomaly_demo")
@@ -109,20 +283,28 @@ class VLMAnomalyDemoAdapter:
             raise RuntimeError(f"anomaly package {package_name} is unavailable")
         self.module = import_module(package_name)
 
-    def evaluate(self, **kwargs) -> list[AnomalyEvent]:
-        return []
+
+STAGE_1_ADAPTERS = {
+    "heuristic_presence_stage_1": HeuristicPresenceStageOneAdapter,
+}
 
 
-ADAPTERS = {
-    "heuristic_presence": HeuristicPresenceAdapter,
-    "vlm_anomaly_demo": VLMAnomalyDemoAdapter,
-    # "flashback": FlashbackAdapter,
+STAGE_2_ADAPTERS = {
+    "prompt_rules_stage_2": PromptRulesStageTwoAdapter,
+    "passthrough_stage_2": PassThroughStageTwoAdapter,
+    "vlm_anomaly_demo_stage_2": VLMAnomalyDemoStageTwoAdapter,
 }
 
 
 def build_adapter(registration: dict):
-    adapter_name = registration.get("adapter", "heuristic_presence")
-    adapter_cls = ADAPTERS.get(adapter_name)
+    stage = str(registration.get("stage") or "").strip()
+    adapter_name = registration.get("adapter")
+    if stage == "anomaly_stage_1":
+        adapter_cls = STAGE_1_ADAPTERS.get(adapter_name)
+    elif stage == "anomaly_stage_2":
+        adapter_cls = STAGE_2_ADAPTERS.get(adapter_name)
+    else:
+        raise ValueError(f"unknown anomaly stage {stage}")
     if adapter_cls is None:
         raise ValueError(f"unknown anomaly adapter {adapter_name}")
     return adapter_cls(registration)

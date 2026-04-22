@@ -3,7 +3,7 @@ import { BaseURL } from '../config';
 import '../styles/LivePage.css';
 
 const getPreviewUrl = (source) => {
-  if (!source.id || source.kind === 'video_upload') {
+  if (!source.id) {
     return null;
   }
   return `${BaseURL}/sources/${source.id}/preview.mjpeg`;
@@ -13,13 +13,20 @@ const getSupportMessage = (source, previewFailed) => {
   if (!source.id) {
     return 'This source is missing a stable identifier, so a preview stream cannot be requested.';
   }
-  if (source.kind === 'video_upload') {
-    return 'Uploaded files are available for run processing, not as live previews.';
-  }
   if (previewFailed) {
     return 'The backend preview stream could not be opened. Check that the source is reachable from the backend container.';
   }
   return null;
+};
+
+const getSourceDescription = (source) => {
+  if (source.kind === 'video_upload') {
+    return source.upload?.original_filename || 'uploaded video file';
+  }
+  if (source.kind === 'webcam') {
+    return source.source_value ?? 'host-local webcam';
+  }
+  return source.source_value ?? 'n/a';
 };
 
 const LivePage = () => {
@@ -59,12 +66,15 @@ const LivePage = () => {
     };
   }, []);
 
-  const liveSources = useMemo(
-    () => sources
-      .filter((source) => source.enabled && source.kind !== 'video_upload')
-      .slice(0, 2),
-    [sources],
-  );
+  const liveSources = useMemo(() => {
+    const enabledSources = sources.filter((source) => source.enabled);
+    const primaryLiveSources = enabledSources
+      .filter((source) => source.kind !== 'video_upload')
+      .slice(0, 2);
+    const uploadedVideoSources = enabledSources
+      .filter((source) => source.kind === 'video_upload');
+    return [...primaryLiveSources, ...uploadedVideoSources];
+  }, [sources]);
 
   return (
     <section className="live-page">
@@ -72,7 +82,7 @@ const LivePage = () => {
         <div>
           <h2>Live Video</h2>
           <p className="live-page__subtitle">
-            Preview the first two enabled live camera streams configured in Settings.
+            Preview the first two enabled live camera streams and all enabled uploaded videos configured in Settings.
           </p>
         </div>
         <div className="live-page__meta">
@@ -87,7 +97,7 @@ const LivePage = () => {
 
       {liveSources.length === 0 ? (
         <div className="live-page__empty">
-          No enabled camera streams are available yet. Add or enable live camera URLs in Settings.
+          No enabled live sources are available yet. Add or enable camera URLs, webcams, or uploaded videos in Settings.
         </div>
       ) : (
         <div className="live-page__grid">
@@ -118,17 +128,6 @@ const LivePage = () => {
                       className="live-card__media"
                       src={previewUrl}
                       alt={`${source.label} live stream`}
-                      onLoad={() => {
-                        setPreviewFailures((currentFailures) => {
-                          if (!currentFailures[source.id]) {
-                            return currentFailures;
-                          }
-                          return {
-                            ...currentFailures,
-                            [source.id]: false,
-                          };
-                        });
-                      }}
                       onError={() => {
                         setPreviewFailures((currentFailures) => ({
                           ...currentFailures,
@@ -149,7 +148,7 @@ const LivePage = () => {
 
                 <div className="live-card__details">
                   <span><strong>Tasks:</strong> {(source.tasks || []).join(', ') || 'n/a'}</span>
-                  <span><strong>Source:</strong> {source.source_value ?? 'host-local webcam'}</span>
+                  <span><strong>Source:</strong> {getSourceDescription(source)}</span>
                 </div>
               </article>
             );

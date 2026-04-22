@@ -31,11 +31,14 @@ beforeEach(() => {
     {
       id: 3,
       kind: 'video_upload',
-      label: 'Ignored Upload',
+      label: 'Uploaded Segment',
       tasks: ['PERSON'],
       enabled: true,
       order: 2,
       source_value: null,
+      upload: {
+        original_filename: 'segment-01.mp4',
+      },
     },
   ]));
 });
@@ -46,7 +49,7 @@ afterEach(() => {
   jest.clearAllMocks();
 });
 
-test('renders first two enabled live sources and shows fallback for unsupported streams', async () => {
+test('renders first two live sources and all uploaded video sources', async () => {
   let container;
   await act(async () => {
     ({ container } = render(<LivePage />));
@@ -55,14 +58,16 @@ test('renders first two enabled live sources and shows fallback for unsupported 
   expect(await screen.findByText('Live Video')).toBeTruthy();
   expect(await screen.findByText('North Gate')).toBeTruthy();
   expect(await screen.findByText('South Gate')).toBeTruthy();
+  expect(await screen.findByText('Uploaded Segment')).toBeTruthy();
 
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(expect.stringMatching(/\/settings\/input-sources$/));
   });
 
-  expect(screen.queryByText('Ignored Upload')).toBeNull();
   expect(container.querySelector('img[src="http://localhost:8000/sources/1/preview.mjpeg"]')).toBeTruthy();
   expect(container.querySelector('img[src="http://localhost:8000/sources/2/preview.mjpeg"]')).toBeTruthy();
+  expect(container.querySelector('img[src="http://localhost:8000/sources/3/preview.mjpeg"]')).toBeTruthy();
+  expect(screen.getByText('segment-01.mp4')).toBeTruthy();
 });
 
 test('shows backend preview failure message when preview image load fails', async () => {

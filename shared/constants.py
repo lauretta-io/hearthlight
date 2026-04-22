@@ -62,11 +62,13 @@ class IncidentType:
     GUN = "GUN"
     UNATTENDED_BAG = "UNATTENDED BAG"
     LOITERING = "LOITERING"
+    ANOMALY = "ANOMALY"
 
     INCIDENT_TYPE_ABBR = {
         GUN: "GUN",
         UNATTENDED_BAG: "UB",
         LOITERING: "LT",
+        ANOMALY: "AN",
     }
 
     @classmethod
@@ -78,6 +80,7 @@ IncidentTypeStr = Literal[
     "GUN",
     "UNATTENDED BAG",
     "LOITERING",
+    "ANOMALY",
 ]
 
 

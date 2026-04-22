@@ -132,7 +132,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         <div className="monitor-summary-card">
           <span className="monitor-label">Model Registry</span>
           <strong>{modelRegistrations.length} models</strong>
-          <span className="monitor-muted">Detector, tracker, ReID, and anomaly stages</span>
+          <span className="monitor-muted">Detector, tracker, ReID, anomaly Stage 1, and anomaly Stage 2</span>
         </div>
       </div>
 
@@ -315,7 +315,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                   <strong>{source.label}</strong>
                   <div className="monitor-muted">{source.kind}</div>
                   <div className="monitor-muted">
-                    {source.detector_model_key || 'default detector'} · {source.tracker_model_key || 'default tracker'} · {source.reid_model_key || 'default reid'} · {source.anomaly_model_key || 'default anomaly'}
+                    {source.detector_model_key || 'default detector'} · {source.tracker_model_key || 'default tracker'} · {source.reid_model_key || 'default reid'} · {source.anomaly_stage_1_model_key || 'default anomaly stage 1'} · {source.anomaly_stage_2_model_key || 'default anomaly stage 2'}
                   </div>
                 </div>
                 <div className="monitor-source-meta">
@@ -394,7 +394,12 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
               <div key={anomaly.event_id} className="monitor-data-row">
                 <div>
                   <strong>{anomaly.category}</strong>
-                  <div className="monitor-muted">{anomaly.model_key}</div>
+                  <div className="monitor-muted">
+                    {anomaly.model_key}
+                    {anomaly.stage_1_model_key || anomaly.stage_2_model_key
+                      ? ` (S1 ${anomaly.stage_1_model_key || 'n/a'} · S2 ${anomaly.stage_2_model_key || 'n/a'})`
+                      : ''}
+                  </div>
                   <div className="monitor-muted">{anomaly.reasoning || 'No reasoning provided'}</div>
                 </div>
                 <div className="monitor-data-meta">

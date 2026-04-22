@@ -2,4 +2,5 @@ defaults:
   detector: builtin_rtdetr
   tracker: builtin_cmtrack
   reid: builtin_reid
-  anomaly: heuristic_presence
+  anomaly_stage_1: heuristic_presence_stage_1
+  anomaly_stage_2: prompt_rules_stage_2

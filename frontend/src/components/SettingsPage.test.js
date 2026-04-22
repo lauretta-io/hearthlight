@@ -23,7 +23,8 @@ beforeEach(() => {
           detector_model_key: null,
           tracker_model_key: null,
           reid_model_key: null,
-          anomaly_model_key: null,
+          anomaly_stage_1_model_key: null,
+          anomaly_stage_2_model_key: null,
         },
       ]);
     }
@@ -32,7 +33,8 @@ beforeEach(() => {
         { model_key: 'builtin_rtdetr', stage: 'detector', adapter: 'rtdetr_detector' },
         { model_key: 'builtin_cmtrack', stage: 'tracker', adapter: 'cmtrack_tracker' },
         { model_key: 'builtin_reid', stage: 'reid', adapter: 'legacy_reid' },
-        { model_key: 'heuristic_presence', stage: 'anomaly', adapter: 'heuristic_presence' },
+        { model_key: 'heuristic_presence_stage_1', stage: 'anomaly_stage_1', adapter: 'heuristic_presence_stage_1' },
+        { model_key: 'prompt_rules_stage_2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2' },
       ]);
     }
     if (url.endsWith('/model-bindings') && (!options.method || options.method === 'GET')) {
@@ -40,8 +42,15 @@ beforeEach(() => {
         { stage: 'detector', model_key: 'builtin_rtdetr', binding_scope: 'default', source_id: null },
         { stage: 'tracker', model_key: 'builtin_cmtrack', binding_scope: 'default', source_id: null },
         { stage: 'reid', model_key: 'builtin_reid', binding_scope: 'default', source_id: null },
-        { stage: 'anomaly', model_key: 'heuristic_presence', binding_scope: 'default', source_id: null },
+        { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
+        { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);
+    }
+    if (url.endsWith('/settings/anomaly-prompts') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({
+        text_prompt_yaml: 'template: |\n  prompt',
+        anomaly_type_yaml: 'anomaly_object_list:\n  - weapon\nanomaly_activity_list:\n  - running',
+      });
     }
     if (url.endsWith('/settings/input-sources') && options.method === 'PUT') {
       return buildJsonResponse([
@@ -56,7 +65,8 @@ beforeEach(() => {
           detector_model_key: null,
           tracker_model_key: null,
           reid_model_key: null,
-          anomaly_model_key: null,
+          anomaly_stage_1_model_key: null,
+          anomaly_stage_2_model_key: null,
         },
       ]);
     }
@@ -65,7 +75,8 @@ beforeEach(() => {
         { stage: 'detector', model_key: 'builtin_rtdetr', binding_scope: 'default', source_id: null },
         { stage: 'tracker', model_key: 'builtin_cmtrack', binding_scope: 'default', source_id: null },
         { stage: 'reid', model_key: 'builtin_reid', binding_scope: 'default', source_id: null },
-        { stage: 'anomaly', model_key: 'heuristic_presence', binding_scope: 'default', source_id: null },
+        { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
+        { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);
     }
     return buildJsonResponse({});
