@@ -139,7 +139,8 @@ checkpoints
 runs
 *.jpg
 *.png
-!docs/assets/hearthlight-logo.png
+!docs/assets/hearthlight.png
+!frontend/public/hearthlight.png
 
 # inputs
 input_data/
