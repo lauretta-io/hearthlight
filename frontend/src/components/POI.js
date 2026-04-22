@@ -26,7 +26,7 @@ const POI = () => {
 
     const fetchPOIData = async () => {
       try {
-        const response = await fetch(`${BaseURL}/genetec/poi/?poi_id=${poiId}`);
+        const response = await fetch(`${BaseURL}/operations/poi/?poi_id=${poiId}`);
         if (!response.ok) {
           let errorMessage = 'Failed to fetch POI information';
           try {

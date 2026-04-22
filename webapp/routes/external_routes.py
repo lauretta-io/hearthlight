@@ -35,9 +35,6 @@ from ...shared.models.APIModels import (
     AnomalyEvent as APIAnomalyEvent,
     AlgorithmIncidentFeedItem,
     Camera,
-    DependencyHealth,
-    ExportSink,
-    ExporterStatus,
     FeedEndpoint,
     FeedLocation,
     InputSource,
@@ -80,7 +77,6 @@ from ...shared.utils.input_sources import (
     source_requires_gpu,
 )
 from ...shared.utils.model_registry import (
-    EXPORT_DEFAULT_KEY,
     build_default_bindings,
     build_model_health,
     build_runtime_binding_block,
@@ -115,12 +111,12 @@ from ...shared.utils.system_state import (
     derive_system_status,
     get_error_modules,
 )
-from .genetec_routes import create_entity_id, create_incident_id, get_last_journey_node
+from .operations_routes import create_entity_id, create_incident_id, get_last_journey_node
 
 external_router = APIRouter()
 logger = logging.getLogger(__name__)
 
-CONFIG_PATH = Path(os.environ.get("DHS_CONFIG_PATH", "shared/configs/config.yaml"))
+CONFIG_PATH = Path(os.environ.get("HEARTHLIGHT_CONFIG_PATH", "shared/configs/config.yaml"))
 POI_CROP_DIR = Path(os.environ.get("POI_CROP_DIR", "shared/output/poi_crops"))
 SOURCE_UPLOAD_DIR = Path(
     os.environ.get(
@@ -165,7 +161,6 @@ module_status = {
     ModuleNames.REID: DataModels.Status.IDLE,
     ModuleNames.ASSOCIATION: DataModels.Status.IDLE,
     ModuleNames.ANOMALY: DataModels.Status.IDLE,
-    ModuleNames.EXPORTER: DataModels.Status.IDLE,
 }
 module_metrics = {}
 module_runtime_details = {}
@@ -178,7 +173,6 @@ def get_default_module_status():
         ModuleNames.REID: DataModels.Status.IDLE,
         ModuleNames.ASSOCIATION: DataModels.Status.IDLE,
         ModuleNames.ANOMALY: DataModels.Status.IDLE,
-        ModuleNames.EXPORTER: DataModels.Status.IDLE,
     }
 
 
@@ -379,7 +373,6 @@ def persist_resource_snapshot(snapshot: dict):
                 gpu_json=serialize_json(snapshot.get("gpus")),
                 module_status_json=serialize_json(snapshot.get("module_status")),
                 model_health_json=serialize_json(snapshot.get("model_health")),
-                exporter_status_json=serialize_json(snapshot.get("exporter_status")),
                 admission_json=serialize_json(snapshot.get("admission")),
                 drift_json=serialize_json(snapshot.get("drift")),
             )
@@ -443,10 +436,6 @@ def build_live_resource_snapshot(db: Session) -> dict:
         registry_bundle,
         has_gpu=bool(snapshot.get("gpus")),
     )
-    snapshot["exporter_status"] = build_exporter_status(
-        registry_bundle,
-        runtime_snapshot=snapshot,
-    )
     admission = evaluate_admission(
         snapshot,
         requires_gpu=REQUIRE_GPU_FOR_START
@@ -466,11 +455,8 @@ def build_live_resource_snapshot(db: Session) -> dict:
         snapshot["model_health"],
         has_gpu=bool(snapshot.get("gpus")),
     )
-    exporter_error = get_exporter_admission_error(snapshot.get("exporter_status"))
     if binding_errors:
         source_errors.extend(binding_errors)
-    if exporter_error:
-        source_errors.append(exporter_error)
     if source_errors:
         admission["source_errors"] = source_errors
         if admission.get("allowed", True):
@@ -520,10 +506,6 @@ def get_current_resource_snapshot(db: Session) -> dict:
             registry_bundle,
             has_gpu=bool(snapshot.get("gpus")),
         )
-        snapshot["exporter_status"] = build_exporter_status(
-            registry_bundle,
-            runtime_snapshot=snapshot,
-        )
         snapshot["admission"] = evaluate_admission(
             snapshot,
             requires_gpu=REQUIRE_GPU_FOR_START
@@ -543,11 +525,8 @@ def get_current_resource_snapshot(db: Session) -> dict:
             snapshot["model_health"],
             has_gpu=bool(snapshot.get("gpus")),
         )
-        exporter_error = get_exporter_admission_error(snapshot.get("exporter_status"))
         if binding_errors:
             source_errors.extend(binding_errors)
-        if exporter_error:
-            source_errors.append(exporter_error)
         if source_errors:
             snapshot["admission"]["source_errors"] = source_errors
             if snapshot["admission"].get("allowed", True):
@@ -1020,84 +999,6 @@ def build_model_binding_responses(
     return bindings
 
 
-def build_export_sink_responses(bundle: dict):
-    sinks = []
-    for sink_key, sink in bundle.get("exporters", {}).items():
-        enabled = bool(sink.get("enabled"))
-        health_status = "ok"
-        health_detail = "disabled" if not enabled else "validated by exporter runtime"
-        sinks.append(
-            ExportSink(
-                sink_key=sink_key,
-                adapter=sink.get("adapter"),
-                enabled=enabled,
-                bootstrap_servers=list(sink.get("bootstrap_servers") or []),
-                topics=dict(sink.get("topics") or {}),
-                batch=dict(sink.get("batch") or {}),
-                health=DependencyHealth(
-                    status=health_status,
-                    detail=health_detail,
-                ),
-            )
-        )
-    sinks.sort(key=lambda item: item.sink_key)
-    return sinks
-
-
-def build_exporter_status(
-    bundle: dict,
-    *,
-    runtime_snapshot: dict | None = None,
-):
-    defaults = bundle.get("bindings", {}).get("defaults", {})
-    sink_key = defaults.get(EXPORT_DEFAULT_KEY)
-    if sink_key is None:
-        return ExporterStatus(enabled=False, healthy=True, detail="no export sink configured").model_dump()
-    sink = bundle.get("exporters", {}).get(sink_key)
-    if sink is None:
-        return ExporterStatus(
-            sink_key=sink_key,
-            enabled=False,
-            healthy=False,
-            detail="configured export sink is missing",
-        ).model_dump()
-
-    enabled = bool(sink.get("enabled"))
-    detail = "disabled" if not enabled else "validated by exporter runtime"
-    healthy = True
-
-    exporter_details = dict(module_runtime_details.get(ModuleNames.EXPORTER) or {})
-    if exporter_details.get("healthy") is False:
-        healthy = False
-        detail = exporter_details.get("detail") or detail
-
-    exporter_module_status = (runtime_snapshot or {}).get("module_status", {}).get(
-        ModuleNames.EXPORTER,
-        module_status.get(ModuleNames.EXPORTER),
-    )
-    if sink.get("enabled") and exporter_module_status == DataModels.Status.ERROR:
-        healthy = False
-        detail = detail or "exporter module is in error state"
-
-    return ExporterStatus(
-        sink_key=sink_key,
-        enabled=enabled,
-        healthy=bool(healthy),
-        detail=detail,
-        last_flush_at=exporter_details.get("last_flush_at"),
-        queued_records=int(exporter_details.get("queued_records") or 0),
-    ).model_dump()
-
-
-def get_exporter_admission_error(exporter_status: dict | None) -> str | None:
-    if not exporter_status:
-        return None
-    if exporter_status.get("enabled") and not exporter_status.get("healthy", True):
-        detail = exporter_status.get("detail") or "export sink is unavailable"
-        return f"exporter: {detail}"
-    return None
-
-
 def persist_model_bindings(defaults: dict[str, str | None]):
     bindings = {"defaults": dict(defaults)}
     MODEL_BINDINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -1321,8 +1222,6 @@ def build_runtime_cfg(db: Session, run_identifier: str):
     )
     runtime_cfg.model_registry = registry_bundle.get("models", {})
     runtime_cfg.anomaly_models = registry_bundle.get("models", {}).get("anomaly", {})
-    runtime_cfg.exporters = registry_bundle.get("exporters", {})
-    runtime_cfg.export_sink = defaults.get(EXPORT_DEFAULT_KEY)
     return runtime_cfg, source_rows
 
 
@@ -1337,7 +1236,6 @@ def normalize_module_name(module_name: str) -> str:
         ModuleNames.REID,
         ModuleNames.ASSOCIATION,
         ModuleNames.ANOMALY,
-        ModuleNames.EXPORTER,
     }
     if normalized not in valid:
         raise HTTPException(status_code=400, detail="invalid module name")
@@ -1704,7 +1602,6 @@ def build_algorithm_feed_payload(
             source_rows,
             has_gpu=bool(snapshot.get("gpus")),
         ),
-        exporter_status=ExporterStatus.model_validate(snapshot["exporter_status"]),
         incidents=build_incident_feed_items(db, selected_run, limit=limit),
         entities=build_entity_feed_items(db, selected_run, limit=limit),
         anomalies=build_anomaly_feed_items(db, selected_run, limit=limit),
@@ -2061,13 +1958,6 @@ def update_model_bindings(bindings: list[ModelBinding], db: Session = Depends(ge
     )
 
 
-@external_router.get("/export-sinks", response_model=list[ExportSink])
-def get_export_sinks(db: Session = Depends(get_db)):
-    source_rows = get_active_source_rows(db)
-    bundle = get_registry_bundle(db, source_rows=source_rows)
-    return build_export_sink_responses(bundle)
-
-
 @external_router.get("/monitoring/runs", response_model=list[RunSummary])
 def get_monitoring_runs(db: Session = Depends(get_db), limit: int | None = None):
     refresh_runtime_status()
@@ -2108,7 +1998,6 @@ def get_monitoring_overview(
             has_gpu=bool(snapshot.get("gpus")),
         ),
         model_registrations=build_model_registration_responses(registry_bundle),
-        export_sinks=build_export_sink_responses(registry_bundle),
         latest_incidents=build_incident_feed_items(db, selected_run, limit=limit),
         latest_entities=build_entity_feed_items(db, selected_run, limit=limit),
         latest_anomalies=build_anomaly_feed_items(db, selected_run, limit=limit),

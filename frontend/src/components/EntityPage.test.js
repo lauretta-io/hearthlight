@@ -45,11 +45,11 @@ beforeEach(() => {
 
   let runFetchCount = 0;
   global.fetch = jest.fn((url) => {
-    if (url.endsWith('/genetec/runs')) {
+    if (url.endsWith('/operations/runs')) {
       runFetchCount += 1;
       return buildJsonResponse(runFetchCount === 1 ? [] : ['run-1']);
     }
-    if (url.includes('/genetec/entities/?run_identifier=run-1')) {
+    if (url.includes('/operations/entities/?run_identifier=run-1')) {
       return buildJsonResponse([
         {
           entity_id: 'person-20260415-1',
@@ -93,7 +93,7 @@ test('auto-follows a run and entity update after the page loads', async () => {
 
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringMatching(/\/genetec\/entities\/\?run_identifier=run-1&include_crop=true$/),
+      expect.stringMatching(/\/operations\/entities\/\?run_identifier=run-1&include_crop=true$/),
     );
   });
 });

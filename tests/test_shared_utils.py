@@ -830,13 +830,13 @@ class MicroBatchTests(unittest.TestCase):
             batch_type="anomalies",
             records=[{"event_id": "evt-1"}],
             asset_references=[asset_reference],
-            exporter_key="kafka_default",
+            sink_key="standalone_default",
         )
 
         self.assertEqual(envelope["record_count"], 1)
         self.assertEqual(envelope["records"], [{"event_id": "evt-1"}])
         self.assertEqual(envelope["asset_references"], [asset_reference])
-        self.assertEqual(envelope["exporter_key"], "kafka_default")
+        self.assertEqual(envelope["sink_key"], "standalone_default")
 
 
 class DockerCliTests(unittest.TestCase):

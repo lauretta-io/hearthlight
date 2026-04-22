@@ -22,7 +22,7 @@ const Incident = () => {
     const fetchIncident = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(`${BaseURL}/genetec/incident/?incident_id=${incidentId}`);
+        const response = await fetch(`${BaseURL}/operations/incident/?incident_id=${incidentId}`);
         if (!response.ok) {
           throw new Error('Failed to fetch incident information');
         }
@@ -52,7 +52,7 @@ const Incident = () => {
           <div className="video-container">
             <MediaPlayer
               key={incidentId}
-              src={`${BaseURL}/genetec/incident_video/?incident_id=${incidentId}`}
+              src={`${BaseURL}/operations/incident_video/?incident_id=${incidentId}`}
               aspectRatio={16 / 9}
               crossorigin=""
             >

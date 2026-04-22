@@ -13,7 +13,7 @@ DEFAULT_DB_HOST = "localhost"
 DEFAULT_DB_PORT = "5433"
 DEFAULT_DB_USER = "postgres"
 DEFAULT_DB_PASSWORD = "root"
-DEFAULT_DB_NAME = "delos"
+DEFAULT_DB_NAME = "hearthlight"
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
@@ -143,6 +143,5 @@ def compose_status(root_dir: Path = ROOT_DIR, use_cuda: bool = False) -> int:
         "reid",
         "association",
         "anomaly",
-        "exporter",
     ]
     return subprocess.call(command, cwd=root_dir, env=build_docker_env(docker_binary))

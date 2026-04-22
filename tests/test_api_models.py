@@ -6,7 +6,7 @@ PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
 if PYDANTIC_AVAILABLE:
     from pydantic import ValidationError
     from shared.models.APIModels import Camera, InputSource, POISearch
-    from shared.models.GenetecModels import IncidentUpdate
+    from shared.models.OperationsModels import IncidentUpdate
 
 
 @unittest.skipUnless(PYDANTIC_AVAILABLE, "pydantic is not installed")

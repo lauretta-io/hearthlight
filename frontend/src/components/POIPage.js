@@ -38,7 +38,7 @@ const POIPage = () => {
 
     const fetchResults = async () => {
       try {
-        const response = await fetch(`${BaseURL}/genetec/pois`);
+        const response = await fetch(`${BaseURL}/operations/pois`);
         if (!response.ok) {
           throw new Error('Failed to fetch alerts; is the backend running?');
         }

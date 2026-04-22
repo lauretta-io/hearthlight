@@ -1,12 +1,9 @@
-# Hearthlight (formerly DHS Passenger Detection)
+# Hearthlight (Standalone Backend)
 
 ![Hearthlight logo](docs/assets/hearthlight-logo.png)
 
 Real-time security backend for detecting and tracking people, bags, and related incidents from
 CCTV feeds in a screening environment.
-
-The original internal write-up for this system is captured in the 2023 "DHS Backend
-(Proto-SAIB)" PDF. This repository README updates that material to match the current codebase.
 
 ## Repository Overview
 
@@ -16,7 +13,6 @@ Main runtime services:
 - `reid`: persistent ID assignment for people and bags, plus POI support
 - `association`: owner inference and incident generation
 - `anomaly`: pluggable post-detection anomaly sidecar
-- `exporter`: Kafka-compatible micro-batch export worker
 - `webapp`: FastAPI backend plus React dashboard
 - `rabbitmq`: inter-service messaging
 - `db`: PostgreSQL persistence
@@ -49,15 +45,8 @@ More detail:
 
 ## Current State of the Docs
 
-The old README and PDF were partially stale. In particular:
-
-- container and entrypoint names changed
-- the frontend is a React app, not just a static dashboard page
-- the current association service includes gun-related incident flow
-- some historically documented modules are not present in this checkout
-
-Use the PDF for background and intent. Use this README plus `docs/architecture.md`,
-`docs/repository.md`, and `docs/initialization.md` for the current repo.
+Use this README plus `docs/architecture.md`, `docs/repository.md`, and
+`docs/initialization.md` as the source of truth for the current repository.
 
 ## Prerequisites
 
@@ -80,7 +69,7 @@ Create `.env`:
 ```env
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=root
-POSTGRES_DB=delos
+POSTGRES_DB=hearthlight
 POSTGRES_HOST=db
 POSTGRES_PORT=5432
 
@@ -99,11 +88,11 @@ POSTGRES_PORT=5432
 POSTGRES_EXT_HOST=localhost
 POSTGRES_EXT_PORT=5424
 
-DHS_USER=postgres
-DHS_PASSWORD=root
-DHS_DB=delos
-DHS_HOST=db
-DHS_PORT=5432
+HEARTHLIGHT_USER=postgres
+HEARTHLIGHT_PASSWORD=root
+HEARTHLIGHT_DB=hearthlight
+HEARTHLIGHT_HOST=db
+HEARTHLIGHT_PORT=5432
 ```
 
 ## Runtime Config
@@ -128,7 +117,7 @@ enabled source queue into the in-memory runtime config before publishing the sys
 The runtime config still owns:
 
 - enabled tasks per camera
-- model registries, default stage bindings, and exporter sink selection
+- model registries and default stage bindings
 - thresholds
 - output paths
 
@@ -233,7 +222,7 @@ python3 -m hearthlight status
 
 The launcher will:
 
-- detect API-only vs full pipeline startup based on host defaults, with `--mode` or `DELOS_DOCKER_MODE` as overrides
+- detect API-only vs full pipeline startup based on host defaults, with `--mode` or `HEARTHLIGHT_DOCKER_MODE` as overrides
 - discover config templates from `shared/configs/`
 - discover detector, tracker, pose, and feature-extractor choices from repo configs and `shared/utils/download_weights.py`
 - write the generated startup config to `shared/configs/generated/`
@@ -259,7 +248,7 @@ docker compose up webapp
 Enable the full AI pipeline explicitly:
 
 ```bash
-docker compose --profile pipeline up ingestor reid anomaly association exporter
+docker compose --profile pipeline up ingestor reid anomaly association
 ```
 
 `docker-compose.yaml` now gates AI worker services behind the optional `pipeline` profile and FOIA
@@ -331,15 +320,6 @@ Entry point: `association/main.py`
 
 Entry point: `anomaly/main.py`
 
-### Exporter
-
-- reads persisted incidents, entities, anomalies, and asset references from Postgres
-- batches records on configurable thresholds
-- publishes Kafka-compatible JSON envelopes per topic
-- reports exporter health and backlog into the control plane
-
-Entry point: `exporter/main.py`
-
 ### Webapp
 
 - exposes control and status endpoints
@@ -364,7 +344,6 @@ Important routes exposed by the FastAPI service:
 - `GET /models/{stage}`
 - `GET /model-bindings`
 - `PUT /model-bindings`
-- `GET /export-sinks`
 - `GET /system/model-health`
 - `GET /feeds/algorithm`
 - `GET /monitoring/overview`
@@ -374,18 +353,18 @@ Important routes exposed by the FastAPI service:
 - `GET /camera_streams` (compatibility view)
 - `GET /sources/{source_id}/preview.mjpeg`
 - `POST /register_poi`
-- `GET /genetec/runs`
-- `GET /genetec/incidents`
-- `GET /genetec/incident`
-- `GET /genetec/entities`
-- `GET /genetec/entity`
-- `GET /genetec/events`
-- `POST /genetec/update_incident`
-- `GET /genetec/incident_video/`
-- `GET /genetec/pois`
-- `GET /genetec/poi`
+- `GET /operations/runs`
+- `GET /operations/incidents`
+- `GET /operations/incident`
+- `GET /operations/entities`
+- `GET /operations/entity`
+- `GET /operations/events`
+- `POST /operations/update_incident`
+- `GET /operations/incident_video/`
+- `GET /operations/pois`
+- `GET /operations/poi`
 
-`GET /genetec/events` is a Server-Sent Events stream that the incidents and entities interfaces
+`GET /operations/events` is a Server-Sent Events stream that the incidents and entities interfaces
 can subscribe to for run-list, incident, and entity update notifications, with slower polling
 retained as a fallback.
 
@@ -451,8 +430,6 @@ For more detail, see `docs/testing.md` and `docs/containers.md`.
 - On Apple Silicon / Linux arm64 builds, the `webapp` image now falls back to CPU `onnxruntime`
   and skips `tensorrt`, but the GPU inference services still are not expected to run under Docker
   Desktop for macOS.
-- The attached historical PDF describes clothing segmentation and tray-specific flows that are
-  not directly represented as runnable modules in the current repository.
 - Frontend tests require a consistent modern Node/npm toolchain. On this machine Node is
   `22.21.0`, but the `npm` command currently resolves to an incompatible global install path, so
   frontend test execution is still blocked until the npm installation is fixed.

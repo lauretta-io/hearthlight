@@ -25,11 +25,15 @@ const IncidentPage = () => {
     if (!anomaly || !selectedRunIdentifier) {
       return '';
     }
+    const clipDuration = Number.isFinite(anomaly?.duration_seconds)
+      ? anomaly.duration_seconds
+      : 10;
     const params = new URLSearchParams({
       event_id: anomaly.event_id,
       run_identifier: selectedRunIdentifier,
+      duration: String(clipDuration),
     });
-    return `${BaseURL}/genetec/anomaly_video/?${params.toString()}`;
+    return `${BaseURL}/operations/anomaly_video/?${params.toString()}`;
   };
 
   const formatAnomalyTime = (timestamp) => {
@@ -53,7 +57,7 @@ const IncidentPage = () => {
 
   fetchRunIdentifiersRef.current = async () => {
     try {
-      const response = await fetch(`${BaseURL}/genetec/runs`);
+      const response = await fetch(`${BaseURL}/operations/runs`);
       if (!response.ok) {
         throw new Error('Failed to fetch run identifiers; is the backend running?');
       }
@@ -98,7 +102,7 @@ const IncidentPage = () => {
     try {
       const [incidentResponse, feedResponse] = await Promise.all([
         fetch(
-          `${BaseURL}/genetec/incidents/?run_identifier=${runIdentifier}&include_crop=true`,
+          `${BaseURL}/operations/incidents/?run_identifier=${runIdentifier}&include_crop=true`,
         ),
         fetch(`${BaseURL}/feeds/algorithm?run_identifier=${runIdentifier}&limit=50`),
       ]);
@@ -151,7 +155,7 @@ const IncidentPage = () => {
       return undefined;
     }
 
-    const eventSource = new EventSource(`${BaseURL}/genetec/events`);
+    const eventSource = new EventSource(`${BaseURL}/operations/events`);
 
     const refreshRuns = () => {
       fetchRunIdentifiersRef.current();

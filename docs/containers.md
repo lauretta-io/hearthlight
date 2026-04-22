@@ -59,7 +59,6 @@ The optional `pipeline` profile adds:
 - `reid`
 - `anomaly`
 - `association`
-- `exporter`
 
 Recommended startup sequence:
 
@@ -73,8 +72,8 @@ docker compose up webapp
 Enable the full AI pipeline explicitly:
 
 ```bash
-docker compose --profile pipeline build ingestor reid anomaly association exporter
-docker compose --profile pipeline up ingestor reid anomaly association exporter
+docker compose --profile pipeline build ingestor reid anomaly association
+docker compose --profile pipeline up ingestor reid anomaly association
 ```
 
 The FOIA services are now behind the optional `foia` profile. Plain core startup does not require
@@ -108,7 +107,6 @@ Model-control endpoints are exposed on the same FastAPI port:
 - `GET /models/{stage}`
 - `GET /model-bindings`
 - `PUT /model-bindings`
-- `GET /export-sinks`
 - `GET /system/model-health`
 
 ## Verification Checklist
@@ -206,10 +204,10 @@ Runtime-generated entity images are written under `ENTITY_IMAGE_DIR`, which defa
 `shared/output/entity_images`. If you need those files outside the container boundary, bind that
 path into a persistent or shared volume.
 
-The Genetec-style POI read endpoints also expose wall-clock freshness:
+The Operations-style POI read endpoints also expose wall-clock freshness:
 
-- `GET /genetec/pois` includes `seconds_since_update` on each card
-- `GET /genetec/poi` includes `seconds_since_update` for the selected search
+- `GET /operations/pois` includes `seconds_since_update` on each card
+- `GET /operations/poi` includes `seconds_since_update` for the selected search
 
 That value is derived from the latest POI result timestamp, so UI or external clients do not
 need to guess freshness from frame counts or polling cadence.
@@ -307,14 +305,14 @@ Stop the system:
 curl -X POST http://localhost:8000/stop
 ```
 
-### 5. Genetec routes
+### 5. Operations routes
 
 Once the system has produced run data, verify:
 
 ```bash
-curl "http://localhost:8000/genetec/runs"
-curl "http://localhost:8000/genetec/incidents?run_identifier=<RUN_ID>"
-curl "http://localhost:8000/genetec/entities?run_identifier=<RUN_ID>"
+curl "http://localhost:8000/operations/runs"
+curl "http://localhost:8000/operations/incidents?run_identifier=<RUN_ID>"
+curl "http://localhost:8000/operations/entities?run_identifier=<RUN_ID>"
 ```
 
 ## GUI Launcher

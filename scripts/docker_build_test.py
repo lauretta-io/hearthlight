@@ -17,7 +17,7 @@ from shared.utils.docker_cli import build_docker_env, find_docker_binary
 
 
 API_BUILD_SERVICES = ["rabbitmq", "webapp"]
-CORE_BUILD_SERVICES = ["rabbitmq", "webapp", "ingestor", "reid", "association", "anomaly", "exporter"]
+CORE_BUILD_SERVICES = ["rabbitmq", "webapp", "ingestor", "reid", "association", "anomaly"]
 FOIA_BUILD_SERVICES = ["foia", "foia_webapp"]
 
 

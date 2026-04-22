@@ -194,25 +194,6 @@ class ModelHealth(BaseModel):
     requires_gpu: bool = False
 
 
-class ExportSink(BaseModel):
-    sink_key: str
-    adapter: str
-    enabled: bool
-    bootstrap_servers: list[str] = Field(default_factory=list)
-    topics: dict = Field(default_factory=dict)
-    batch: dict = Field(default_factory=dict)
-    health: DependencyHealth | None = None
-
-
-class ExporterStatus(BaseModel):
-    sink_key: str | None = None
-    enabled: bool = False
-    healthy: bool = True
-    detail: str | None = None
-    last_flush_at: str | None = None
-    queued_records: int = 0
-
-
 class AssetReference(BaseModel):
     uri: str
     media_type: str
@@ -243,7 +224,7 @@ class MicroBatchEnvelope(BaseModel):
     run_identifier: str | None = None
     batch_type: str
     record_count: int
-    exporter_key: str
+    sink_key: str
     records: list[dict] = Field(default_factory=list)
     asset_references: list[AssetReference] = Field(default_factory=list)
 
@@ -281,7 +262,6 @@ class ResourceSnapshot(BaseModel):
     module_metrics: dict[str, ModuleRuntimeMetrics] = Field(default_factory=dict)
     dependency_status: dict[str, DependencyHealth] = Field(default_factory=dict)
     model_health: dict[str, ModelHealth] = Field(default_factory=dict)
-    exporter_status: ExporterStatus | None = None
     admission: AdmissionStatus | None = None
     drift: ResourceDrift | None = None
     updated_at: str | None = None
@@ -351,7 +331,6 @@ class MonitoringOverview(BaseModel):
     sources: list[InputSource] = Field(default_factory=list)
     model_bindings: list[ModelBinding] = Field(default_factory=list)
     model_registrations: list[ModelRegistration] = Field(default_factory=list)
-    export_sinks: list[ExportSink] = Field(default_factory=list)
     latest_incidents: list[AlgorithmIncidentFeedItem] = Field(default_factory=list)
     latest_entities: list[AlgorithmEntityFeedItem] = Field(default_factory=list)
     latest_anomalies: list[AnomalyEvent] = Field(default_factory=list)
@@ -368,7 +347,6 @@ class AlgorithmFeed(BaseModel):
     admission: AdmissionStatus | None = None
     sources: list[InputSource] = Field(default_factory=list)
     model_bindings: list[ModelBinding] = Field(default_factory=list)
-    exporter_status: ExporterStatus | None = None
     incidents: list[AlgorithmIncidentFeedItem] = Field(default_factory=list)
     entities: list[AlgorithmEntityFeedItem] = Field(default_factory=list)
     anomalies: list[AnomalyEvent] = Field(default_factory=list)

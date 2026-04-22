@@ -39,7 +39,6 @@ STAGE_FIELD_MAP = {
     MODEL_STAGE_ANOMALY: "anomaly_model_key",
 }
 
-EXPORT_DEFAULT_KEY = "export_sink"
 LEGACY_TRACKER_NAME_MAP = {
     "builtin_cmtrack": "cmtrack",
     "builtin_ocsort": "ocsort",
@@ -79,21 +78,6 @@ def load_model_registries(registry_dir: Path | None = None) -> dict[str, dict[st
     return registries
 
 
-def load_exporter_registrations(registry_dir: Path | None = None) -> dict[str, dict[str, Any]]:
-    registry_root = registry_dir or REGISTRY_DIR
-    exporters = _load_yaml(registry_root / "exporters.yaml")
-    normalized = {}
-    for sink_key, registration in exporters.items():
-        entry = dict(registration or {})
-        entry.setdefault("adapter", sink_key)
-        entry.setdefault("topics", {})
-        entry.setdefault("batch", {})
-        entry.setdefault("enabled", False)
-        entry.setdefault("source_path", str(registry_root / "exporters.yaml"))
-        normalized[sink_key] = entry
-    return normalized
-
-
 def load_model_bindings(bindings_path: Path | None = None) -> dict[str, Any]:
     bindings = _load_yaml(bindings_path or MODEL_BINDINGS_PATH)
     defaults = dict(bindings.get("defaults") or {})
@@ -104,7 +88,6 @@ def load_registry_bundle() -> dict[str, Any]:
     return {
         "models": load_model_registries(),
         "bindings": load_model_bindings(),
-        "exporters": load_exporter_registrations(),
     }
 
 
@@ -433,27 +416,6 @@ def sync_registry_bundle_to_db(db, bundle: dict[str, Any], sql_models, source_ro
     for row in db.query(sql_models.ModelBindingTemplate).filter_by(binding_scope="source").all():
         if row.source_template_id not in active_source_ids:
             row.is_deleted = True
-
-    for sink_key, sink in bundle.get("exporters", {}).items():
-        row = (
-            db.query(sql_models.ExportSinkRegistration)
-            .filter_by(sink_key=sink_key, is_deleted=False)
-            .first()
-        )
-        if row is None:
-            row = sql_models.ExportSinkRegistration(sink_key=sink_key)
-            db.add(row)
-        row.adapter = sink.get("adapter")
-        row.bootstrap_servers = list(sink.get("bootstrap_servers") or [])
-        row.topic_json = OmegaConf.to_yaml(OmegaConf.create(sink.get("topics") or {}))
-        row.batch_json = OmegaConf.to_yaml(OmegaConf.create(sink.get("batch") or {}))
-        row.enabled = bool(sink.get("enabled"))
-        row.healthcheck_json = OmegaConf.to_yaml(
-            OmegaConf.create(sink.get("healthcheck") or {})
-        )
-        row.is_deleted = False
-        row.deleted_at = None
-
 
 def parse_yaml_text(raw_yaml: str | None) -> dict[str, Any]:
     if not raw_yaml:

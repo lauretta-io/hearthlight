@@ -7,7 +7,7 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from .routes.external_routes import external_router
-from .routes.genetec_routes import genetec_router
+from .routes.operations_routes import operations_router
 
 app = FastAPI()
 MAX_REQUEST_BYTES = int(os.environ.get("WEBAPP_MAX_REQUEST_BYTES", str(5 * 1024 * 1024)))
@@ -75,7 +75,7 @@ async def require_api_key(request: Request, call_next):
 
 
 app.include_router(external_router)
-app.include_router(genetec_router, prefix="/genetec")
+app.include_router(operations_router, prefix="/operations")
 
 
 @app.on_event("startup")
@@ -92,10 +92,10 @@ async def startup_resources():
 @app.on_event("shutdown")
 async def shutdown_resources():
     from .routes.external_routes import shutdown_external_resources
-    from .routes.genetec_routes import shutdown_genetec_resources
+    from .routes.operations_routes import shutdown_operations_resources
 
     shutdown_external_resources()
-    shutdown_genetec_resources()
+    shutdown_operations_resources()
 
 
 def check_database_readiness():
@@ -156,4 +156,4 @@ async def readyz():
 
 @app.get("/")
 async def root():
-    return {"message": "Lauretta Real Time Backend"}
+    return {"message": "Hearthlight Real Time Backend"}

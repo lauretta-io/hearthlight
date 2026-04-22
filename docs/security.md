@@ -264,7 +264,7 @@ Benefits:
 The config path can be overridden with:
 
 ```bash
-export DHS_CONFIG_PATH="src/shared/configs/config.yaml"
+export HEARTHLIGHT_CONFIG_PATH="src/shared/configs/config.yaml"
 ```
 
 For local container bootstrapping, the repo ships `shared/configs/example_config.yaml` as the

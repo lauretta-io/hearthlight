@@ -20,7 +20,7 @@ from ...shared.utils.image import encode_base64
 from ...shared.database.database import get_db
 from ...shared.database.database import SessionLocal
 from ...shared.models import SQLModels
-from ...shared.models.GenetecModels import (
+from ...shared.models.OperationsModels import (
     Location,
     IncidentUpdate,
     IncidentCard,
@@ -39,12 +39,12 @@ from ...shared.models.DataModels import ResolutionMessage
 from ...shared.utils.security import is_valid_incident_status_transition
 from ...shared.utils.time_utils import seconds_since_datetime
 
-genetec_router = APIRouter()
+operations_router = APIRouter()
 logger = logging.getLogger(__name__)
 resolution_publisher = None
 ENTITY_IMAGE_DIR = Path(os.environ.get("ENTITY_IMAGE_DIR", "shared/output/entity_images"))
 INCIDENT_STREAM_POLL_INTERVAL = float(
-    os.environ.get("GENETEC_INCIDENT_STREAM_POLL_INTERVAL", "1.0")
+    os.environ.get("OPERATIONS_INCIDENT_STREAM_POLL_INTERVAL", "1.0")
 )
 
 
@@ -55,7 +55,7 @@ def get_resolution_publisher():
     return resolution_publisher
 
 
-def shutdown_genetec_resources():
+def shutdown_operations_resources():
     global resolution_publisher
     if resolution_publisher is not None:
         resolution_publisher.close()
@@ -113,13 +113,13 @@ def iter_process_output(process: subprocess.Popen[bytes], chunk_size: int = 1024
             logger.warning("ffmpeg exited with return code %s", return_code)
 
 
-@genetec_router.get("/runs", response_model=List[str])
+@operations_router.get("/runs", response_model=List[str])
 def get_run_identifiers(db: Session = Depends(get_db)):
     runs = db.query(SQLModels.Run).order_by(SQLModels.Run.created_at).all()
     return [run.run_identifier for run in runs]
 
 
-@genetec_router.get("/incidents", response_model=List[IncidentCard])
+@operations_router.get("/incidents", response_model=List[IncidentCard])
 def incident_cards(run_identifier: str, include_crop: bool = False, db: Session = Depends(get_db)):
     run = db.query(SQLModels.Run).filter_by(run_identifier=run_identifier).first()
     if run is None:
@@ -133,18 +133,18 @@ def incident_cards(run_identifier: str, include_crop: bool = False, db: Session 
     ]
 
 
-@genetec_router.get("/incident_card", response_model=IncidentCard)
+@operations_router.get("/incident_card", response_model=IncidentCard)
 def incident_card(incident_id: str, db: Session = Depends(get_db)):
     db_indicent = get_db_indicent(incident_id, db)
     return get_incident_card(db_indicent, db)
 
 
-@genetec_router.get("/incident", response_model=Incident)
+@operations_router.get("/incident", response_model=Incident)
 def incident(incident_id: str, db: Session = Depends(get_db)):
     db_indicent = get_db_indicent(incident_id, db)
     return get_incident(incident_id, db_indicent, db)
 
-@genetec_router.get("/entities", response_model=List[EntityCard])
+@operations_router.get("/entities", response_model=List[EntityCard])
 def entity_cards(run_identifier: str, include_crop: bool = False, db: Session = Depends(get_db)):
     run = db.query(SQLModels.Run).filter_by(run_identifier=run_identifier).first()
     if run is None:
@@ -157,19 +157,19 @@ def entity_cards(run_identifier: str, include_crop: bool = False, db: Session = 
         for db_person in db_persons if db_person.id > 0
     ]
 
-@genetec_router.get("/entity_card", response_model=EntityCard)
+@operations_router.get("/entity_card", response_model=EntityCard)
 def entity_card(entity_id: str, db: Session = Depends(get_db)):
     db_id, entity_type = parse_entity_id(entity_id)
     return get_entity_card(db_id, entity_type, db)
 
 
-@genetec_router.get("/entity", response_model=Entity)
+@operations_router.get("/entity", response_model=Entity)
 def entity(entity_id: str, db: Session = Depends(get_db)):
     db_id, entity_type = parse_entity_id(entity_id)
     return get_entity(db_id, entity_type, db)
 
 
-@genetec_router.post("/update_incident", response_model=Incident)
+@operations_router.post("/update_incident", response_model=Incident)
 def update_incident(update: IncidentUpdate, db: Session = Depends(get_db)):
     db_id = parse_incident_id(update.incident_id)
     db_incident = db.get(SQLModels.Incident, db_id)
@@ -293,8 +293,8 @@ def _format_sse_event(event_name: str, payload: dict):
     return f"event: {event_name}\ndata: {json.dumps(payload)}\n\n"
 
 
-@genetec_router.get("/events")
-async def genetec_events(request: Request):
+@operations_router.get("/events")
+async def operations_events(request: Request):
     async def event_generator():
         previous_state = None
 
@@ -362,7 +362,7 @@ async def genetec_events(request: Request):
     )
 
 
-@genetec_router.get("/pois", response_model=List[POIResultCard])
+@operations_router.get("/pois", response_model=List[POIResultCard])
 def pois(db: Session = Depends(get_db)):
     last_run = db.query(SQLModels.Run).order_by(SQLModels.Run.created_at.desc()).first()
     if last_run is None:
@@ -373,7 +373,7 @@ def pois(db: Session = Depends(get_db)):
     return [get_poi_card(db_poi, db) for db_poi in db_pois]
 
 
-@genetec_router.get("/poi", response_model=POIResult)
+@operations_router.get("/poi", response_model=POIResult)
 def poi(poi_id: int, db: Session = Depends(get_db)):
     db_poi = db.query(SQLModels.POISearch).filter_by(id=poi_id).first()
     if db_poi is None:
@@ -381,13 +381,13 @@ def poi(poi_id: int, db: Session = Depends(get_db)):
     return get_poi_result(db_poi, db)
 
 
-@genetec_router.head("/incident_video/")
+@operations_router.head("/incident_video/")
 def get_video_headers(incident_id: str, db: Session = Depends(get_db)):
     get_db_indicent(incident_id, db)
     return Response(content=None, headers={"Content-Type": "video/mp4"})
 
 
-@genetec_router.get("/incident_video/")
+@operations_router.get("/incident_video/")
 def get_incident_video(
     incident_id: str, duration: int = 10, db: Session = Depends(get_db)
 ):
@@ -458,7 +458,7 @@ def get_db_camera_for_anomaly(anomaly_event: SQLModels.AnomalyEvent, db: Session
     raise HTTPException(status_code=404, detail="camera recording not found")
 
 
-@genetec_router.get("/anomaly_video/")
+@operations_router.get("/anomaly_video/")
 def get_anomaly_video(event_id: str, run_identifier: str, db: Session = Depends(get_db)):
     run = db.query(SQLModels.Run).filter_by(run_identifier=run_identifier).first()
     if run is None:

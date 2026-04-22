@@ -30,7 +30,7 @@ def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--mode",
         choices=["api", "pipeline"],
-        help="Service startup mode. Defaults to host-aware auto-detection or DELOS_DOCKER_MODE.",
+        help="Service startup mode. Defaults to host-aware auto-detection or HEARTHLIGHT_DOCKER_MODE.",
     )
     parser.add_argument("--profile", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--detector", help="Detector model name")

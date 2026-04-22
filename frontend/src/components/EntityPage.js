@@ -24,7 +24,7 @@ const EntityPage = () => {
 
   fetchRunIdentifiersRef.current = async () => {
     try {
-      const response = await fetch(`${BaseURL}/genetec/runs`);
+      const response = await fetch(`${BaseURL}/operations/runs`);
       if (!response.ok) {
         throw new Error('Failed to fetch run identifiers; is the backend running?');
       }
@@ -69,7 +69,7 @@ const EntityPage = () => {
     }
 
     try {
-      const response = await fetch(`${BaseURL}/genetec/entities/?run_identifier=${runIdentifier}&include_crop=true`);
+      const response = await fetch(`${BaseURL}/operations/entities/?run_identifier=${runIdentifier}&include_crop=true`);
       if (!response.ok) {
         throw new Error('Failed to fetch entities; is the backend running?');
       }
@@ -111,7 +111,7 @@ const EntityPage = () => {
       return undefined;
     }
 
-    const eventSource = new EventSource(`${BaseURL}/genetec/events`);
+    const eventSource = new EventSource(`${BaseURL}/operations/events`);
 
     const refreshRuns = () => {
       fetchRunIdentifiersRef.current();

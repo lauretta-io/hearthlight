@@ -61,11 +61,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const dependencyStatus = Object.entries(resources?.dependency_status || {});
   const moduleMetrics = Object.entries(resources?.module_metrics || {});
   const modelHealth = Object.entries(resources?.model_health || {});
-  const exporterStatus = resources?.exporter_status;
   const sources = overview?.sources || [];
   const modelBindings = overview?.model_bindings || [];
   const modelRegistrations = overview?.model_registrations || [];
-  const exportSinks = overview?.export_sinks || [];
   const incidents = overview?.latest_incidents || [];
   const entities = overview?.latest_entities || [];
   const anomalies = overview?.latest_anomalies || [];
@@ -134,9 +132,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         <div className="monitor-summary-card">
           <span className="monitor-label">Model Registry</span>
           <strong>{modelRegistrations.length} models</strong>
-          <span className="monitor-muted">
-            Exporter {exporterStatus?.healthy ? 'ready' : 'degraded'}
-          </span>
+          <span className="monitor-muted">Detector, tracker, ReID, and anomaly stages</span>
         </div>
       </div>
 
@@ -328,52 +324,6 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                 </div>
               </div>
             ))}
-          </div>
-        </div>
-
-        <div className="monitor-panel">
-          <div className="monitor-panel-header">
-            <div>
-              <h3>Export Sinks</h3>
-              <p>Kafka-compatible micro-batch delivery state.</p>
-            </div>
-          </div>
-          <div className="monitor-stack">
-            {exportSinks.length === 0 && (
-              <div className="monitor-empty">No export sinks registered.</div>
-            )}
-            {exportSinks.map((sink) => (
-              <div key={sink.sink_key} className="monitor-data-row">
-                <div>
-                  <strong>{sink.sink_key}</strong>
-                  <div className="monitor-muted">{sink.adapter}</div>
-                  <div className="monitor-muted">{sink.bootstrap_servers.join(', ') || 'No brokers configured'}</div>
-                </div>
-                <div className="monitor-data-meta">
-                  <span className={`monitor-pill monitor-pill-${sink.health?.status === 'ok' ? 'running' : 'error'}`}>
-                    {sink.enabled ? 'enabled' : 'disabled'}
-                  </span>
-                  <span className={`monitor-pill monitor-pill-${sink.health?.status === 'ok' ? 'running' : 'error'}`}>
-                    {sink.health?.status || 'unknown'}
-                  </span>
-                </div>
-              </div>
-            ))}
-            {exporterStatus && (
-              <div className="monitor-data-row">
-                <div>
-                  <strong>Active Exporter</strong>
-                  <div className="monitor-muted">{exporterStatus.sink_key || 'No active sink selected'}</div>
-                  <div className="monitor-muted">{exporterStatus.detail || 'healthy'}</div>
-                </div>
-                <div className="monitor-data-meta">
-                  <span className={`monitor-pill monitor-pill-${exporterStatus.healthy ? 'running' : 'error'}`}>
-                    {exporterStatus.healthy ? 'healthy' : 'degraded'}
-                  </span>
-                  <span>{exporterStatus.queued_records || 0} queued</span>
-                </div>
-              </div>
-            )}
           </div>
         </div>
 

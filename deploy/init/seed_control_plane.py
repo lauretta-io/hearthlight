@@ -102,7 +102,6 @@ def seed_model_bindings_via_api(base_url: str) -> None:
             "binding_scope": "default",
         }
         for stage, model_key in load_model_binding_defaults().items()
-        if stage != "export_sink"
     ]
     req = request.Request(
         base_url.rstrip("/") + "/model-bindings",

@@ -31,7 +31,7 @@ DOWNLOAD_WEIGHTS_PATH = ROOT_DIR / "shared" / "utils" / "download_weights.py"
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
 CUDA_COMPOSE_PATH = ROOT_DIR / "run" / "docker-compose.cuda.yaml"
 API_SERVICES = ["db", "rabbitmq", "webapp"]
-PIPELINE_SERVICES = API_SERVICES + ["ingestor", "reid", "association", "anomaly", "exporter"]
+PIPELINE_SERVICES = API_SERVICES + ["ingestor", "reid", "association", "anomaly"]
 
 
 @dataclass(frozen=True)
@@ -56,9 +56,9 @@ class LaunchSelection:
 
 
 def detect_run_mode() -> tuple[str, str]:
-    explicit_mode = os.environ.get("DELOS_DOCKER_MODE", "").strip().lower()
+    explicit_mode = os.environ.get("HEARTHLIGHT_DOCKER_MODE", "").strip().lower()
     if explicit_mode in {"api", "pipeline"}:
-        return explicit_mode, f"using DELOS_DOCKER_MODE={explicit_mode}"
+        return explicit_mode, f"using HEARTHLIGHT_DOCKER_MODE={explicit_mode}"
 
     system = platform.system()
     machine = platform.machine().lower()

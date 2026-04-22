@@ -1,5 +1,5 @@
 """
-This file contains the Pydantic models for the Genetec API.
+This file contains the Pydantic models for the Operations API.
 """
 
 from typing import List, Optional

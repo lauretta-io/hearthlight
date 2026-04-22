@@ -45,11 +45,11 @@ beforeEach(() => {
 
   let runFetchCount = 0;
   global.fetch = jest.fn((url) => {
-    if (url.endsWith('/genetec/runs')) {
+    if (url.endsWith('/operations/runs')) {
       runFetchCount += 1;
       return buildJsonResponse(runFetchCount === 1 ? [] : ['run-1']);
     }
-    if (url.includes('/genetec/incidents/?run_identifier=run-1')) {
+    if (url.includes('/operations/incidents/?run_identifier=run-1')) {
       return buildJsonResponse([
         {
           incident_id: 'GUN-20260415-1',
@@ -114,7 +114,7 @@ test('auto-follows a run that appears after the page loads via stream update', a
 
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringMatching(/\/genetec\/incidents\/\?run_identifier=run-1&include_crop=true$/),
+      expect.stringMatching(/\/operations\/incidents\/\?run_identifier=run-1&include_crop=true$/),
     );
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringMatching(/\/feeds\/algorithm\?run_identifier=run-1&limit=50$/),
@@ -149,7 +149,7 @@ test('opens a modal with clip video and anomaly summary from the feed', async ()
 
   const video = dialog.querySelector('video');
   expect(video).toBeTruthy();
-  expect(video.getAttribute('src')).toContain('/genetec/anomaly_video/?');
+  expect(video.getAttribute('src')).toContain('/operations/anomaly_video/?');
   expect(video.getAttribute('src')).toContain(
     'event_id=heuristic_presence%3A1%3A22%3Apresence_resume',
   );

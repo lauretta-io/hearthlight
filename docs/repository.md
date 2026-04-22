@@ -9,7 +9,6 @@ frontend/web control plane.
 - `reid`: assigns persistent IDs to people and bags
 - `association`: builds incidents and ownership relationships
 - `anomaly`: optional post-detection anomaly worker
-- `exporter`: publishes normalized outputs to configured export sinks
 - `webapp`: FastAPI backend and React dashboard delivery
 
 ## Shared code
@@ -22,7 +21,7 @@ frontend/web control plane.
 
 - `frontend/src/components/ControlPage.js`: run control and live resource status
 - `frontend/src/components/SettingsPage.js`: source settings, default model bindings, launch-plan helper
-- `frontend/src/components/MonitoringPage.js`: monitoring and exporter/model health
+- `frontend/src/components/MonitoringPage.js`: monitoring and model health
 - `webapp/routes/external_routes.py`: main control-plane API
 
 ## Startup layers
@@ -47,7 +46,7 @@ The system now uses multiple config sources together:
 
 - `shared/configs/config.yaml`: active runtime config used by the workers
 - `shared/configs/saved_configs/*.yaml`: reusable template and camera-preset files
-- `shared/configs/registries/*.yaml`: model and exporter registrations
+- `shared/configs/registries/*.yaml`: model registrations
 - `shared/configs/model_bindings.yaml`: default registry-backed stage bindings
 - Postgres `control` schema: persisted input sources, uploads, and control-plane state
 

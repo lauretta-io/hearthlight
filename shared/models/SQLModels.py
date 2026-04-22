@@ -444,7 +444,6 @@ class ResourceSnapshot(Base):
     gpu_json = mapped_column(Text)
     module_status_json = mapped_column(Text)
     model_health_json = mapped_column(Text)
-    exporter_status_json = mapped_column(Text)
     admission_json = mapped_column(Text)
     drift_json = mapped_column(Text)
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
@@ -492,24 +491,6 @@ class ModelBindingTemplate(Base):
     binding_scope = mapped_column(String(32), nullable=False)
     source_template_id = mapped_column(Integer)
     model_key = mapped_column(String(128))
-    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-    is_deleted = mapped_column(Boolean, default=False, nullable=False)
-    deleted_at = mapped_column(DateTime)
-
-
-class ExportSinkRegistration(Base):
-    __tablename__ = "export_sink_registration"
-    __table_args__ = {"schema": "control"}
-
-    id = mapped_column(Integer, primary_key=True, autoincrement=True)
-    sink_key = mapped_column(String(128), nullable=False)
-    adapter = mapped_column(String(128), nullable=False)
-    enabled = mapped_column(Boolean, default=False, nullable=False)
-    bootstrap_servers = mapped_column(ARRAY(String), nullable=False)
-    topic_json = mapped_column(Text)
-    batch_json = mapped_column(Text)
-    healthcheck_json = mapped_column(Text)
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)

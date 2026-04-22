@@ -3,7 +3,7 @@ import { BaseURL } from '../config';
 export const resolveIncident = async (incidentId) => {
   try {
     const currentTime = new Date().toUTCString();
-    const response = await fetch(`${BaseURL}/genetec/update_incident`, {
+    const response = await fetch(`${BaseURL}/operations/update_incident`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(

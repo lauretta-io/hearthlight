@@ -43,19 +43,6 @@ beforeEach(() => {
         { stage: 'anomaly', model_key: 'heuristic_presence', binding_scope: 'default', source_id: null },
       ]);
     }
-    if (url.endsWith('/export-sinks')) {
-      return buildJsonResponse([
-        {
-          sink_key: 'kafka_default',
-          adapter: 'kafka_json',
-          enabled: false,
-          bootstrap_servers: ['localhost:9092'],
-          topics: {},
-          batch: {},
-          health: { status: 'ok', detail: null },
-        },
-      ]);
-    }
     if (url.endsWith('/settings/input-sources') && options.method === 'PUT') {
       return buildJsonResponse([
         {

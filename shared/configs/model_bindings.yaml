@@ -3,4 +3,3 @@ defaults:
   tracker: builtin_cmtrack
   reid: builtin_reid
   anomaly: heuristic_presence
-  export_sink: kafka_default

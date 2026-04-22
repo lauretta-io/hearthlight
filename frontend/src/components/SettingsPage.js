@@ -125,7 +125,6 @@ const SettingsPage = () => {
   const [busyUploads, setBusyUploads] = useState({});
   const [modelRegistrations, setModelRegistrations] = useState([]);
   const [defaultBindings, setDefaultBindings] = useState({});
-  const [exportSinks, setExportSinks] = useState([]);
   const [launchPlan, setLaunchPlan] = useState(() => {
     const saved = localStorage.getItem('settingsLaunchPlanDraft');
     if (!saved) {
@@ -160,29 +159,26 @@ const SettingsPage = () => {
   useEffect(() => {
     const loadSources = async () => {
       try {
-        const [sourceResponse, modelResponse, bindingResponse, exportSinkResponse] = await Promise.all([
+        const [sourceResponse, modelResponse, bindingResponse] = await Promise.all([
           fetch(`${BaseURL}/settings/input-sources`),
           fetch(`${BaseURL}/models`),
           fetch(`${BaseURL}/model-bindings`),
-          fetch(`${BaseURL}/export-sinks`),
         ]);
         if (!sourceResponse.ok) {
           throw new Error('Failed to load input source settings');
         }
-        if (!modelResponse.ok || !bindingResponse.ok || !exportSinkResponse.ok) {
+        if (!modelResponse.ok || !bindingResponse.ok) {
           throw new Error('Failed to load model registry settings');
         }
-        const [sourceData, modelData, bindingData, exportSinkData] = await Promise.all([
+        const [sourceData, modelData, bindingData] = await Promise.all([
           sourceResponse.json(),
           modelResponse.json(),
           bindingResponse.json(),
-          exportSinkResponse.json(),
         ]);
         if (sourceData.length > 0) {
           setSources(sourceData.map((source, index) => hydrateSource(source, index)));
         }
         setModelRegistrations(modelData);
-        setExportSinks(exportSinkData);
         const nextDefaults = {};
         bindingData
           .filter((binding) => binding.binding_scope === 'default')
@@ -603,39 +599,6 @@ const SettingsPage = () => {
                       >
                         {isSavingBindings ? 'Saving...' : 'Save Default Bindings'}
                       </button>
-                    </div>
-                  </div>
-
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <h3>Export Sinks</h3>
-                        <p>Configured micro-batch targets and current transport readiness.</p>
-                      </div>
-                    </div>
-                    <div className="status-list">
-                      {exportSinks.length === 0 && (
-                        <div className="empty-state">No export sinks registered.</div>
-                      )}
-                      {exportSinks.map((sink) => (
-                        <div key={sink.sink_key} className="status-row">
-                          <div>
-                            <strong>{sink.sink_key}</strong>
-                            <div className="status-detail">{sink.adapter}</div>
-                            <div className="muted-text">
-                              {sink.bootstrap_servers.join(', ') || 'No bootstrap servers configured'}
-                            </div>
-                          </div>
-                          <div className="status-row-meta">
-                            <span className={`status-pill ${sink.health?.status === 'ok' ? 'status-running' : 'status-error'}`}>
-                              {sink.enabled ? 'enabled' : 'disabled'}
-                            </span>
-                            <span className={`status-pill ${sink.health?.status === 'ok' ? 'status-running' : 'status-error'}`}>
-                              {sink.health?.status || 'unknown'}
-                            </span>
-                          </div>
-                        </div>
-                      ))}
                     </div>
                   </div>
 

@@ -43,7 +43,7 @@ def build_feed_endpoint_catalog() -> list[dict[str, str]]:
         {
             "name": "Algorithm Feed",
             "path": "/feeds/algorithm",
-            "description": "Combined source, resource, incident, entity, anomaly, and exporter output for a run.",
+            "description": "Combined source, resource, incident, entity, and anomaly output for a run.",
         },
         {
             "name": "Incident Feed",
@@ -74,11 +74,6 @@ def build_feed_endpoint_catalog() -> list[dict[str, str]]:
             "name": "Model Health",
             "path": "/system/model-health",
             "description": "Availability and readiness state for each registered model.",
-        },
-        {
-            "name": "Export Sinks",
-            "path": "/export-sinks",
-            "description": "Configured micro-batch export sinks and transport health.",
         },
         {
             "name": "Resource Events",

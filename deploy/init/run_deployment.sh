@@ -80,7 +80,7 @@ main() {
   python3 deploy/init/seed_control_plane.py --base-url "${API_BASE_URL}"
 
   if [[ "${resolved_mode}" == "pipeline" ]]; then
-    "${docker_binary}" compose --profile pipeline up -d ingestor reid association anomaly exporter
+    "${docker_binary}" compose --profile pipeline up -d ingestor reid association anomaly
   fi
 
   echo "Deployment is up."

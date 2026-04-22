@@ -26,7 +26,6 @@ class ModuleNames:
     REID = "REID"
     ASSOCIATION = "ASSOCIATION"
     ANOMALY = "ANOMALY"
-    EXPORTER = "EXPORTER"
     WEBAPP = "WEBAPP"
 
 

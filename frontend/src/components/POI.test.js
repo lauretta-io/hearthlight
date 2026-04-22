@@ -10,7 +10,7 @@ const buildJsonResponse = (body) =>
 
 beforeEach(() => {
   global.fetch = jest.fn((url) => {
-    if (String(url).includes('/genetec/poi/?poi_id=7')) {
+    if (String(url).includes('/operations/poi/?poi_id=7')) {
       return buildJsonResponse({
         id: 7,
         name: 'North Hall suspect',

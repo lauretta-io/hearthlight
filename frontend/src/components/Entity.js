@@ -19,7 +19,7 @@ const Entity = () => {
     const fetchEntity = async () => {
       setIsLoading(true);
       try {
-        const response = await fetch(`${BaseURL}/genetec/entity/?entity_id=${entityId}`);
+        const response = await fetch(`${BaseURL}/operations/entity/?entity_id=${entityId}`);
         if (!response.ok) {
           throw new Error('Failed to fetch entity information');
         }

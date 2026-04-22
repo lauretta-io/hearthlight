@@ -57,13 +57,6 @@ beforeEach(() => {
               detail: null,
             },
           },
-          exporter_status: {
-            sink_key: 'kafka_default',
-            enabled: false,
-            healthy: true,
-            detail: null,
-            queued_records: 0,
-          },
         },
         runs: [
           {
@@ -104,20 +97,6 @@ beforeEach(() => {
             model_key: 'builtin_rtdetr',
             stage: 'detector',
             adapter: 'rtdetr_detector',
-          },
-        ],
-        export_sinks: [
-          {
-            sink_key: 'kafka_default',
-            adapter: 'kafka_json',
-            enabled: false,
-            bootstrap_servers: ['localhost:9092'],
-            topics: {},
-            batch: {},
-            health: {
-              status: 'ok',
-              detail: null,
-            },
           },
         ],
         latest_incidents: [
@@ -167,7 +146,7 @@ beforeEach(() => {
           {
             name: 'Algorithm Feed',
             path: '/feeds/algorithm',
-            description: 'Combined source, resource, incident, entity, anomaly, and exporter output for a run.',
+            description: 'Combined source, resource, incident, entity, and anomaly output for a run.',
           },
         ],
       });
@@ -191,7 +170,6 @@ test('renders monitoring overview and feed endpoint catalog', async () => {
   expect(screen.getByText('GUN-20260314-7')).toBeTruthy();
   expect(screen.getByText('Dependencies')).toBeTruthy();
   expect(screen.getByText('Model Health')).toBeTruthy();
-  expect(screen.getByText('Export Sinks')).toBeTruthy();
   expect(screen.getByText('Anomalies')).toBeTruthy();
   expect(screen.getByText('Module Backpressure')).toBeTruthy();
   expect(screen.getByText('database_thread at depth 12')).toBeTruthy();

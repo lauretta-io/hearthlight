@@ -43,7 +43,7 @@ python3 scripts/container_preflight.py
 docker compose up -d db rabbitmq
 python3 -m hearthlight reset-db
 docker compose up webapp
-docker compose --profile pipeline up ingestor reid anomaly association exporter
+docker compose --profile pipeline up ingestor reid anomaly association
 ```
 
 For repeatable image-build validation, use the build test script:
@@ -55,7 +55,7 @@ python3 scripts/docker_build_test.py
 It chooses a sensible default for the current host:
 
 - Apple Silicon / Darwin: builds the API-only path (`rabbitmq`, `webapp`)
-- Linux x86_64: builds the full pipeline stack (`rabbitmq`, `webapp`, `ingestor`, `reid`, `association`, `anomaly`, `exporter`)
+- Linux x86_64: builds the full pipeline stack (`rabbitmq`, `webapp`, `ingestor`, `reid`, `association`, `anomaly`)
 
 You can override that explicitly:
 
@@ -100,7 +100,6 @@ It exercises:
 - `/sources`
 - `/models`
 - `/model-bindings`
-- `/export-sinks`
 - `/system/model-health`
 - `/system/resources`
 - `/status`
@@ -123,7 +122,7 @@ Then verify:
 - `/system/resources` returns resource telemetry
 - `/status` changes from `idle` to `running` after `/start`
 - `/status` includes `sources`, `resources`, and `admission`
-- incidents and entities appear under `/genetec/*`
+- incidents and entities appear under `/operations/*`
 
 For a fuller startup and troubleshooting checklist, see `docs/containers.md`.
 

@@ -1,25 +1,20 @@
-# DHS Backend Architecture Notes
+# Hearthlight Backend Architecture Notes
 
-This document updates the original 2023 "DHS Backend (Proto-SAIB)" write-up using the
-current repository layout. The PDF remains useful historical context, but several names and
-capabilities in that document no longer map 1:1 to this checkout.
+This document describes the current repository layout and runtime architecture.
 
 ## Scope
 
-- Repository: `dhs-passenger-detection`
+- Repository: `hearthlight`
 - Current top-level runtime modules:
   - `ingestor`
   - `reid`
   - `association`
   - `anomaly`
-  - `exporter`
   - `webapp`
   - `rabbitmq`
   - `db`
-- Historical or optional items referenced by older documentation:
-  - clothing segmentation / fashion
+- Optional items:
   - FOIA services
-  - older entrypoint names such as `Ingestor/orchestrator.py`
 
 ## Runtime Topology
 
@@ -50,14 +45,12 @@ flowchart LR
         REID["ReID<br/>Identity Resolution"]
         ANOM["Anomaly Sidecar<br/>Pluggable Adapters"]
         ASSOC["Association<br/>Incidents + Ownership"]
-        EXP["Exporter<br/>Kafka Micro-Batches"]
     end
 
     subgraph Infra["Shared Infrastructure"]
         MQ["RabbitMQ"]
         DB[("Postgres<br/>dicos + control")]
         SHARED["Shared Output / Assets"]
-        KAFKA["Kafka-Compatible Sink"]
     end
 
     UI --> WEBAPP
@@ -86,11 +79,6 @@ flowchart LR
     ASSOC --> DB
     ASSOC --> MQ
 
-    DB --> EXP
-    SHARED --> EXP
-    EXP --> KAFKA
-    EXP --> MQ
-
     MQ -. status / control .-> WEBAPP
     DB -. monitoring / feeds .-> WEBAPP
 ```
@@ -99,13 +87,11 @@ flowchart LR
 
 - `webapp` is both the operator-facing control plane and the API surface for external systems.
 - Source definitions, uploaded media, resource telemetry, model registrations, model bindings,
-  and export sink registrations all persist under the Postgres `control` schema.
+  and model-binding templates all persist under the Postgres `control` schema.
 - Runtime entities such as runs, incidents, entities, journey nodes, recordings, frames, and
   anomaly events persist under `dicos`.
 - Model registration is config-backed, then mirrored into Postgres for API/UI visibility.
 - `ingestor`, `reid`, `anomaly`, and `association` communicate primarily through RabbitMQ.
-- `exporter` is intentionally DB-backed so it emits normalized persisted outputs instead of
-  scraping API responses.
 
 ## Runtime Flow
 
@@ -119,8 +105,6 @@ sequenceDiagram
     participant REID as ReID
     participant ANOM as Anomaly
     participant ASSOC as Association
-    participant EXP as Exporter
-    participant KAFKA as Kafka Sink
 
     UI->>WEB: Save sources / model bindings
     WEB->>DB: Persist control-plane rows
@@ -132,7 +116,6 @@ sequenceDiagram
     MQ->>REID: START
     MQ->>ANOM: START
     MQ->>ASSOC: START
-    MQ->>EXP: START
 
     ING->>MQ: Frames / detections / tracks
     ING->>DB: Run + frame + recording metadata
@@ -144,8 +127,6 @@ sequenceDiagram
     ANOM->>MQ: Anomaly event stream
     MQ->>ASSOC: Identified entities + detections
     ASSOC->>DB: Incidents + ownership mappings
-    EXP->>DB: Poll incidents / entities / anomalies / assets
-    EXP->>KAFKA: Micro-batch envelopes
 
     MQ-->>WEB: Module status / metrics
     DB-->>WEB: Monitoring + feed queries
@@ -167,8 +148,7 @@ Current responsibilities:
 - Push frame bundles into `ingestor/output_threads.py` for downstream publication.
 - Publish run metadata and module status messages.
 
-This still matches the broad role described in the PDF: ingestor is the pipeline front door and
-the place where raw video becomes structured track/detection data.
+Ingestor is the pipeline front door where raw video becomes structured track/detection data.
 
 ### `reid`
 
@@ -183,9 +163,8 @@ Current responsibilities:
 - Publish enriched track information to downstream consumers.
 - Manage POI search updates through `reid/poi.py`.
 
-The high-level concept from the PDF still holds: ReID converts camera-local tracks into
-cross-camera identities. The current implementation is centered on `TrackCentroids` for people
-and `StationaryKNN` for bags.
+ReID converts camera-local tracks into cross-camera identities. The current implementation is
+centered on `TrackCentroids` for people and `StationaryKNN` for bags.
 
 ### `association`
 
@@ -200,8 +179,8 @@ Current responsibilities:
 - Consume manual or external incident resolutions.
 - Send normalized outputs to the database/web layer.
 
-Compared with the PDF, the current association module is broader than tray/bag ownership
-alone. It now also handles gun detections and incident resolution flow.
+The association module handles both ownership inference and incident resolution flow, including
+gun detections.
 
 ### `anomaly`
 
@@ -218,20 +197,6 @@ This module is intentionally adapter-driven. The built-in heuristic adapter work
 the external VLM demo integration point is represented as an optional adapter boundary rather
 than a hard-coded dependency.
 
-### `exporter`
-
-Entry point: `exporter/main.py`
-
-Current responsibilities:
-
-- Read persisted incidents, entities, anomaly events, and asset references from Postgres.
-- Build Kafka-compatible micro-batch envelopes on configurable thresholds.
-- Publish structured event batches without inlining large media bytes.
-- Report exporter health, backlog, and last-flush state back into the control plane.
-
-This is a persistence-backed export path, not a frontend feed scraper. That keeps downstream
-delivery coupled to normalized stored outputs instead of UI-oriented API shapes.
-
 ### `webapp`
 
 Entry points:
@@ -243,7 +208,7 @@ Entry points:
 Current responsibilities:
 
 - Serve REST endpoints for run control, mixed-source configuration, upload staging, status,
-  resource telemetry, POI registration, and Genetec-style views.
+  resource telemetry, POI registration, and Operations-style views.
 - Read/write incident and entity data from Postgres.
 - Persist operator-managed control-plane data under the Postgres `control` schema.
 - Push start/stop and POI messages into RabbitMQ.
@@ -256,12 +221,12 @@ Notable route groups:
 - `/system/modules/{module_name}/restart`
 - `/camera_stream`, `/camera_streams` (compatibility endpoints)
 - `/register_poi`
-- `/genetec/runs`
-- `/genetec/incidents`, `/genetec/incident`
-- `/genetec/entities`, `/genetec/entity`
-- `/genetec/update_incident`
-- `/genetec/incident_video/`
-- `/genetec/pois`, `/genetec/poi`
+- `/operations/runs`
+- `/operations/incidents`, `/operations/incident`
+- `/operations/entities`, `/operations/entity`
+- `/operations/update_incident`
+- `/operations/incident_video/`
+- `/operations/pois`, `/operations/poi`
 
 ### Infrastructure
 
@@ -291,23 +256,7 @@ The `shared/` directory is the main contract surface between services. It contai
 - utility modules used across services
 - mounted config and output directories used by containers
 
-This matches the original PDF’s description of `shared` as the cross-container dependency hub.
-
-## Current Versus Historical Documentation
-
-The attached PDF is still valuable for concepts and intent, especially for:
-
-- the end-to-end message flow
-- the idea of zone-aware ReID
-- bag ownership and abandonment logic
-- the role of a shared volume for configs and outputs
-
-However, treat the following items as historical unless you confirm them in code:
-
-- clothing segmentation / fashion service
-- tray-specific ArUco flow
-- older container and entrypoint names
-- dashboard usage instructions that assume a static HTML frontend
+`shared` acts as the cross-container dependency hub.
 
 ## Operational Notes
 

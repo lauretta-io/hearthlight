@@ -83,7 +83,7 @@ services:
       - .env
     environment:
       - RELOAD=${RELOAD:-}
-      - DHS_CONFIG_PATH=/app/src/shared/configs/config.yaml
+      - HEARTHLIGHT_CONFIG_PATH=/app/src/shared/configs/config.yaml
     restart: unless-stopped
     healthcheck:
       test:
@@ -234,35 +234,6 @@ services:
         python -um src.anomaly.main
       fi'
 
-  exporter:
-    profiles: ["pipeline"]
-    build: ./exporter
-    networks:
-      - mynetwork
-    volumes:
-      - ./shared:/app/src/shared
-      - ./exporter:/app/src/exporter
-    depends_on:
-      db:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
-    env_file:
-      - .env
-    environment:
-      - RELOAD=${RELOAD:-}
-    restart: unless-stopped
-    command: >
-      bash -c '
-      until nc -z rabbitmq 15672; do
-        sleep 1;
-      done;
-      if [ ! -z "$RELOAD" ]; then
-        hupper -m src.exporter.main
-      else
-        python -um src.exporter.main
-      fi'
-
   foia_db:
     image: postgres:13-alpine
     profiles: ["foia"]
@@ -301,7 +272,7 @@ services:
     command: >
       bash -c '
       chmod +x src/FOIA/Database/import_database.sh;
-      python -um src.FOIA.DataProducer.main DHS --dhs_backend'
+      python -um src.FOIA.DataProducer.main HEARTHLIGHT'
 
   foia_webapp:
     build: ./FOIA
@@ -321,7 +292,7 @@ services:
     restart: unless-stopped
     command: >
       bash -c '
-      python -um src.FOIA.WebApp.main DHS'
+      python -um src.FOIA.WebApp.main HEARTHLIGHT'
 
   foia_reset_db:
     build: ./FOIA

@@ -9,7 +9,7 @@ const buildJsonResponse = (body) =>
 
 beforeEach(() => {
   global.fetch = jest.fn((url, options = {}) => {
-    if (url.endsWith('/genetec/pois') && (!options.method || options.method === 'GET')) {
+    if (url.endsWith('/operations/pois') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
         {
           id: 12,

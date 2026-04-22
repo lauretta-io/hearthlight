@@ -218,7 +218,6 @@ def main():
         else:
             expect(resources["admission"]["allowed"] is True, "admission should be open")
         expect("model_health" in resources, "resource snapshot is missing model health")
-        expect("exporter_status" in resources, "resource snapshot is missing exporter status")
 
         models = send_json(base_url, "/models", api_key=args.api_key)
         expect(models, "expected at least one registered model")
@@ -239,9 +238,6 @@ def main():
             api_key=args.api_key,
         )
         expect(saved_bindings, "expected model binding update response")
-
-        export_sinks = send_json(base_url, "/export-sinks", api_key=args.api_key)
-        expect(export_sinks, "expected at least one export sink registration")
 
         model_health = send_json(base_url, "/system/model-health", api_key=args.api_key)
         expect(model_health, "expected model health response")
