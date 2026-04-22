@@ -1,0 +1,7 @@
+[Desktop Entry]
+Name=Hearthlight Config
+Comment=Hearthlight Runtime Manager
+Exec=/home/lauretta/dhs-passenger-detection/run/run.sh
+Icon=icon.png
+Terminal=false
+Type=Application

@@ -1,0 +1,100 @@
+{
+  "descriptions": [
+    {
+      "normal": { "category": "office_solo", "description": "A single person working at a desk" }
+    },
+    {
+      "normal": { "category": "office_group", "description": "Several people working at their desks" }
+    },
+    {
+      "normal": { "category": "park_solo", "description": "A person walking, jogging, or sitting on a bench" }
+    },
+    {
+      "normal": { "category": "park_group", "description": "A group of people walking, exercising, or relaxing in a park." }
+    },
+    {
+      "normal": { "category": "road_clear", "description": "An empty road with no vehicles, only pedestrians walking nearby." }
+    },
+    {
+      "normal": { "category": "road_clear_busy", "description": "People walking and standing near a road that has no vehicles on it." }
+    },
+    {
+      "normal": { "category": "road_barrier", "description": "A blocked or barricaded road with no vehicles passing through." }
+    },
+    {
+      "normal": { "category": "pedestrians_only", "description": "A street area with only pedestrians, no cars or vehicles present." }
+    },
+    {
+      "anomalous": { "category": "fighting_indoor", "description": "Two or more people physically fighting or grappling." }
+    },
+    {
+      "anomalous": { "category": "fighting_outdoor", "description": "Multiple people punching, kicking, or brawling." }
+    },
+    {
+      "anomalous": { "category": "fire_indoor", "description": "Visible flames or thick smoke inside a building." }
+    },
+    {
+      "anomalous": { "category": "fire_outdoor", "description": "Fire or smoke spreading across an outdoor area." }
+    },
+    {
+      "anomalous": { "category": "weapon_visible", "description": "A person visibly holding or brandishing a firearm or bladed weapon." }
+    },
+    {
+      "anomalous": { "category": "weapon_threat", "description": "A person pointing a weapon at others" }
+    },
+    {
+      "anomalous": { "category": "mass_panic", "description": "A crowd of people suddenly running in multiple directions." }
+    },
+    {
+      "anomalous": { "category": "person_fleeing", "description": "One or more people sprinting away from an area." }
+    },
+    {
+      "anomalous": { "category": "explosion", "description": "A sudden blast with visible debris and smoke in an open area." }
+    },
+    {
+      "anomalous": { "category": "terrorist_activity", "description": "Vehicle crashing into a crowd." }
+    },
+    {
+      "anomalous": { "category": "accident", "description": "Vehicle collision or other traffic accident." }
+    },
+    {
+      "anomalous": { "category": "accident", "description": "A park with people and some vehicles driving." }
+    },
+    {
+      "anomalous": { "category": "accident", "description": "A park with people walking and a heavy vehicle running through it." }
+    },
+    {
+      "anomalous": { "category": "accident", "description": "A park with people walking and a car or bus running through it." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A car driving on a road." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A truck driving on a road." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A car driving on a pavement." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A truck driving on a pavement." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A bus passing through a restricted or blocked road area." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A truck driving through a road that should have no vehicle traffic." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A truck driving through a road that should have no vehicle traffic." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A motorcycle or scooter riding on a closed road." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "Multiple vehicles moving through a restricted road zone." }
+    },
+    {
+      "anomalous": { "category": "vehicle_on_road", "description": "A van or small vehicle parked or driving on a road." }
+    }
+  ]
+}

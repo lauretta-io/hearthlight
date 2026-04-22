@@ -1,0 +1,87 @@
+anomaly_object_list:
+  - weapon
+  - knife
+  - gun
+  - firearm
+  - rifle
+  - handgun
+  - machete
+  - baseball bat
+  - crowbar
+  - club
+  - fire
+  - flames
+  - smoke
+  - explosion
+  - debris
+  - burning object
+  - blood
+  - body on ground
+  - broken glass
+  - shattered window
+  - overturned furniture
+  - broken door
+  - protest banner
+  - protest sign
+  - flag being waved
+  - banner
+  - car
+  - truck
+  - bus
+  - van
+  - vehicle
+  - motorcycle
+  - scooter
+  - bike
+  - tram
+  - trolley
+
+anomaly_activity_list:
+  - fighting
+  - assault
+  - attacking
+  - punching
+  - kicking
+  - grabbing
+  - choking
+  - group brawl
+  - brandishing weapon
+  - pointing gun
+  - threatening with knife
+  - running away
+  - sprinting from threat
+  - panicking
+  - crowd stampede
+  - crowd scattering
+  - people dropping to ground
+  - mass evacuation
+  - arson
+  - setting fire
+  - fire spreading
+  - explosion occurring
+  - smoke filling area
+  - theft
+  - bag snatching
+  - vandalism
+  - breaking window
+  - trespassing
+  - climbing fence
+  - breaking into building
+  - suspicious loitering
+  - stalking
+  - person collapsing
+  - person lying motionless
+  - aggressive confrontation
+  - intimidating group behaviour
+  - chasing person
+  - vehicle driving
+  - waving banner
+  - waving flag
+  - holding protest sign
+  - riding scooter
+  - riding bike
+  - riding motorcycle
+  - truck driving
+  - car driving
+  - bus driving
+  - van driving

@@ -1,0 +1,18 @@
+[
+  {
+    "kind": "camera_url",
+    "label": "Seed Camera 1",
+    "tasks": ["PERSON", "BAG"],
+    "enabled": false,
+    "order": 0,
+    "source_value": "rtsp://replace-me/stream-1"
+  },
+  {
+    "kind": "webcam",
+    "label": "Seed Webcam",
+    "tasks": ["PERSON"],
+    "enabled": false,
+    "order": 1,
+    "source_value": 0
+  }
+]

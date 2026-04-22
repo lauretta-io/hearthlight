@@ -1,0 +1,19 @@
+builtin_cmtrack:
+  stage: tracker
+  adapter: cmtrack_tracker
+  artifact_ref: cmtrack
+  runtime:
+    tracker_name: cmtrack
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: src.shared.model_zoo.trackers
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 1

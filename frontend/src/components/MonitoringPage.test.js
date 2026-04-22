@@ -1,0 +1,201 @@
+import { act, render, screen } from '@testing-library/react';
+import MonitoringPage from './MonitoringPage';
+
+const buildJsonResponse = (body) =>
+  Promise.resolve({
+    ok: true,
+    json: () => Promise.resolve(body),
+  });
+
+beforeEach(() => {
+  global.fetch = jest.fn((url) => {
+    if (url.includes('/monitoring/overview')) {
+      return buildJsonResponse({
+        generated_at: '2026-03-14T12:00:00Z',
+        system_status: 'running',
+        current_run_id: '2026-03-14_12-00-00',
+        selected_run_identifier: '2026-03-14_12-00-00',
+        admission: {
+          allowed: true,
+          reason: null,
+        },
+        resources: {
+          cpu_percent: 11,
+          memory_percent: 22,
+          disk_percent: 33,
+          gpus: [],
+          module_metrics: {
+            REID: {
+              state: 'warning',
+              max_queue_depth: 12,
+              hottest_queue: 'database_thread',
+              queue_depths: {
+                consumer: 0,
+                database_thread: 12,
+              },
+            },
+          },
+          dependency_status: {
+            database: {
+              status: 'ok',
+              detail: null,
+            },
+            rabbitmq: {
+              status: 'error',
+              detail: 'connection refused',
+            },
+          },
+          module_status: {
+            WEBAPP: 'running',
+          },
+          model_health: {
+            builtin_rtdetr: {
+              model_key: 'builtin_rtdetr',
+              stage: 'detector',
+              adapter: 'rtdetr_detector',
+              healthy: true,
+              detail: null,
+            },
+          },
+          exporter_status: {
+            sink_key: 'kafka_default',
+            enabled: false,
+            healthy: true,
+            detail: null,
+            queued_records: 0,
+          },
+        },
+        runs: [
+          {
+            run_identifier: '2026-03-14_12-00-00',
+            status: 'running',
+            incident_count: 3,
+            entity_count: 5,
+            source_count: 2,
+            camera_count: 2,
+          },
+        ],
+        sources: [
+          {
+            id: 1,
+            kind: 'camera_url',
+            label: 'Checkpoint A',
+            tasks: ['PERSON'],
+            enabled: true,
+            order: 0,
+            source_value: 'rtsp://example',
+            detector_model_key: 'builtin_rtdetr',
+            tracker_model_key: null,
+            reid_model_key: null,
+            anomaly_model_key: null,
+            state: 'running',
+          },
+        ],
+        model_bindings: [
+          {
+            stage: 'detector',
+            model_key: 'builtin_rtdetr',
+            binding_scope: 'default',
+            source_id: null,
+          },
+        ],
+        model_registrations: [
+          {
+            model_key: 'builtin_rtdetr',
+            stage: 'detector',
+            adapter: 'rtdetr_detector',
+          },
+        ],
+        export_sinks: [
+          {
+            sink_key: 'kafka_default',
+            adapter: 'kafka_json',
+            enabled: false,
+            bootstrap_servers: ['localhost:9092'],
+            topics: {},
+            batch: {},
+            health: {
+              status: 'ok',
+              detail: null,
+            },
+          },
+        ],
+        latest_incidents: [
+          {
+            run_identifier: '2026-03-14_12-00-00',
+            incident_id: 'GUN-20260314-7',
+            incident_type: 'GUN',
+            status: 'CONFIRMED',
+            incident_time: '2026-03-14T12:01:00Z',
+            location: {
+              camera_id: 4,
+              zone_id: 2,
+            },
+          },
+        ],
+        latest_entities: [
+          {
+            run_identifier: '2026-03-14_12-00-00',
+            entity_id: 'P-20260314-5',
+            entity_type: 'PERSON',
+            last_seen_time: '2026-03-14T12:01:30Z',
+            associated_incident_ids: ['GUN-20260314-7'],
+          },
+        ],
+        latest_anomalies: [
+          {
+            event_id: 'heuristic_presence:1:22:presence_resume',
+            run_id: '2026-03-14_12-00-00',
+            source_id: 1,
+            frame_id: 22,
+            model_key: 'heuristic_presence',
+            category: 'presence_resume',
+            score: 0.8,
+            reasoning: 'Observed 2 tracked objects after inactivity window.',
+            asset_references: [],
+          },
+        ],
+        recent_events: [
+          {
+            created_at: '2026-03-14T12:02:00Z',
+            event_type: 'system_start',
+            severity: 'info',
+            message: 'system start published',
+          },
+        ],
+        feed_endpoints: [
+          {
+            name: 'Algorithm Feed',
+            path: '/feeds/algorithm',
+            description: 'Combined source, resource, incident, entity, anomaly, and exporter output for a run.',
+          },
+        ],
+      });
+    }
+    return buildJsonResponse({});
+  });
+});
+
+afterEach(() => {
+  jest.clearAllMocks();
+});
+
+test('renders monitoring overview and feed endpoint catalog', async () => {
+  await act(async () => {
+    render(<MonitoringPage />);
+  });
+
+  expect(await screen.findByText('Monitoring')).toBeTruthy();
+  expect(screen.getByText('Feed Endpoints')).toBeTruthy();
+  expect(screen.getByText('Checkpoint A')).toBeTruthy();
+  expect(screen.getByText('GUN-20260314-7')).toBeTruthy();
+  expect(screen.getByText('Dependencies')).toBeTruthy();
+  expect(screen.getByText('Model Health')).toBeTruthy();
+  expect(screen.getByText('Export Sinks')).toBeTruthy();
+  expect(screen.getByText('Anomalies')).toBeTruthy();
+  expect(screen.getByText('Module Backpressure')).toBeTruthy();
+  expect(screen.getByText('database_thread at depth 12')).toBeTruthy();
+  expect(screen.getByText('connection refused')).toBeTruthy();
+  expect(screen.getByText(/\/feeds\/algorithm/)).toBeTruthy();
+  expect(screen.getByText('presence_resume')).toBeTruthy();
+});

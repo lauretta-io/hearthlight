@@ -1,0 +1,28 @@
+template: |
+  You are a security surveillance analyst reviewing {frames_count} frames from a camera feed.
+  Each frame is 1 second apart.
+
+  Frames provided:
+  {input_details}
+
+  ANOMALOUS ITEMS:
+  {anomaly_object_list}
+
+  ANOMALOUS ACTIVITIES:
+  {anomaly_activity_list}
+
+  Instructions:
+  1. Describe the scene briefly.
+  2. Score every entry in ANOMALOUS ITEMS and ANOMALOUS ACTIVITIES from 0 to 10 based on how likely it is present or occurring in the frames. 0 = definitely not present, 10 = definitely present. Be concise: use format "item:score" separated by commas.
+  3. Any item or activity that scored above 5 must be listed in visible_items or visible_activities respectively.
+  4. Set confidence (0-1) to reflect the overall anomaly likelihood derived from the item and activity scores.
+  5. Set anomaly_detected to true if confidence is above 0.5, false otherwise.
+
+  Respond with a JSON object containing:
+  - scene_summary: Brief description of what is clearly visible in the foreground scene.
+  - think: Scores for every item and activity in the ANOMALOUS ITEMS and ANOMALOUS ACTIVITIES list. Format: "vehicle:score", "fighting:score", etc.
+  - visible_items: Comma-separated items from ANOMALOUS ITEMS that scored above 5. Empty string if none.
+  - visible_activities: Comma-separated activities from ANOMALOUS ACTIVITIES that scored above 5. Empty string if none.
+  - confidence: Overall anomaly likelihood between 0 and 1 based on the scores.
+  - anomaly_detected: true if confidence is above 0.5, false otherwise.
+  - anomaly_category: If anomaly_detected is true, name the anomaly category based on the highest-scored items or activities.

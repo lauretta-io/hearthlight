@@ -1,0 +1,79 @@
+.api-docs-page {
+  width: 100%;
+}
+
+.api-docs-shell {
+  width: 100%;
+  padding: clamp(18px, 2.4vw, 30px);
+  border-radius: 24px;
+  border: 1px solid #d7e0ea;
+  background:
+    radial-gradient(circle at top right, rgba(226, 236, 249, 0.95), transparent 28%),
+    linear-gradient(180deg, rgba(250, 252, 255, 0.97), rgba(255, 255, 255, 0.99));
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+}
+
+.api-docs-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.api-docs-header h2 {
+  margin: 0;
+}
+
+.api-docs-subtitle {
+  margin: 6px 0 0;
+  color: #5f6b7a;
+}
+
+.api-docs-link {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 16px;
+  border-radius: 999px;
+  background: #e8f1fb;
+  color: #17436e;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.api-docs-error {
+  margin-top: 16px;
+  border-radius: 14px;
+  padding: 14px 16px;
+  background: #fff1f1;
+  border: 1px solid #f0c4c4;
+  color: #8d1d1d;
+}
+
+.api-docs-viewer {
+  margin-top: 20px;
+  min-height: 70vh;
+  border-radius: 18px;
+  overflow: hidden;
+  background: white;
+}
+
+.api-docs-viewer .swagger-ui {
+  font-family: 'Roboto', sans-serif;
+}
+
+@media (max-width: 720px) {
+  .api-docs-shell {
+    padding: 16px;
+    border-radius: 18px;
+  }
+
+  .api-docs-header {
+    align-items: flex-start;
+  }
+
+  .api-docs-link {
+    width: 100%;
+  }
+}

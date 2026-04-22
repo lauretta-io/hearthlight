@@ -1,0 +1,28 @@
+services:
+  ingestor:
+    gpus: all
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+
+  reid:
+    gpus: all
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+
+  anomaly:
+    gpus: all
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}
+
+  foia:
+    gpus: all
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${CUDA_VISIBLE_DEVICES:-all}
+      - NVIDIA_DRIVER_CAPABILITIES=${NVIDIA_DRIVER_CAPABILITIES:-all}

@@ -1,0 +1,341 @@
+networks:
+  mynetwork:
+
+volumes:
+  postgres_data:
+  foia_data:
+
+x-nvidia-env: &nvidia-env
+  NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
+  NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-compute,utility,video}
+
+services:
+  db:
+    image: postgres:13-alpine
+    networks:
+      - mynetwork
+    ports:
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    env_file:
+      - .env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  rabbitmq:
+    build: ./rabbitmq
+    networks:
+      - mynetwork
+    ports:
+      - "${RABBITMQ_HOST_PORT:-5673}:5673"
+      - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
+    restart: unless-stopped
+    command: sh /usr/local/bin/init.sh
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  reset_db:
+    build: ./webapp
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - PYTHONPATH=/app
+    command: >
+      bash -c '
+      python -um src.shared.database.recreate_db'
+
+  webapp:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    build: ./webapp
+    networks:
+      - mynetwork
+    ports:
+      - "${WEBAPP_API_HOST_PORT:-8000}:8000"
+      - "${WEBAPP_UI_HOST_PORT:-3000}:3000"
+    volumes:
+      - ./frontend:/app/src/frontend
+      - ./shared:/app/src/shared
+      - ./webapp:/app/src/webapp
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - RELOAD=${RELOAD:-}
+      - DHS_CONFIG_PATH=/app/src/shared/configs/config.yaml
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import json,sys,urllib.request; payload=json.load(urllib.request.urlopen('http://127.0.0.1:8000/readyz')); sys.exit(0 if payload.get('status')=='ready' else 1)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+    command: >
+      bash -c '
+      cd /app/src/frontend &&
+      npm install &&
+      (npm start &) &&
+      cd /app &&
+      until nc -z rabbitmq 15672; do
+        sleep 1; 
+      done; 
+      python -um src.webapp.run'
+
+  ingestor:
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    profiles: ["pipeline"]
+    build: ./ingestor
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./ingestor:/app/src/ingestor
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      DISPLAY: ${DISPLAY}
+      QT_X11_NO_MITSHIM: "1"
+      RELOAD: ${RELOAD:-}
+      <<: *nvidia-env
+    restart: unless-stopped
+    command: >
+      bash -c '
+      until nc -z rabbitmq 15672; do 
+        sleep 1; 
+      done; 
+      if [ ! -z "$RELOAD" ]; then
+        hupper -m src.ingestor.main
+      else
+        python -um src.ingestor.main
+      fi'
+
+  reid:
+    profiles: ["pipeline"]
+    build: ./reid
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./reid:/app/src/reid
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      ingestor:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      RELOAD: ${RELOAD:-}
+      <<: *nvidia-env
+    restart: unless-stopped
+    command: >
+      bash -c '
+      until nc -z rabbitmq 15672; do
+        sleep 1; 
+      done; 
+      if [ ! -z "$RELOAD" ]; then
+        hupper -m src.reid.main
+      else
+        python -um src.reid.main
+      fi'
+
+  association:
+    profiles: ["pipeline"]
+    build: ./association
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./association:/app/src/association
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      ingestor:
+        condition: service_started
+      reid:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      - RELOAD=${RELOAD:-}
+    restart: unless-stopped
+    command: >
+      bash -c '
+      until nc -z rabbitmq 15672;
+      do sleep 1; 
+      done; 
+      if [ ! -z "$RELOAD" ]; then
+        hupper -m src.association.main
+      else
+        python -um src.association.main
+      fi'
+
+  anomaly:
+    profiles: ["pipeline"]
+    build: ./anomaly
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./anomaly:/app/src/anomaly
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      reid:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      RELOAD: ${RELOAD:-}
+      <<: *nvidia-env
+    restart: unless-stopped
+    command: >
+      bash -c '
+      until nc -z rabbitmq 15672; do
+        sleep 1;
+      done;
+      if [ ! -z "$RELOAD" ]; then
+        hupper -m src.anomaly.main
+      else
+        python -um src.anomaly.main
+      fi'
+
+  exporter:
+    profiles: ["pipeline"]
+    build: ./exporter
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./exporter:/app/src/exporter
+    depends_on:
+      db:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      - RELOAD=${RELOAD:-}
+    restart: unless-stopped
+    command: >
+      bash -c '
+      until nc -z rabbitmq 15672; do
+        sleep 1;
+      done;
+      if [ ! -z "$RELOAD" ]; then
+        hupper -m src.exporter.main
+      else
+        python -um src.exporter.main
+      fi'
+
+  foia_db:
+    image: postgres:13-alpine
+    profiles: ["foia"]
+    networks:
+      - mynetwork
+    ports:
+      - "${FOIA_DB_HOST_PORT:-5434}:5432"
+    volumes:
+      - foia_data:/var/lib/postgresql/data/
+    env_file:
+      - foia.env
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+  foia:
+    build: ./FOIA
+    profiles: ["foia"]
+    shm_size: "2gb"
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./FOIA:/app/src/FOIA
+    depends_on:
+      foia_db:
+        condition: service_healthy
+      db:
+        condition: service_healthy
+    env_file:
+      - foia.env
+    command: >
+      bash -c '
+      chmod +x src/FOIA/Database/import_database.sh;
+      python -um src.FOIA.DataProducer.main DHS --dhs_backend'
+
+  foia_webapp:
+    build: ./FOIA
+    profiles: ["foia"]
+    networks:
+      - mynetwork
+    ports:
+      - "${FOIA_WEBAPP_HOST_PORT:-8002}:8000"
+    volumes:
+      - ./shared:/app/src/shared
+      - ./FOIA:/app/src/FOIA
+    depends_on:
+      foia_db:
+        condition: service_healthy
+    env_file:
+      - foia.env
+    restart: unless-stopped
+    command: >
+      bash -c '
+      python -um src.FOIA.WebApp.main DHS'
+
+  foia_reset_db:
+    build: ./FOIA
+    profiles: ["foia"]
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./FOIA:/app/src/FOIA
+    depends_on:
+      foia_db:
+        condition: service_healthy
+    env_file:
+      - foia.env
+    command: >
+      bash -c '
+      python -um src.FOIA.Database.recreate_db'

@@ -1,0 +1,228 @@
+.monitor-page {
+  width: 100%;
+}
+
+.monitor-shell {
+  width: 100%;
+  padding: clamp(18px, 2.4vw, 30px);
+  border-radius: 14px;
+  border: 1px solid #d7e0ea;
+  background:
+    radial-gradient(circle at top left, rgba(221, 237, 249, 0.95), transparent 32%),
+    linear-gradient(165deg, rgba(247, 251, 255, 0.96), rgba(255, 255, 255, 0.98));
+  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+}
+
+.monitor-header,
+.monitor-panel-header,
+.monitor-source-row,
+.monitor-data-row,
+.monitor-event-row,
+.monitor-endpoint-row,
+.monitor-table-head,
+.monitor-table-row,
+.monitor-data-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.monitor-subtitle,
+.monitor-muted,
+.monitor-panel-header p {
+  color: #5f6b7a;
+}
+
+.monitor-header h2,
+.monitor-panel-header h3 {
+  margin: 0;
+}
+
+.monitor-subtitle,
+.monitor-panel-header p {
+  margin: 6px 0 0;
+}
+
+.monitor-run-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: min(100%, 16rem);
+}
+
+.monitor-run-picker select {
+  width: 100%;
+  border: 1px solid #c8d3df;
+  border-radius: 9px;
+  padding: 12px 14px;
+  font: inherit;
+  background: white;
+}
+
+.monitor-alert {
+  margin-top: 18px;
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.monitor-alert-error {
+  background: #fff1f1;
+  border: 1px solid #f0c4c4;
+  color: #8d1d1d;
+}
+
+.monitor-summary-grid,
+.monitor-grid {
+  display: grid;
+  gap: clamp(16px, 2vw, 24px);
+  margin-top: clamp(18px, 2vw, 24px);
+}
+
+.monitor-summary-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr));
+}
+
+.monitor-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 22rem), 1fr));
+}
+
+.monitor-panel-wide {
+  grid-column: 1 / -1;
+}
+
+.monitor-summary-card,
+.monitor-panel {
+  border: 1px solid #dbe3ec;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.92);
+  padding: 18px;
+}
+
+.monitor-summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.monitor-label {
+  color: #607080;
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.08em;
+}
+
+.monitor-stack,
+.monitor-endpoint-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.monitor-source-row,
+.monitor-data-row,
+.monitor-event-row,
+.monitor-endpoint-row,
+.monitor-table-row {
+  border: 1px solid #d9e1eb;
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #fbfdff;
+}
+
+.monitor-source-meta,
+.monitor-data-meta {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.monitor-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: #e7edf4;
+  color: #41566d;
+  text-transform: capitalize;
+}
+
+.monitor-pill-running,
+.monitor-pill-completed {
+  background: #d9f5e6;
+  color: #16633d;
+}
+
+.monitor-pill-failed,
+.monitor-pill-error {
+  background: #ffe1e1;
+  color: #932222;
+}
+
+.monitor-pill-initializing,
+.monitor-pill-stopping {
+  background: #fff4d6;
+  color: #8c6200;
+}
+
+.monitor-table {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.monitor-table-head {
+  padding: 0 4px;
+  color: #607080;
+  font-size: 0.84rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.monitor-endpoint-row code {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: #eff5fb;
+  color: #15324f;
+}
+
+.monitor-empty {
+  border-radius: 10px;
+  padding: 14px 16px;
+  background: #f3f7fb;
+  color: #5f6b7a;
+}
+
+.monitor-shell-embedded {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+@media (max-width: 720px) {
+  .monitor-shell {
+    padding: 16px;
+    border-radius: 12px;
+  }
+
+  .monitor-header,
+  .monitor-panel-header,
+  .monitor-source-row,
+  .monitor-data-row,
+  .monitor-event-row,
+  .monitor-endpoint-row,
+  .monitor-table-head,
+  .monitor-table-row,
+  .monitor-data-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

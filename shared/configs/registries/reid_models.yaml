@@ -1,0 +1,20 @@
+builtin_reid:
+  stage: reid
+  adapter: legacy_reid
+  artifact_ref: track_centroids_stationary_knn
+  runtime:
+    person_strategy: TrackCentroids
+    bag_strategy: StationaryKNN
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: src.shared.ReID_Bench.ReIDModules
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 1

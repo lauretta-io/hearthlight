@@ -1,0 +1,9 @@
+[submodule "FOIA"]
+	path = FOIA
+	url = https://github.com/lauretta-io/FOIA.git
+[submodule "shared/ReID_Bench"]
+	path = shared/ReID_Bench
+	url = https://github.com/lauretta-io/ReID_Bench.git
+[submodule "shared/model_zoo"]
+	path = shared/model_zoo
+	url = https://github.com/lauretta-io/model_zoo.git

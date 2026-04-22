@@ -1,0 +1,283 @@
+run_id: place_holder
+input:
+  wait_for_cameras: false
+  record_buf_len: 500
+  max_fps: 20
+  resize: true
+  height: 720
+  width: 1280
+  rtsp_base: rtsp://admin:lauretta123456!@192.168.1.187:554/unicast/c
+  substream: /s1/live
+  cameras:
+    # 1:
+    #    name: 'first'
+    #    x_loc: 10.0
+    #    y_loc: 9.5
+    #    source: ${input.rtsp_base}2${input.substream}  
+    #    tasks: ['person','fare']
+    #
+    2: 
+      name: 'first'
+      x_loc: 10.0
+      y_loc: 9.5
+      created_at: 2021-08-28T04:08:42.071Z
+      source: ${input.rtsp_base}2${input.substream}  
+      tasks: ['fare', 'person', 'bag']
+
+    3: 
+      name: 'third'
+      x_loc: 10.0
+      y_loc: 9.5
+      source: ${input.rtsp_base}3${input.substream}
+      tasks: [person, gun, bag]
+    #
+    # 4: 
+    #   name: 'four'
+    #   x_loc: 10.0
+    #   y_loc: 9.5
+    #   source: ${input.rtsp_base}4${input.substream} 
+    #   tasks: [person, gun, bag]
+
+    5: 
+      name: 'five'
+      x_loc: 10.0
+      y_loc: 9.5
+      source: ${input.rtsp_base}5${input.substream} 
+      tasks: [person, gun, bag]
+    #
+    # 6: 
+    #   name: 'six'
+    #   x_loc: 10.0
+    #   y_loc: 9.5
+    #   source: ${input.rtsp_base}6${input.substream} 
+    #   tasks: [person, gun, bag]
+
+    9: 
+      name: 'nine'
+      x_loc: 10.0
+      y_loc: 9.5
+      source: ${input.rtsp_base}9${input.substream} 
+      tasks: [person, gun, bag]
+
+    11: 
+      name: 'eleven'
+      x_loc: 10.0
+      y_loc: 9.5
+      source: ${input.rtsp_base}11${input.substream}  
+      tasks: [person, gun, bag]
+
+passenger_zones: {}
+tray_zones: {}
+output:
+  output_dir: shared/output/${run_identifier}
+  crops:
+    save_crops: true
+    save_crops_zone: false
+    image_ext: .png
+    crop_dir: ${output.output_dir}/crops/
+    clothing_crop_dir: ${output.output_dir}/clothing_crops/
+  features:
+    save_features: true
+    feature_dir: ${output.output_dir}/features/
+  frames:
+    save_frames: true
+    image_ext: .png
+    frame_dir: ${output.output_dir}/frames/
+    save_interval: 20
+    size:
+    - 640
+    - 360
+  incident_video:
+    save_video: true
+    fps: 10
+    dir: ${output.output_dir}/incidents/
+    seconds: 10
+  video:
+    fps: 5
+    save_raw: true
+    raw_path: ${output.output_dir}/raw/
+    save_annotated: true
+    annotated_path: ${output.output_dir}/annotated/
+    anomaly_path: ${output.output_dir}/anomaly/
+  visualize:
+    show_vid: true
+    mosaic: true
+    max_height: 1000
+    max_width: 1920
+    max_per_window: 9
+logging:
+  log_dir: ${output.output_dir}/logs/
+  level: INFO                
+tracking:
+  track_method: ocsort
+  classes:
+    0: person
+    1: bag
+  labels:
+    clss: true
+    id: true
+    conf: false
+  bytetrack:
+    track_thresh: 0.5
+    match_thresh: 0.8
+    track_buffer: 30
+    frame_rate: 12
+  ocsort:
+    asso_func: giou
+    delta_t: 3
+    det_thresh: 0
+    inertia: 0.2
+    iou_thresh: 0.3
+    max_age: 3
+    min_hits: 1
+    per_class: true
+    use_byte: true
+rtdetr:
+  device: cuda
+  img_size:
+  - 640
+  - 640
+  model_name: dfine-x-11-05-2024
+  conf_thresh:
+    person: 0.5
+    bag: 0.6
+    gun: 0.3
+  names:            # map from object detector indices to object names
+    0: person
+    1: bag
+    2: gun
+pose:
+  enable: true
+  model_name: rtmo-s
+  device: cuda
+tray:
+  x_padding: 90
+  y_padding: 40
+  mode: aruco
+  model_name: yolo8_tray_650
+feature_extractor:
+  device: cuda:0
+  frame_interval: 2
+  max_fps: 10
+  height: 384
+  width: 128
+  arch: vit_base
+  model_name: transformer_120
+  drop_path_rate: 0.3
+  hw_ratio: 2
+  conv_stem: true
+  distributed: false
+age_classifier:
+  enable: true
+  model_path: shared/weights/age_classifier
+  device: cuda:0
+  frame_interval: 10
+  max_fps: 2
+reid:
+  person:
+    algo: basic_KNN
+    parameters:
+      threshold: 0.86
+      min_match: 4
+      n_init: 12
+      k: 100
+      feat_inv_freq: 1
+      track_split_threshold: 0.80
+      track_split_offset: 3
+      n_list: 1
+  bag:
+    algo: stationary_KNN
+    parameters:
+      threshold: 0.8
+      min_match: 4
+      n_init: 12
+      k: 100
+      feat_inv_freq: 1
+      track_split_threshold: 0.75
+      track_split_offset: 3
+      n_list: 1
+journey:
+  time_to_end: 200 
+  create_on_zone: false
+poi:
+  match_threshold: 0.8
+  match_max_age: 600
+  max_matches: 20
+custom_group:
+  match_interval: 10
+  threshold: 0.6
+association:
+  person:
+    zone_based:
+      enabled: false
+      group_time: 2
+    dynamic:
+      enabled: true
+      threshold: 0.2
+      logit_model_path: shared/weights/association/dynamic_logit_model.pkl
+    child:
+      unattended_time: 1
+      prob_threshold: 0.5
+      min_hits: 600
+  bag:
+    radius: 1
+    association_lamb: 0.9
+    ownership_prob: 0.25
+    unattended_time: 30
+  tray:
+    radius: 1
+    association_lamb: 0.9
+    full_threshold: 5
+    empty_threshold: 4
+  gun:
+    threat_threshold: 20
+alerts:
+  wait_for_alert_urls: false
+  new_url: http://webapp:8000/incident
+  update_url: http://webapp:8000/incident
+  resolve_url: http://webapp:8000/resolve
+clothing:
+  classes:
+  - sweater
+  - cardigan
+  - jacket
+  - vest
+  - coat
+  - hat
+  - watch
+  - belt
+  - "tights, stockings"
+  - shoe
+  - "bag, wallet"
+  - scarf
+  - buckle
+  model: attribute_mask_rcnn
+  model_name: fashionformer_r101_3x
+  device: cuda:0
+  model_config: FashionFormer/configs/fashionformer/fashionpedia/fashionformer_r101_mlvl_feat_8x.py
+  image_size: 640
+  num_boxes: 10
+  conf_thresh: 0.5
+  wait_time: 0.2
+  frame_box:
+  - 0.3
+  - 0.88
+  - 0.7
+  - 1.1
+  show: true
+  measure_belt: true
+fare:
+  visualize: ${output.visualize.show_vid}
+  model_name: stgcnpp_8xb16-joint-u100-80e_ntu60-xsub-keypoint-2d
+  model_config: stgcnpp_8xb16-joint-u100-80e_ntu60-xsub-keypoint-2d.py
+  labels:
+    - name: standing up (from sitting position)
+      threshold: 0.1
+    - name: kicking something
+      threshold: 0.5
+  number_of_hits: 3
+  1:
+  - - 593
+    - 198
+    - 881
+    - 514

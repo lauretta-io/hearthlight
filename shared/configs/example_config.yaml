@@ -1,0 +1,168 @@
+input:
+  record_buf_len: 500
+  max_fps: 20 # max fps videos will be ingested at
+  no_frame_timeout: 15 # seconds without any frames before ingest marks the run unhealthy
+  resize: # all camera frames are resized to the below dims for input into detector if this is included
+    - ${rtdetr.img_size[0]}
+    - ${rtdetr.img_size[1]}
+  cameras:
+    0: # camera id
+      name: camera_0 # name of camera (has no effect)
+      x_loc: 10.0 # position of camera (has no effect)
+      y_loc: 9.5
+      source: rstp://your_rstp_url # stream address (or filepath) for camera
+      tasks: # different ai tasks to run on camera
+        - person # person tracking, reid. Everything currently depends on this
+        - bag # bag detection, reid, and abandoned bag
+        - gun # gun detection and shooter alerts
+        - fare # fare jumping alerts
+        - tray # tray detection and association with persons
+    1:
+      name: camera_1
+      x_loc: 10.0
+      y_loc: 9.5
+      source: rstp://another_rstp_url
+      tasks:
+        - person
+        - bag
+        - gun
+
+passenger_zones:
+  1:
+    name: bp_zone # name of zone
+    cameras:
+      0: # for each camera, create a key with camera id
+        - - 0 # list of list of x,y polygon points for zone
+          - 0.556
+        - - 0.313
+          - 0.514
+        - - 0.336
+          - 0.694
+        - - 0
+          - 0.736
+      1:
+        - - 0.15
+          - 0.5
+        - - 0.15
+          - 0.73
+        - - 0.34
+          - 0.75
+        - - 0.36
+          - 0.53
+output:
+  output_dir: src/shared/output/${run_id}
+  features:
+    save_features: false
+    feature_dir: ${output.output_dir}/features/
+  frames:
+    save_frames: false
+    image_ext: .png
+    frame_dir: ${output.output_dir}/frames/
+    save_interval: 20
+    size:
+      - 640
+      - 360
+  video:
+    fps: 5
+    save_raw: true
+    raw_path: ${output.output_dir}/raw/
+    save_annotated: true
+    annotated_path: ${output.output_dir}/annotated/
+    anomaly_path: ${output.output_dir}/anomaly/
+  visualize:
+    show_vid: true
+    mosaic: true
+    max_height: 1000
+    max_width: 1920
+    max_per_window: 9
+    labels:
+      clss: true
+      id: true
+      conf: false
+logging:
+  bootstrap_log_dir: shared/output/bootstrap_logs/
+  log_dir: ${output.output_dir}/logs/
+  level: INFO # level parameter will apply to all containers
+  # Ingestor: DEBUG          # except those specified with their own level
+  # Association: DEBUG
+  # ReID: DEBUG
+  # Clothing: DEBUG
+tracking:
+  tracker: cmtrack
+  classes:
+    0: person
+    1: bag
+rtdetr:
+  img_size:
+    - 1280
+    - 1280
+  model_name: dfine-x-1280-pbg
+  conf_thresh:
+    person: 0.6
+    bag: 0.6
+    gun: 0.3
+  names: # map from object detector indices to object names
+    0: person
+    1: bag
+    2: gun
+pose:
+  enable: false
+  conf: 0.4
+  model_name: rtmo-s
+  device: cuda
+feature_extractor:
+  frame_interval: 0
+  max_fps: 40
+  model_name: personvit_msmt
+anomaly:
+  text_embeddings_path: /app/src/shared/prompts/prompt.pt
+  text_prompts_path: /app/src/shared/prompts
+  eval_interval: 10
+  device: cuda:0
+  threshold: 0.5
+vllm:
+  openai_host: host.docker.internal
+  openai_port: 3456
+  frame_sampling_interval: 5
+  ensure_frames_divisible_by: 8
+  pad_to_divisible: true
+  prompt_yaml_path: /app/src/shared/prompts/prompt_v2.yaml
+  anomaly_list_yaml_path: /app/src/shared/prompts/anomaly_list.yaml
+reid:
+  person:
+    low_threshold: 0.71
+    high_threshold: 0.76
+    k: 100
+    track_split_threshold: 0.55
+    track_split_offset: 3
+    min_features: 10
+    min_size: 3000
+    min_aspect: 1.5
+    max_aspect: 8
+    overlap_threshold: 0.5
+  bag:
+    threshold: 0.8
+    min_match: 4
+    k: 100
+    track_split_threshold: 0.55
+    track_split_offset: 3
+    min_features: 10
+    min_size: 500
+    min_aspect: 0
+    max_aspect: 10
+    overlap_threshold: 0.5
+journey:
+  time_to_end: 10
+  create_on_zone: false
+loitering_threshold: 300.0
+poi:
+  match_threshold: 0.8
+  max_matches: 20
+association:
+  bag:
+    radius: 2
+    association_lamb: 0.5
+    association_threshold: 3.0
+    unattended_time: 10
+  gun:
+    threat_threshold: 2
