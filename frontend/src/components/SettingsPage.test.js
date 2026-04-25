@@ -30,18 +30,18 @@ beforeEach(() => {
     }
     if (url.endsWith('/models')) {
       return buildJsonResponse([
-        { model_key: 'builtin_rtdetr', stage: 'detector', adapter: 'rtdetr_detector' },
-        { model_key: 'builtin_cmtrack', stage: 'tracker', adapter: 'cmtrack_tracker' },
-        { model_key: 'builtin_reid', stage: 'reid', adapter: 'legacy_reid' },
+        { model_key: 'builtin_yolox_s_gpu', stage: 'detector', adapter: 'yolox_detector' },
+        { model_key: 'builtin_bytetrack', stage: 'tracker', adapter: 'bytetrack_tracker' },
+        { model_key: 'builtin_transreid_person_hybrid_bag', stage: 'reid', adapter: 'transreid_person_hybrid_bag' },
         { model_key: 'heuristic_presence_stage_1', stage: 'anomaly_stage_1', adapter: 'heuristic_presence_stage_1' },
         { model_key: 'prompt_rules_stage_2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2' },
       ]);
     }
     if (url.endsWith('/model-bindings') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
-        { stage: 'detector', model_key: 'builtin_rtdetr', binding_scope: 'default', source_id: null },
-        { stage: 'tracker', model_key: 'builtin_cmtrack', binding_scope: 'default', source_id: null },
-        { stage: 'reid', model_key: 'builtin_reid', binding_scope: 'default', source_id: null },
+        { stage: 'detector', model_key: 'builtin_yolox_s_gpu', binding_scope: 'default', source_id: null },
+        { stage: 'tracker', model_key: 'builtin_bytetrack', binding_scope: 'default', source_id: null },
+        { stage: 'reid', model_key: 'builtin_transreid_person_hybrid_bag', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);
@@ -72,9 +72,9 @@ beforeEach(() => {
     }
     if (url.endsWith('/model-bindings') && options.method === 'PUT') {
       return buildJsonResponse([
-        { stage: 'detector', model_key: 'builtin_rtdetr', binding_scope: 'default', source_id: null },
-        { stage: 'tracker', model_key: 'builtin_cmtrack', binding_scope: 'default', source_id: null },
-        { stage: 'reid', model_key: 'builtin_reid', binding_scope: 'default', source_id: null },
+        { stage: 'detector', model_key: 'builtin_yolox_s_gpu', binding_scope: 'default', source_id: null },
+        { stage: 'tracker', model_key: 'builtin_bytetrack', binding_scope: 'default', source_id: null },
+        { stage: 'reid', model_key: 'builtin_transreid_person_hybrid_bag', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);

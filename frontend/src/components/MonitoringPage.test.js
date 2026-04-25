@@ -49,10 +49,10 @@ beforeEach(() => {
             WEBAPP: 'running',
           },
           model_health: {
-            builtin_rtdetr: {
-              model_key: 'builtin_rtdetr',
+            builtin_yolox_s_gpu: {
+              model_key: 'builtin_yolox_s_gpu',
               stage: 'detector',
-              adapter: 'rtdetr_detector',
+              adapter: 'yolox_detector',
               healthy: true,
               detail: null,
             },
@@ -77,7 +77,7 @@ beforeEach(() => {
             enabled: true,
             order: 0,
             source_value: 'rtsp://example',
-            detector_model_key: 'builtin_rtdetr',
+            detector_model_key: 'builtin_yolox_s_gpu',
             tracker_model_key: null,
             reid_model_key: null,
             anomaly_stage_1_model_key: null,
@@ -88,16 +88,16 @@ beforeEach(() => {
         model_bindings: [
           {
             stage: 'detector',
-            model_key: 'builtin_rtdetr',
+            model_key: 'builtin_yolox_s_gpu',
             binding_scope: 'default',
             source_id: null,
           },
         ],
         model_registrations: [
           {
-            model_key: 'builtin_rtdetr',
+            model_key: 'builtin_yolox_s_gpu',
             stage: 'detector',
-            adapter: 'rtdetr_detector',
+            adapter: 'yolox_detector',
           },
         ],
         latest_incidents: [

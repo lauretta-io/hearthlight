@@ -4,7 +4,7 @@ import logging
 import numpy as np
 
 from ...shared.models.DataModels import TrackInstance
-from ...shared.model_zoo.trackers import get_tracker
+from hearthlight_model_zoo.trackers import get_tracker
 from ...shared.utils.model_registry import (
     MODEL_STAGE_TRACKER,
     build_default_bindings,

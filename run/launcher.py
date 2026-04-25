@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import ast
 import json
 import os
 import platform
@@ -22,12 +21,21 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
+try:
+    from shared.utils.model_registry import load_registry_bundle
+except ModuleNotFoundError:  # pragma: no cover - launcher fallback in thin test envs
+    load_registry_bundle = None
 from hearthlight.runtime import run_local_reset_db
+
+try:
+    from hearthlight_model_zoo.catalog import load_master_catalog
+except ModuleNotFoundError:  # pragma: no cover - optional during bootstrap
+    load_master_catalog = None
 
 CONFIG_DIR = ROOT_DIR / "shared" / "configs"
 ACTIVE_CONFIG_PATH = CONFIG_DIR / "config.yaml"
 GENERATED_CONFIG_DIR = CONFIG_DIR / "generated"
-DOWNLOAD_WEIGHTS_PATH = ROOT_DIR / "shared" / "utils" / "download_weights.py"
+REGISTRY_DIR = ROOT_DIR / "shared" / "configs" / "registries"
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
 CUDA_COMPOSE_PATH = ROOT_DIR / "run" / "docker-compose.cuda.yaml"
 API_SERVICES = ["db", "rabbitmq", "webapp"]
@@ -81,18 +89,129 @@ def list_config_templates() -> dict[str, Path]:
     return templates
 
 
-def extract_registry_model_names(download_weights_path: Path = DOWNLOAD_WEIGHTS_PATH) -> list[str]:
-    if not download_weights_path.exists():
+def _normalize_yaml_scalar(value: str) -> str:
+    return value.strip().strip("'").strip('"')
+
+
+def _parse_registry_file(path: Path) -> list[dict[str, object]]:
+    if not path.exists():
         return []
 
-    module = ast.parse(download_weights_path.read_text())
-    for node in module.body:
-        if isinstance(node, ast.Assign):
-            for target in node.targets:
-                if isinstance(target, ast.Name) and target.id == "MODEL_REGISTRY":
-                    registry = ast.literal_eval(node.value)
-                    return sorted(str(key) for key in registry.keys())
-    return []
+    entries: list[dict[str, object]] = []
+    current: dict[str, object] | None = None
+    section: str | None = None
+    for raw_line in path.read_text().splitlines():
+        if not raw_line.strip() or raw_line.lstrip().startswith("#"):
+            continue
+        top_level = re.match(r"^([A-Za-z0-9_.-]+):\s*$", raw_line)
+        if top_level:
+            current = {"model_key": top_level.group(1), "runtime": {}}
+            entries.append(current)
+            section = None
+            continue
+        if current is None:
+            continue
+        nested = re.match(r"^\s{2}([A-Za-z0-9_.-]+):\s*(.*?)\s*$", raw_line)
+        if nested:
+            key, value = nested.groups()
+            if key == "runtime":
+                section = "runtime"
+            elif value:
+                current[key] = _normalize_yaml_scalar(value)
+                section = None
+            continue
+        runtime_match = re.match(r"^\s{4}([A-Za-z0-9_.-]+):\s*(.*?)\s*$", raw_line)
+        if runtime_match and section == "runtime":
+            key, value = runtime_match.groups()
+            runtime = current.setdefault("runtime", {})
+            assert isinstance(runtime, dict)
+            runtime[key] = _normalize_yaml_scalar(value)
+    return entries
+
+def _load_master_stage_options() -> dict[str, list[str]]:
+    if load_master_catalog is None:
+        return {}
+    try:
+        catalog = load_master_catalog()
+    except Exception:
+        return {}
+    stage_options = catalog.get("stage_options") if isinstance(catalog, dict) else {}
+    if not isinstance(stage_options, dict):
+        return {}
+    return {
+        str(stage): [str(option) for option in list(options)]
+        for stage, options in stage_options.items()
+        if isinstance(options, list)
+    }
+
+
+def _registry_option_inventory() -> dict[str, set[str]]:
+    options: dict[str, set[str]] = {
+        "detector": set(),
+        "tracker": set(),
+        "pose": set(),
+        "feature_extractor": set(),
+    }
+    if load_registry_bundle is not None:
+        bundle = load_registry_bundle()
+        detector_models = bundle.get("models", {}).get("detector", {})
+        for registration in detector_models.values():
+            artifact_ref = str((registration or {}).get("artifact_ref") or "").strip()
+            if artifact_ref:
+                options["detector"].add(artifact_ref)
+        tracker_models = bundle.get("models", {}).get("tracker", {})
+        for registration in tracker_models.values():
+            runtime = (registration or {}).get("runtime") or {}
+            tracker_name = str(runtime.get("tracker_name") or "").strip() if isinstance(runtime, dict) else ""
+            if tracker_name:
+                options["tracker"].add(tracker_name)
+                continue
+            artifact_ref = str((registration or {}).get("artifact_ref") or "").strip()
+            if artifact_ref:
+                options["tracker"].add(artifact_ref)
+        reid_models = bundle.get("models", {}).get("reid", {})
+        for registration in reid_models.values():
+            runtime = (registration or {}).get("runtime") or {}
+            feature_model_name = (
+                str(runtime.get("feature_extractor_model") or "").strip()
+                if isinstance(runtime, dict)
+                else ""
+            )
+            if feature_model_name:
+                options["feature_extractor"].add(feature_model_name)
+    else:
+        for entry in _parse_registry_file(REGISTRY_DIR / "detectors.yaml"):
+            artifact_ref = str(entry.get("artifact_ref") or "").strip()
+            if artifact_ref:
+                options["detector"].add(artifact_ref)
+        for entry in _parse_registry_file(REGISTRY_DIR / "trackers.yaml"):
+            runtime = entry.get("runtime") or {}
+            if isinstance(runtime, dict):
+                tracker_name = str(runtime.get("tracker_name") or "").strip()
+                if tracker_name:
+                    options["tracker"].add(tracker_name)
+                    continue
+            artifact_ref = str(entry.get("artifact_ref") or "").strip()
+            if artifact_ref:
+                options["tracker"].add(artifact_ref)
+        for entry in _parse_registry_file(REGISTRY_DIR / "reid_models.yaml"):
+            runtime = entry.get("runtime") or {}
+            if isinstance(runtime, dict):
+                feature_model_name = str(runtime.get("feature_extractor_model") or "").strip()
+                if feature_model_name:
+                    options["feature_extractor"].add(feature_model_name)
+    for key, values in _load_master_stage_options().items():
+        if key in options:
+            options[key].update(values)
+    return options
+
+
+def extract_registry_model_names() -> list[str]:
+    names = set()
+    inventory = _registry_option_inventory()
+    for values in inventory.values():
+        names.update(values)
+    return sorted(names)
 
 
 def _scan_section_values(text: str) -> dict[str, set[str]]:
@@ -141,13 +260,8 @@ def discover_model_options() -> dict[str, list[str]]:
         for key, values in _scan_section_values(path.read_text()).items():
             combined[key].update(values)
 
-    for model_name in extract_registry_model_names():
-        if model_name.startswith(("dfine", "rtdetr")):
-            combined["detector"].add(model_name)
-        elif model_name.startswith("rtmo"):
-            combined["pose"].add(model_name)
-        elif "transformer" in model_name or "vit" in model_name:
-            combined["feature_extractor"].add(model_name)
+    for key, values in _registry_option_inventory().items():
+        combined[key].update(values)
 
     return {key: sorted(values) for key, values in combined.items()}
 

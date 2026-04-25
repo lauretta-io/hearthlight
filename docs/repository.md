@@ -61,4 +61,4 @@ The system now uses multiple config sources together:
 - Old configs may still use `tracking.tracker` or `tracking.track_method`
 - The launcher writes both fields for compatibility
 - Registry-backed tracker selection is the long-term path, but the runtime still has legacy
-  tracker-name fallback handling for built-in trackers such as `cmtrack`
+  tracker-name fallback handling for built-in trackers such as `bytetrack`

@@ -1,46 +1,44 @@
-builtin_rtdetr:
+builtin_yolox_s_gpu:
   stage: detector
-  adapter: rtdetr_detector
-  artifact_ref: dfine-x-1280-pbg
-  fallback_model_key: builtin_rtdetr_cpu
+  adapter: yolox_detector
+  artifact_ref: yolox-s
+  fallback_model_key: builtin_yolox_s_cpu
   runtime:
-    backend: trt
+    backend: torch
     precision: fp16
     device: cuda:0
   capabilities:
     tasks:
       - PERSON
       - BAG
-      - GUN
     source_kinds:
       - camera_url
       - video_upload
       - webcam
   healthcheck:
-    import_path: src.shared.model_zoo.detectors
+    import_path: hearthlight_model_zoo.detectors
   requires_gpu: true
   resource_profile:
     gpu_memory_mb: 2048
 
-builtin_rtdetr_cpu:
+builtin_yolox_s_cpu:
   stage: detector
-  adapter: rtdetr_detector
-  artifact_ref: dfine-x-1280-pbg
+  adapter: yolox_detector
+  artifact_ref: yolox-s
   runtime:
-    backend: onnx
+    backend: torch
     precision: fp32
     device: cpu
   capabilities:
     tasks:
       - PERSON
       - BAG
-      - GUN
     source_kinds:
       - camera_url
       - video_upload
       - webcam
   healthcheck:
-    import_path: src.shared.model_zoo.detectors
+    import_path: hearthlight_model_zoo.detectors
   requires_gpu: false
   resource_profile:
     cpu_cores: 2

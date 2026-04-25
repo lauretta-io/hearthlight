@@ -92,10 +92,10 @@ Runtime initialization happens through the control plane:
 
 ## 7. Common startup failure classes
 
-- `tracker model builtin_cmtrack is incompatible with source kind/tasks`
+- `tracker model builtin_bytetrack is incompatible with source kind/tasks`
   - fixed by stage-scoped task validation; unrelated source tasks should no longer block tracker
-- `missing tracker registration builtin_cmtrack`
-  - runtime now falls back to the legacy `cmtrack` name if the registration is missing
+- `missing tracker registration builtin_bytetrack`
+  - runtime now falls back to the legacy `bytetrack` name if the registration is missing
 - `gpu is required but unavailable`
   - use `--profile cpu`, switch to CPU-safe model bindings, or start only in `api` mode
 - missing uploads or dead camera URLs

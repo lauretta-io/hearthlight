@@ -14,7 +14,6 @@ input:
       tasks: # different ai tasks to run on camera
         - person # person tracking, reid. Everything currently depends on this
         - bag # bag detection, reid, and abandoned bag
-        - gun # gun detection and shooter alerts
         - fare # fare jumping alerts
         - tray # tray detection and association with persons
     1:
@@ -25,7 +24,6 @@ input:
       tasks:
         - person
         - bag
-        - gun
 
 passenger_zones:
   1:
@@ -88,7 +86,7 @@ logging:
   # ReID: DEBUG
   # Clothing: DEBUG
 tracking:
-  tracker: cmtrack
+  tracker: bytetrack
   classes:
     0: person
     1: bag
@@ -96,15 +94,13 @@ rtdetr:
   img_size:
     - 1280
     - 1280
-  model_name: dfine-x-1280-pbg
+  model_name: yolox-s
   conf_thresh:
     person: 0.6
     bag: 0.6
-    gun: 0.3
   names: # map from object detector indices to object names
     0: person
     1: bag
-    2: gun
 pose:
   enable: false
   conf: 0.4
@@ -113,7 +109,7 @@ pose:
 feature_extractor:
   frame_interval: 0
   max_fps: 40
-  model_name: personvit_msmt
+  model_name: transreid-market1501
 anomaly:
   text_embeddings_path: /app/src/shared/prompts/prompt.pt
   text_prompts_path: /app/src/shared/prompts
@@ -164,5 +160,3 @@ association:
     association_lamb: 0.5
     association_threshold: 3.0
     unattended_time: 10
-  gun:
-    threat_threshold: 2

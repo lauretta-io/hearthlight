@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from importlib.util import find_spec
 import platform
 import re
 import subprocess
@@ -120,6 +121,19 @@ def main() -> int:
         check(exists, f"{rel_path} exists", failures, warnings)
         if not exists and rel_path in MISSING_FILE_HINTS:
             print(f"INFO: {MISSING_FILE_HINTS[rel_path]}")
+
+    package_available = find_spec("hearthlight_model_zoo") is not None
+    check(
+        package_available,
+        "hearthlight_model_zoo Python package is importable",
+        failures,
+        warnings,
+    )
+    if not package_available:
+        print(
+            "INFO: Install service dependencies (for example from webapp/requirements.txt, "
+            "ingestor/requirements.txt, or reid/requirements.txt) before running the stack."
+        )
 
     for rel_path in OPTIONAL_REQUIRED_FILES:
         exists = (REPO_ROOT / rel_path).exists()

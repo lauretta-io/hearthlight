@@ -1,9 +1,9 @@
-builtin_cmtrack:
+builtin_bytetrack:
   stage: tracker
-  adapter: cmtrack_tracker
-  artifact_ref: cmtrack
+  adapter: bytetrack_tracker
+  artifact_ref: bytetrack
   runtime:
-    tracker_name: cmtrack
+    tracker_name: bytetrack
   capabilities:
     tasks:
       - PERSON
@@ -13,7 +13,27 @@ builtin_cmtrack:
       - video_upload
       - webcam
   healthcheck:
-    import_path: src.shared.model_zoo.trackers
+    import_path: hearthlight_model_zoo.trackers
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 1
+
+builtin_hearthlight_ocsort_tuned:
+  stage: tracker
+  adapter: ocsort_tracker
+  artifact_ref: ocsort
+  runtime:
+    tracker_name: ocsort-tuned
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: hearthlight_model_zoo.trackers
   requires_gpu: false
   resource_profile:
     cpu_cores: 1

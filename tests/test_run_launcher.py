@@ -20,8 +20,10 @@ from run.launcher import (
 class LauncherHelpersTests(unittest.TestCase):
     def test_extract_registry_model_names_contains_known_entries(self):
         names = extract_registry_model_names()
-        self.assertIn("dfine-x-11-05-2024", names)
-        self.assertIn("rtmo-s", names)
+        self.assertIn("yolox-s", names)
+        self.assertIn("transreid-market1501", names)
+        self.assertIn("botsort", names)
+        self.assertIn("ocsort-tuned", names)
 
     def test_set_nested_scalar_replaces_existing_value(self):
         text = (
@@ -82,14 +84,14 @@ class LauncherHelpersTests(unittest.TestCase):
             template_path = Path(temp_dir) / "template.yaml"
             template_path.write_text(
                 "tracking:\n"
-                "  tracker: cmtrack\n"
+                "  tracker: bytetrack\n"
                 "rtdetr:\n"
-                "  model_name: dfine-x-1280\n"
+                "  model_name: yolox-s\n"
                 "pose:\n"
                 "  enable: false\n"
                 "  model_name: rtmo-s\n"
                 "feature_extractor:\n"
-                "  model_name: transformer_120\n"
+                "  model_name: transreid-market1501\n"
                 "output:\n"
                 "  visualize:\n"
                 "    show_vid: true\n"
@@ -98,13 +100,13 @@ class LauncherHelpersTests(unittest.TestCase):
                 template_path=template_path,
                 source_preset_path=None,
                 run_mode="api",
-                detector_model="dfine-x-11-05-2024",
-                tracker_model="cmtrack",
+                detector_model="yolox-s",
+                tracker_model="bytetrack",
                 detector_device="cpu",
                 pose_enabled=False,
                 pose_model="rtmo-s",
                 pose_device="cpu",
-                feature_extractor_model="transformer_120",
+                feature_extractor_model="transreid-market1501",
                 feature_extractor_device="cpu",
                 show_video=False,
                 use_cuda=False,
@@ -132,14 +134,14 @@ class LauncherHelpersTests(unittest.TestCase):
                 "passenger_zones: {}\n"
                 "tray_zones: {}\n"
                 "tracking:\n"
-                "  tracker: cmtrack\n"
+                "  tracker: bytetrack\n"
                 "rtdetr:\n"
-                "  model_name: dfine-x-1280\n"
+                "  model_name: yolox-s\n"
                 "pose:\n"
                 "  enable: false\n"
                 "  model_name: rtmo-s\n"
                 "feature_extractor:\n"
-                "  model_name: transformer_120\n"
+                "  model_name: transreid-market1501\n"
                 "output:\n"
                 "  visualize:\n"
                 "    show_vid: true\n"
@@ -159,13 +161,13 @@ class LauncherHelpersTests(unittest.TestCase):
                 template_path=template_path,
                 source_preset_path=source_preset_path,
                 run_mode="pipeline",
-                detector_model="dfine-x-11-05-2024",
-                tracker_model="cmtrack",
+                detector_model="yolox-s",
+                tracker_model="bytetrack",
                 detector_device="cpu",
                 pose_enabled=False,
                 pose_model="rtmo-s",
                 pose_device="cpu",
-                feature_extractor_model="transformer_120",
+                feature_extractor_model="transreid-market1501",
                 feature_extractor_device="cpu",
                 show_video=False,
                 use_cuda=False,

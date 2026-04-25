@@ -1,7 +1,7 @@
 heuristic_presence_stage_1:
   stage: anomaly_stage_1
   adapter: heuristic_presence_stage_1
-  artifact_ref: built_in
+  artifact_ref: heuristic-presence
   runtime:
     eval_interval: 16
     quiet_period_seconds: 30
@@ -11,13 +11,12 @@ heuristic_presence_stage_1:
     tasks:
       - PERSON
       - BAG
-      - GUN
     source_kinds:
       - camera_url
       - video_upload
       - webcam
   healthcheck:
-    import_path: src.anomaly.adapters
+    import_path: hearthlight_model_zoo.anomaly_detectors
   requires_gpu: false
   resource_profile:
     cpu_cores: 1

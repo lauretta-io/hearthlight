@@ -1,7 +1,7 @@
 import inspect
 import numpy as np
 
-from ...shared.model_zoo.feature_extractors import FeatureExtractor as FE
+from hearthlight_model_zoo.feature_extractors import FeatureExtractor as FE
 
 
 class FeatureExtractor:

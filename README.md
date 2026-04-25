@@ -220,7 +220,7 @@ The launcher will:
 
 - detect API-only vs full pipeline startup based on host defaults, with `--mode` or `HEARTHLIGHT_DOCKER_MODE` as overrides
 - discover config templates from `shared/configs/`
-- discover detector, tracker, pose, and feature-extractor choices from repo configs and `shared/utils/download_weights.py`
+- discover detector, tracker, and feature-extractor choices from repo registries and pose choices from repo configs
 - write the generated startup config to `shared/configs/generated/`
 - copy the selected launch config to `shared/configs/config.yaml`
 - use base `docker-compose.yaml` for CPU runs
@@ -300,9 +300,9 @@ Entry point: `reid/main.py`
 
 ### Association
 
-- maintains person/bag/gun state
+- maintains person/bag state
 - infers ownership relationships
-- creates incidents such as unattended bags and gun events
+- creates incidents such as unattended bags
 - processes incident resolutions
 
 Entry point: `association/main.py`

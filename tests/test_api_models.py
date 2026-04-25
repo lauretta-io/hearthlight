@@ -54,7 +54,7 @@ class InputSourceModelTests(unittest.TestCase):
         source = InputSource(
             kind="webcam",
             label="Desk Cam",
-            tasks=["gun"],
+            tasks=["bag"],
             source_value="1",
         )
         self.assertEqual(source.source_value, 1)

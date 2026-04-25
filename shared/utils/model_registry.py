@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from importlib.util import find_spec
 from pathlib import Path
+import importlib
 import logging
 from typing import Any
 
@@ -46,6 +47,10 @@ STAGE_FIELD_MAP = {
 LEGACY_TRACKER_NAME_MAP = {
     "builtin_cmtrack": "cmtrack",
     "builtin_ocsort": "ocsort",
+    "builtin_botsort": "botsort",
+    "builtin_strongsort": "strongsort",
+    "builtin_bytetrack": "bytetrack",
+    "builtin_hearthlight_ocsort_tuned": "ocsort-tuned",
 }
 
 logger = logging.getLogger(__name__)
@@ -60,24 +65,68 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return OmegaConf.to_container(raw, resolve=True)  # type: ignore[return-value]
 
 
+def _load_upstream_master_catalog() -> dict[str, Any]:
+    try:
+        catalog_module = importlib.import_module("hearthlight_model_zoo.catalog")
+    except ModuleNotFoundError:
+        return {}
+    loader = getattr(catalog_module, "load_master_catalog", None)
+    if loader is None:
+        return {}
+    try:
+        loaded = loader()
+    except Exception as exc:  # pragma: no cover - defensive logging path
+        logger.warning("Failed to load hearthlight_model_zoo master catalog: %s", exc)
+        return {}
+    if not isinstance(loaded, dict):
+        return {}
+    return loaded
+
+
+def _normalize_registrations(
+    registrations: dict[str, Any],
+    *,
+    stage: str,
+    source_path: str,
+) -> dict[str, dict[str, Any]]:
+    normalized = {}
+    for model_key, registration in registrations.items():
+        entry = dict(registration or {})
+        entry.setdefault("stage", stage)
+        entry.setdefault("adapter", model_key)
+        entry.setdefault("capabilities", {})
+        entry.setdefault("runtime", {})
+        entry.setdefault("healthcheck", {})
+        entry.setdefault("resource_profile", {})
+        entry.setdefault("requires_gpu", False)
+        entry.setdefault("fallback_model_key", None)
+        entry.setdefault("source_path", source_path)
+        normalized[model_key] = entry
+    return normalized
+
+
 def load_model_registries(registry_dir: Path | None = None) -> dict[str, dict[str, dict[str, Any]]]:
     registry_root = registry_dir or REGISTRY_DIR
+    upstream_catalog = _load_upstream_master_catalog()
+    upstream_models = upstream_catalog.get("models") if isinstance(upstream_catalog, dict) else {}
     registries: dict[str, dict[str, dict[str, Any]]] = {}
     for stage, filename in REGISTRY_FILE_MAP.items():
-        registrations = _load_yaml(registry_root / filename)
         normalized = {}
-        for model_key, registration in registrations.items():
-            entry = dict(registration or {})
-            entry.setdefault("stage", stage)
-            entry.setdefault("adapter", model_key)
-            entry.setdefault("capabilities", {})
-            entry.setdefault("runtime", {})
-            entry.setdefault("healthcheck", {})
-            entry.setdefault("resource_profile", {})
-            entry.setdefault("requires_gpu", False)
-            entry.setdefault("fallback_model_key", None)
-            entry.setdefault("source_path", str(registry_root / filename))
-            normalized[model_key] = entry
+        if isinstance(upstream_models, dict):
+            normalized.update(
+                _normalize_registrations(
+                    dict(upstream_models.get(stage) or {}),
+                    stage=stage,
+                    source_path="hearthlight_model_zoo:master_catalog.json",
+                )
+            )
+        normalized.update(
+            _normalize_registrations(
+                _load_yaml(registry_root / filename),
+                stage=stage,
+                source_path=str(registry_root / filename),
+            )
+        )
         registries[stage] = normalized
     return registries
 
@@ -297,8 +346,6 @@ def is_registration_available(registration: dict[str, Any]) -> tuple[bool, str |
     healthcheck = registration.get("healthcheck") or {}
     import_path = healthcheck.get("import_path")
     if import_path:
-        if str(import_path).startswith("src."):
-            return True, "validated by worker runtime"
         try:
             spec = find_spec(import_path)
         except ModuleNotFoundError:
@@ -329,12 +376,12 @@ def build_model_health(bundle: dict[str, Any], *, has_gpu: bool) -> dict[str, di
 
 def get_required_tasks_for_stage(stage: str) -> set[str]:
     if stage == MODEL_STAGE_DETECTOR:
-        return {Tasks.PERSON, Tasks.BAG, Tasks.GUN}
+        return {Tasks.PERSON, Tasks.BAG}
     if stage == MODEL_STAGE_TRACKER:
         return {Tasks.PERSON, Tasks.BAG}
     if stage == MODEL_STAGE_REID:
         return {Tasks.PERSON, Tasks.BAG}
-    return {Tasks.PERSON, Tasks.BAG, Tasks.GUN}
+    return {Tasks.PERSON, Tasks.BAG}
 
 
 def build_runtime_binding_block(

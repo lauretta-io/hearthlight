@@ -29,42 +29,42 @@ input:
       x_loc: 10.0
       y_loc: 9.5
       source: ${input.rtsp_base}3${input.substream}
-      tasks: [person, gun, bag]
+      tasks: [person, bag]
     #
     # 4: 
     #   name: 'four'
     #   x_loc: 10.0
     #   y_loc: 9.5
     #   source: ${input.rtsp_base}4${input.substream} 
-    #   tasks: [person, gun, bag]
+    #   tasks: [person, bag]
 
     5: 
       name: 'five'
       x_loc: 10.0
       y_loc: 9.5
       source: ${input.rtsp_base}5${input.substream} 
-      tasks: [person, gun, bag]
+      tasks: [person, bag]
     #
     # 6: 
     #   name: 'six'
     #   x_loc: 10.0
     #   y_loc: 9.5
     #   source: ${input.rtsp_base}6${input.substream} 
-    #   tasks: [person, gun, bag]
+    #   tasks: [person, bag]
 
     9: 
       name: 'nine'
       x_loc: 10.0
       y_loc: 9.5
       source: ${input.rtsp_base}9${input.substream} 
-      tasks: [person, gun, bag]
+      tasks: [person, bag]
 
     11: 
       name: 'eleven'
       x_loc: 10.0
       y_loc: 9.5
       source: ${input.rtsp_base}11${input.substream}  
-      tasks: [person, gun, bag]
+      tasks: [person, bag]
 
 passenger_zones: {}
 tray_zones: {}
@@ -109,7 +109,7 @@ logging:
   log_dir: ${output.output_dir}/logs/
   level: INFO                
 tracking:
-  track_method: ocsort
+  track_method: bytetrack
   classes:
     0: person
     1: bag
@@ -137,15 +137,13 @@ rtdetr:
   img_size:
   - 640
   - 640
-  model_name: dfine-x-11-05-2024
+  model_name: yolox-s
   conf_thresh:
     person: 0.5
     bag: 0.6
-    gun: 0.3
   names:            # map from object detector indices to object names
     0: person
     1: bag
-    2: gun
 pose:
   enable: true
   model_name: rtmo-s
@@ -162,7 +160,7 @@ feature_extractor:
   height: 384
   width: 128
   arch: vit_base
-  model_name: transformer_120
+  model_name: transreid-market1501
   drop_path_rate: 0.3
   hw_ratio: 2
   conv_stem: true
@@ -229,8 +227,6 @@ association:
     association_lamb: 0.9
     full_threshold: 5
     empty_threshold: 4
-  gun:
-    threat_threshold: 20
 alerts:
   wait_for_alert_urls: false
   new_url: http://webapp:8000/incident

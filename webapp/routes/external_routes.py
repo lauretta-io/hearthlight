@@ -320,7 +320,7 @@ def get_feature_extractor():
         return feature_extractor
     try:
         feature_extractor_cls = getattr(
-            import_module("src.shared.model_zoo.feature_extractors"),
+            import_module("hearthlight_model_zoo.feature_extractors"),
             "FeatureExtractor",
         )
         feature_extractor = feature_extractor_cls(

@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 class RTDetrDetectorAdapter:
     def __init__(self, cfg, registration):
-        from ...shared.model_zoo.detectors import Detector as OD
+        from hearthlight_model_zoo.detectors import Detector as OD
 
         runtime = registration.get("runtime") or {}
         self.names = cfg.rtdetr.names
@@ -43,6 +43,7 @@ class RTDetrDetectorAdapter:
 
 ADAPTERS = {
     "rtdetr_detector": RTDetrDetectorAdapter,
+    "yolox_detector": RTDetrDetectorAdapter,
 }
 
 

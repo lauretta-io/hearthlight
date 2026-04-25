@@ -173,14 +173,14 @@ Entry point: `association/main.py`
 Current responsibilities:
 
 - Consume entity and detection messages from RabbitMQ.
-- Maintain person, bag, and gun manager state.
+- Maintain person and bag manager state.
 - Produce owner relationships such as bag-to-person mappings.
-- Create incidents such as unattended bag and gun-related events.
+- Create incidents such as unattended bag events.
 - Consume manual or external incident resolutions.
 - Send normalized outputs to the database/web layer.
 
 The association module handles both ownership inference and incident resolution flow, including
-gun detections.
+person and bag detections.
 
 ### `anomaly`
 

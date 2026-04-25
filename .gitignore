@@ -104,6 +104,7 @@ celerybeat.pid
 # Environments
 *.env
 .venv
+hearthlight_model_zoo
 env/
 *venv/
 ENV/

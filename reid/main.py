@@ -11,7 +11,7 @@ import torch
 from .output_threads import OutputThread
 
 from .poi import POIManager
-from ..shared.ReID_Bench.ReIDModules import StationaryKNN, TrackCentroids
+from hearthlight_model_zoo.reid import PersonReIDBundle
 from ..shared.utils.model_registry import (
     MODEL_STAGE_REID,
     build_default_bindings,
@@ -64,16 +64,10 @@ def namespace_model_id(raw_id: int, namespace: int) -> int:
 
 class LegacyReIDBundle:
     def __init__(self, cfg: DictConfig, registration: dict, namespace: int):
-        runtime = registration.get("runtime") or {}
         self.namespace = namespace
-        person_strategy = runtime.get("person_strategy", "TrackCentroids")
-        bag_strategy = runtime.get("bag_strategy", "StationaryKNN")
-        if person_strategy != "TrackCentroids" or bag_strategy != "StationaryKNN":
-            raise ValueError(
-                "legacy_reid adapter currently supports only TrackCentroids and StationaryKNN"
-            )
-        self.person_reid = TrackCentroids(args=cfg.reid[PERSON.lower()])
-        self.bag_reid = StationaryKNN(args=cfg.reid[BAG.lower()])
+        bundle = PersonReIDBundle(cfg, registration, namespace=namespace)
+        self.person_reid = bundle.person_reid
+        self.bag_reid = bundle.bag_reid
 
     def search(self, feature, max_matches: int, match_threshold: float) -> list[int]:
         candidate_ids = self.person_reid.strategy.vectors.get_nearest_ids(
@@ -89,6 +83,7 @@ class LegacyReIDBundle:
 
 REID_ADAPTERS = {
     "legacy_reid": LegacyReIDBundle,
+    "transreid_person_hybrid_bag": LegacyReIDBundle,
 }
 
 

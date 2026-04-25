@@ -1,10 +1,11 @@
-builtin_reid:
+builtin_transreid_person_hybrid_bag:
   stage: reid
-  adapter: legacy_reid
-  artifact_ref: track_centroids_stationary_knn
+  adapter: transreid_person_hybrid_bag
+  artifact_ref: transreid-market1501
   runtime:
-    person_strategy: TrackCentroids
-    bag_strategy: StationaryKNN
+    person_strategy: TransReID
+    bag_strategy: HybridBagHeuristic
+    feature_extractor_model: transreid-market1501
   capabilities:
     tasks:
       - PERSON
@@ -14,7 +15,7 @@ builtin_reid:
       - video_upload
       - webcam
   healthcheck:
-    import_path: src.shared.ReID_Bench.ReIDModules
+    import_path: hearthlight_model_zoo.reid
   requires_gpu: false
   resource_profile:
     cpu_cores: 1

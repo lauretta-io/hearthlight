@@ -55,6 +55,39 @@ def run_preflight() -> None:
     )
 
 
+def run_import_smoke(docker_binary: str, services: list[str]) -> None:
+    import_checks = {
+        "webapp": [
+            "hearthlight_model_zoo.feature_extractors",
+        ],
+        "ingestor": [
+            "hearthlight_model_zoo.detectors",
+            "hearthlight_model_zoo.trackers",
+            "hearthlight_model_zoo.feature_extractors",
+            "hearthlight_model_zoo.pose",
+            "hearthlight_model_zoo.anomaly_detectors",
+        ],
+        "reid": [
+            "hearthlight_model_zoo.reid",
+        ],
+    }
+    env = build_docker_env(docker_binary)
+    env.setdefault("RELOAD", "")
+    for service in services:
+        modules = import_checks.get(service)
+        if not modules:
+            continue
+        module_csv = ", ".join(modules)
+        print(f"INFO: import smoke for {service}: {module_csv}")
+        code = "import " + "; import ".join(modules)
+        subprocess.run(
+            [docker_binary, "compose", "run", "--rm", service, "python", "-c", code],
+            cwd=REPO_ROOT,
+            check=True,
+            env=env,
+        )
+
+
 def main() -> int:
     auto_mode, auto_reason = detect_default_mode()
     parser = argparse.ArgumentParser(
@@ -104,6 +137,7 @@ def main() -> int:
     env = build_docker_env(docker_binary)
     env.setdefault("RELOAD", "")
     subprocess.run(command, cwd=REPO_ROOT, check=True, env=env)
+    run_import_smoke(docker_binary, services)
     print("PASS: docker build validation succeeded")
     return 0
 

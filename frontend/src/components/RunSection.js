@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { BaseURL } from '../config';
 import '../styles/CameraConfig.css';
 
-const TASK_OPTIONS = ['PERSON', 'BAG', 'GUN'];
+const TASK_OPTIONS = ['PERSON', 'BAG'];
 const MODULES = ['INGESTOR', 'REID', 'ASSOCIATION'];
 const SOURCE_KIND_OPTIONS = [
   { value: 'camera_url', label: 'Camera URL' },

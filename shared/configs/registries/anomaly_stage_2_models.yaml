@@ -9,7 +9,6 @@ prompt_rules_stage_2:
     tasks:
       - PERSON
       - BAG
-      - GUN
     source_kinds:
       - camera_url
       - video_upload
@@ -29,7 +28,6 @@ passthrough_stage_2:
     tasks:
       - PERSON
       - BAG
-      - GUN
     source_kinds:
       - camera_url
       - video_upload
@@ -50,7 +48,6 @@ vlm_anomaly_demo_stage_2:
     tasks:
       - PERSON
       - BAG
-      - GUN
     source_kinds:
       - camera_url
       - video_upload

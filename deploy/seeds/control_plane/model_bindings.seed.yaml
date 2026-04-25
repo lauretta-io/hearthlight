@@ -1,6 +1,6 @@
 defaults:
-  detector: builtin_rtdetr
-  tracker: builtin_cmtrack
-  reid: builtin_reid
+  detector: builtin_yolox_s_gpu
+  tracker: builtin_bytetrack
+  reid: builtin_transreid_person_hybrid_bag
   anomaly_stage_1: heuristic_presence_stage_1
   anomaly_stage_2: prompt_rules_stage_2

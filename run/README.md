@@ -40,8 +40,9 @@ You can choose:
 ## What the launcher does
 
 1. Lists available config templates from `shared/configs/`.
-2. Discovers detector, tracker, pose, and feature-extractor choices from the
-   config templates and `shared/utils/download_weights.py`.
+2. Discovers detector, tracker, and feature-extractor choices from registry
+   YAML files under `shared/configs/registries/`, and pose choices from config
+   templates.
 3. Lets you choose API vs pipeline service mode.
 4. Lets you choose CPU or CUDA mode.
 5. Writes a generated config under `shared/configs/generated/`.
@@ -59,9 +60,9 @@ python3 -m hearthlight start \
   --template active \
   --mode api \
   --profile cpu \
-  --detector dfine-x-11-05-2024 \
-  --tracker cmtrack \
-  --feature-extractor transformer_120 \
+  --detector yolox-s \
+  --tracker bytetrack \
+  --feature-extractor transreid-market1501 \
   --hide-video
 ```
 
@@ -83,10 +84,10 @@ python3 -m hearthlight start \
   --template master_config \
   --profile cuda \
   --cuda-visible-devices 0 \
-  --detector dfine-x-11-05-2024 \
+  --detector yolox-s \
   --pose-enabled \
   --pose-model rtmo-s \
-  --feature-extractor transformer_120 \
+  --feature-extractor transreid-market1501 \
   --open-dashboard
 ```
 

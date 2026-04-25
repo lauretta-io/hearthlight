@@ -1,4 +1,5 @@
 import os
+import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
@@ -165,7 +166,7 @@ class ConfigTests(unittest.TestCase):
 
         tasks = get_tasks(cfg)
 
-        self.assertEqual(tasks, {Tasks.PERSON, Tasks.BAG, Tasks.GUN, Tasks.POI})
+        self.assertEqual(tasks, {Tasks.PERSON, Tasks.BAG, Tasks.POI})
 
     def test_get_tasks_warns_on_unknown_tasks(self):
         cfg = SimpleNamespace(
@@ -181,7 +182,7 @@ class ConfigTests(unittest.TestCase):
             tasks = get_tasks(cfg)
 
         self.assertEqual(tasks, {Tasks.PERSON, Tasks.POI, "UNKNOWN-TASK"})
-        warning.assert_called_once_with("Unknown task UNKNOWN-TASK for camera cam-1")
+        warning.assert_called_once_with("Unknown task %s for %s", "UNKNOWN-TASK", "camera cam-1")
 
 
 class LoggerTests(unittest.TestCase):
@@ -744,7 +745,11 @@ class ModelRegistryTests(unittest.TestCase):
 
         self.assertIn(MODEL_STAGE_DETECTOR, defaults)
         self.assertIn(MODEL_STAGE_TRACKER, defaults)
-        self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_rtdetr")
+        self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_gpu")
+        self.assertEqual(
+            bundle["models"]["anomaly_stage_1"]["heuristic_presence_stage_1"]["healthcheck"]["import_path"],
+            "hearthlight_model_zoo.anomaly_detectors",
+        )
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_registry_bundle_falls_back_to_cpu_detector_when_gpu_is_unavailable(self):
@@ -752,7 +757,60 @@ class ModelRegistryTests(unittest.TestCase):
 
         defaults = build_default_bindings(bundle, has_gpu=False)
 
-        self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_rtdetr_cpu")
+        self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_cpu")
+
+    @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
+    def test_load_model_registries_merges_upstream_master_with_local_entries(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch(
+            "shared.utils.model_registry._load_upstream_master_catalog",
+            return_value={
+                "models": {
+                    "tracker": {
+                        "builtin_botsort": {
+                            "runtime": {"tracker_name": "botsort"},
+                            "artifact_ref": "botsort",
+                        },
+                        "builtin_bytetrack": {
+                            "runtime": {"tracker_name": "bytetrack"},
+                            "artifact_ref": "bytetrack-s",
+                        },
+                    }
+                }
+            },
+        ):
+            registry_dir = Path(temp_dir)
+            for filename in (
+                "detectors.yaml",
+                "reid_models.yaml",
+                "anomaly_stage_1_models.yaml",
+                "anomaly_stage_2_models.yaml",
+            ):
+                (registry_dir / filename).write_text("{}\n")
+            (registry_dir / "trackers.yaml").write_text(
+                "builtin_local_tracker:\n"
+                "  stage: tracker\n"
+                "  runtime:\n"
+                "    tracker_name: ocsort-tuned\n"
+                "builtin_bytetrack:\n"
+                "  stage: tracker\n"
+                "  runtime:\n"
+                "    tracker_name: bytetrack\n"
+                "  artifact_ref: bytetrack\n"
+            )
+            from shared.utils.model_registry import load_model_registries
+
+            merged = load_model_registries(registry_dir)
+
+        self.assertIn("builtin_botsort", merged["tracker"])
+        self.assertIn("builtin_local_tracker", merged["tracker"])
+        self.assertEqual(
+            merged["tracker"]["builtin_bytetrack"]["artifact_ref"],
+            "bytetrack",
+        )
+        self.assertEqual(
+            merged["tracker"]["builtin_bytetrack"]["source_path"],
+            str(registry_dir / "trackers.yaml"),
+        )
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_validate_source_bindings_rejects_incompatible_source_kind(self):
@@ -763,20 +821,20 @@ class ModelRegistryTests(unittest.TestCase):
             label="Uploaded Video",
             kind="video_upload",
             tasks=["PERSON"],
-            detector_model_key="builtin_rtdetr",
-            tracker_model_key="builtin_cmtrack",
-            reid_model_key="builtin_reid",
+            detector_model_key="builtin_yolox_s_gpu",
+            tracker_model_key="builtin_bytetrack",
+            reid_model_key="builtin_transreid_person_hybrid_bag",
             anomaly_stage_1_model_key="heuristic_presence_stage_1",
             anomaly_stage_2_model_key="prompt_rules_stage_2",
         )
-        bundle["models"][MODEL_STAGE_TRACKER]["builtin_cmtrack"]["capabilities"] = {
+        bundle["models"][MODEL_STAGE_TRACKER]["builtin_bytetrack"]["capabilities"] = {
             "tasks": ["PERSON"],
             "source_kinds": ["camera_url"],
         }
 
         errors = validate_source_bindings(bundle, source_row, defaults)
 
-        self.assertTrue(any("tracker model builtin_cmtrack" in error for error in errors))
+        self.assertTrue(any("tracker model builtin_bytetrack" in error for error in errors))
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_validate_source_bindings_ignores_unrelated_tasks_for_tracker_stage(self):
@@ -787,37 +845,37 @@ class ModelRegistryTests(unittest.TestCase):
             label="Mixed Task Camera",
             kind="camera_url",
             tasks=["PERSON", "BAG", "GUN", "FARE", "TRAY"],
-            detector_model_key="builtin_rtdetr",
-            tracker_model_key="builtin_cmtrack",
-            reid_model_key="builtin_reid",
+            detector_model_key="builtin_yolox_s_gpu",
+            tracker_model_key="builtin_bytetrack",
+            reid_model_key="builtin_transreid_person_hybrid_bag",
             anomaly_stage_1_model_key="heuristic_presence_stage_1",
             anomaly_stage_2_model_key="prompt_rules_stage_2",
         )
-        bundle["models"][MODEL_STAGE_TRACKER]["builtin_cmtrack"]["capabilities"] = {
+        bundle["models"][MODEL_STAGE_TRACKER]["builtin_bytetrack"]["capabilities"] = {
             "tasks": ["PERSON", "BAG"],
             "source_kinds": ["camera_url", "video_upload", "webcam"],
         }
 
         errors = validate_source_bindings(bundle, source_row, defaults)
 
-        self.assertFalse(any("tracker model builtin_cmtrack" in error for error in errors))
+        self.assertFalse(any("tracker model builtin_bytetrack" in error for error in errors))
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_build_runtime_binding_block_includes_source_overrides(self):
         bundle = load_registry_bundle()
         source_row = SimpleNamespace(
             id=42,
-            detector_model_key="builtin_rtdetr",
+            detector_model_key="builtin_yolox_s_gpu",
             tracker_model_key=None,
-            reid_model_key="builtin_reid",
+            reid_model_key="builtin_transreid_person_hybrid_bag",
             anomaly_stage_1_model_key="heuristic_presence_stage_1",
             anomaly_stage_2_model_key="prompt_rules_stage_2",
         )
 
         binding_block = build_runtime_binding_block([source_row], bundle)
 
-        self.assertEqual(binding_block["sources"]["42"]["detector"], "builtin_rtdetr")
-        self.assertEqual(binding_block["sources"]["42"]["reid"], "builtin_reid")
+        self.assertEqual(binding_block["sources"]["42"]["detector"], "builtin_yolox_s_gpu")
+        self.assertEqual(binding_block["sources"]["42"]["reid"], "builtin_transreid_person_hybrid_bag")
 
 
 class MicroBatchTests(unittest.TestCase):
@@ -870,26 +928,26 @@ class DockerCliTests(unittest.TestCase):
 class TrackerResolutionTests(unittest.TestCase):
     @unittest.skipIf(resolve_tracker_name is None, "omegaconf is not installed")
     def test_resolve_tracker_name_prefers_registry_runtime(self):
-        registration = {"runtime": {"tracker_name": "cmtrack"}}
+        registration = {"runtime": {"tracker_name": "bytetrack"}}
 
         self.assertEqual(
             resolve_tracker_name(
                 registration,
-                "builtin_cmtrack",
+                "builtin_bytetrack",
                 legacy_tracker_name="ocsort",
             ),
-            "cmtrack",
+            "bytetrack",
         )
 
     @unittest.skipIf(resolve_tracker_name is None, "omegaconf is not installed")
-    def test_resolve_tracker_name_maps_builtin_cmtrack_without_registry(self):
+    def test_resolve_tracker_name_maps_builtin_bytetrack_without_registry(self):
         self.assertEqual(
             resolve_tracker_name(
                 None,
-                "builtin_cmtrack",
+                "builtin_bytetrack",
                 legacy_tracker_name=None,
             ),
-            "cmtrack",
+            "bytetrack",
         )
 
     @unittest.skipIf(resolve_tracker_name is None, "omegaconf is not installed")

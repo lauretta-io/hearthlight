@@ -186,7 +186,7 @@ def main():
             {
                 "kind": "webcam",
                 "label": "Smoke Webcam",
-                "tasks": ["GUN"],
+                "tasks": ["BAG"],
                 "enabled": True,
                 "order": 1,
                 "source_value": 0,

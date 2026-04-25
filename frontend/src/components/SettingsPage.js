@@ -5,7 +5,7 @@ import RunSection from './RunSection';
 import MonitoringSection from './MonitoringSection';
 import '../styles/CameraConfig.css';
 
-const TASK_OPTIONS = ['PERSON', 'BAG', 'GUN'];
+const TASK_OPTIONS = ['PERSON', 'BAG'];
 const SOURCE_KIND_OPTIONS = [
   { value: 'camera_url', label: 'Camera URL' },
   { value: 'video_upload', label: 'Uploaded Video' },

@@ -12,6 +12,7 @@ except ImportError:  # pragma: no cover - optional local dependency
     cv2 = None
 
 from .security import sanitize_identifier
+from .config import normalize_camera_tasks
 
 SOURCE_KIND_CAMERA_URL = "camera_url"
 SOURCE_KIND_VIDEO_UPLOAD = "video_upload"
@@ -59,9 +60,13 @@ def build_runtime_camera_entry(
     *,
     upload_path: str | None = None,
 ) -> dict:
+    runtime_tasks = normalize_camera_tasks(
+        list(getattr(source_row, "tasks", []) or []),
+        camera_label=getattr(source_row, "label", None),
+    )
     return {
         "name": source_row.label,
-        "tasks": list(source_row.tasks),
+        "tasks": runtime_tasks,
         "source": coerce_source_value(source_row.kind, source_row.source_value, upload_path),
         "source_template_id": source_row.id,
         "upload_id": source_row.upload_id,
