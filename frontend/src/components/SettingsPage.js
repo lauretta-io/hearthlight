@@ -221,6 +221,7 @@ const normalizeSourceKindLabel = (kind) => {
   }
   return kind.replace(/_/g, ' ');
 };
+const formatLibraryModelId = (modelKey) => `${modelKey || ''}`.replace(/^builtin_/, '') || 'n/a';
 
 const formatListLabel = (items = []) => items.filter(Boolean).join(', ');
 const normalizeDetectorClassLabel = (value) => {
@@ -1228,8 +1229,8 @@ const SettingsPage = () => {
 
                                     <div className="model-library-fact-grid">
                                       <div className="model-library-fact">
-                                        <span className="model-library-fact-label">Model Key</span>
-                                        <code>{option.model_key}</code>
+                                        <span className="model-library-fact-label">Model ID</span>
+                                        <code>{formatLibraryModelId(option.model_key)}</code>
                                       </div>
                                       <div className="model-library-fact">
                                         <span className="model-library-fact-label">Adapter</span>

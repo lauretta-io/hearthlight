@@ -65,4 +65,4 @@ typing_extensions==4.12.2
 urllib3==2.4.0
 uvicorn==0.32.0
 wheel==0.45.1
-git+https://github.com/lauretta-io/hearthlight_model_zoo.git@273feddf9e381b8de143c83deadf23fc9c4c4184
+git+https://github.com/lauretta-io/hearthlight_model_zoo.git@f0668e8acfa2a4b9d6cb9f11d7bb2546f24996c8
