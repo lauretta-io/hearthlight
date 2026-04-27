@@ -43,7 +43,7 @@ beforeEach(() => {
             options: [
               {
                 model_key: 'builtin_yolox_s_gpu',
-                display_name: 'YOLOX Small',
+                display_name: 'YOLOX Small (GPU)',
                 stage: 'detector',
                 adapter: 'yolox_detector',
                 capabilities: {
@@ -273,7 +273,7 @@ test('renders model library with readable stage and model descriptions', async (
 
   expect(await screen.findByText('Model Library')).toBeTruthy();
   expect(screen.getByText('Detector Models')).toBeTruthy();
-  expect(screen.getByText('YOLOX Small')).toBeTruthy();
+  expect(screen.getByText('YOLOX Small (GPU)')).toBeTruthy();
   expect(screen.getByText('Default')).toBeTruthy();
   expect(screen.getByText(/find people and bags in each frame/i)).toBeTruthy();
   expect(screen.getByText(/Available detector classes include person, backpack, handbag, suitcase/i)).toBeTruthy();

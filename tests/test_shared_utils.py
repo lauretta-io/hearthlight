@@ -796,6 +796,22 @@ class ModelRegistryTests(unittest.TestCase):
         )
         self.assertEqual(
             build_model_display_name(
+                "detector",
+                "builtin_yolox_s_cpu",
+                {"artifact_ref": "yolox-s", "adapter": "yolox_detector", "runtime": {"device": "cpu"}},
+            ),
+            "YOLOX Small (CPU)",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "detector",
+                "builtin_yolox_s_gpu",
+                {"artifact_ref": "yolox-s", "adapter": "yolox_detector", "runtime": {"device": "cuda:0"}},
+            ),
+            "YOLOX Small (GPU)",
+        )
+        self.assertEqual(
+            build_model_display_name(
                 "tracker",
                 "builtin_bytetrack",
                 {

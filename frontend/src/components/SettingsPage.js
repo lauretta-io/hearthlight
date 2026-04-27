@@ -1198,7 +1198,6 @@ const SettingsPage = () => {
                           ) : (
                             <div className="model-library-grid">
                               {stage.options.map((option) => {
-                                const taskList = formatListLabel(option.capabilities?.tasks || []);
                                 const detectorClasses = getModelClasses(option);
                                 const sourceKinds = formatListLabel((option.capabilities?.source_kinds || []).map(normalizeSourceKindLabel));
                                 const backend = option.runtime?.backend || option.runtime?.tracker_name || option.runtime?.person_strategy || option.runtime?.package || null;
@@ -1243,10 +1242,6 @@ const SettingsPage = () => {
                                       <div className="model-library-fact">
                                         <span className="model-library-fact-label">Backend</span>
                                         <span>{backend || 'catalog entry'}</span>
-                                      </div>
-                                      <div className="model-library-fact">
-                                        <span className="model-library-fact-label">Supported Tasks</span>
-                                        <span>{taskList || 'n/a'}</span>
                                       </div>
                                       {option.stage === 'detector' && detectorClasses.length > 0 && (
                                         <div className="model-library-fact">

@@ -315,6 +315,11 @@ def build_model_display_name(stage: str, model_key: str, registration: dict[str,
                 "l": "Large",
                 "x": "Extra Large",
             }.get(size.lower(), _titleize_token(size))
+            device = str(runtime.get("device") or "").strip().lower()
+            if device.startswith("cuda"):
+                return f"YOLOX {size_label} (GPU)"
+            if device == "cpu":
+                return f"YOLOX {size_label} (CPU)"
             return f"YOLOX {size_label}"
         if "yolox" in adapter:
             return "YOLOX Detector"
@@ -357,13 +362,7 @@ def build_model_display_name(stage: str, model_key: str, registration: dict[str,
 
 def _build_model_option_display_name(model_key: str, registration: dict[str, Any], *, option_origin: str) -> str:
     stage = str(registration.get("stage") or "").strip().lower()
-    base_name = build_model_display_name(stage, model_key, registration)
-    suffix = ""
-    if option_origin == "local_override":
-        suffix = " (Local Override)"
-    elif option_origin == "local_registry":
-        suffix = " (Local)"
-    return f"{base_name}{suffix}"
+    return build_model_display_name(stage, model_key, registration)
 
 
 def build_model_option_catalog(bundle: dict[str, Any]) -> dict[str, Any]:
