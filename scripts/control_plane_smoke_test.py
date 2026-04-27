@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from urllib import error, request
@@ -83,6 +84,37 @@ def send_multipart(
 def expect(condition: bool, message: str):
     if not condition:
         raise RuntimeError(message)
+
+
+def build_smoke_video_bytes() -> bytes:
+    ffmpeg_binary = os.environ.get("FFMPEG_BINARY", "ffmpeg")
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        output_path = Path(tmp_dir) / "smoke.mp4"
+        command = [
+            ffmpeg_binary,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "lavfi",
+            "-i",
+            "color=c=black:s=64x64:d=1:r=1",
+            "-frames:v",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            "-movflags",
+            "+faststart",
+            str(output_path),
+        ]
+        try:
+            subprocess.run(command, check=True, capture_output=True)
+        except FileNotFoundError as exc:
+            raise RuntimeError("ffmpeg is required to generate the smoke-test upload") from exc
+        except subprocess.CalledProcessError as exc:
+            stderr = exc.stderr.decode(errors="ignore").strip()
+            raise RuntimeError(f"ffmpeg failed to generate the smoke-test upload: {stderr}") from exc
+        return output_path.read_bytes()
 
 
 def run_compose(docker_binary: str, *args: str):
@@ -163,13 +195,13 @@ def main():
             poll_interval_seconds=args.poll_interval_seconds,
         )
 
-        fake_mp4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
+        smoke_mp4 = build_smoke_video_bytes()
         upload_response = send_multipart(
             base_url,
             "/sources/uploads",
             field_name="file",
             filename="smoke.mp4",
-            data=fake_mp4,
+            data=smoke_mp4,
             api_key=args.api_key,
         )
         upload_id = upload_response["upload"]["id"]
@@ -179,7 +211,7 @@ def main():
                 "kind": "camera_url",
                 "label": "Smoke Camera",
                 "tasks": ["PERSON", "BAG"],
-                "enabled": True,
+                "enabled": False,
                 "order": 0,
                 "source_value": "rtsp://smoke.example/live",
             },
@@ -187,7 +219,7 @@ def main():
                 "kind": "webcam",
                 "label": "Smoke Webcam",
                 "tasks": ["BAG"],
-                "enabled": True,
+                "enabled": False,
                 "order": 1,
                 "source_value": 0,
             },
@@ -210,14 +242,13 @@ def main():
         expect(len(saved_sources) == 3, "expected three saved sources")
 
         resources = send_json(base_url, "/system/resources", api_key=args.api_key)
-        if args.skip_start:
-            expect(
-                "admission" in resources and "reason" in resources["admission"],
-                "resource snapshot is missing admission state",
-            )
-        else:
-            expect(resources["admission"]["allowed"] is True, "admission should be open")
         expect("model_health" in resources, "resource snapshot is missing model health")
+        expect(
+            "admission" in resources and "reason" in resources["admission"],
+            "resource snapshot is missing admission state",
+        )
+        if not args.skip_start:
+            expect(resources["admission"]["allowed"] is True, "admission should be open")
 
         models = send_json(base_url, "/models", api_key=args.api_key)
         expect(models, "expected at least one registered model")

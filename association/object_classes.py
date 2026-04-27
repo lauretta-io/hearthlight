@@ -3,8 +3,8 @@ from collections import defaultdict
 
 import numpy as np
 
-from ..shared.constants import DetectorClasses
-from ..shared.models.DataModels import TrackInstance
+from shared.constants import DetectorClasses
+from shared.models.DataModels import TrackInstance
 
 
 class TrackedObject:

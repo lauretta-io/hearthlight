@@ -20,6 +20,7 @@ const threatTypeTitles = {
   'UNATTENDED CHILD': 'Unattended Child',
   'UNATTENDED TRAY': 'Unattended Tray',
   'STOLEN TRAY': 'Stolen Tray',
+  'ALERT': 'Alert',
 };
 
 const IncidentCard = ({ incident, role, includeResolve }) => {
@@ -38,8 +39,9 @@ const IncidentCard = ({ incident, role, includeResolve }) => {
   return (
     <div className={`card ${style}`} onClick={handleClick}>
       <div className="card-content">
-        <p>{threatTypeTitles[incident.incident_type] || incident.incident_type}</p>
+        <p>{incident.display_title || threatTypeTitles[incident.incident_type] || incident.incident_type}</p>
         <p>{formatDateTime(incident.incident_time)}</p>
+        {incident.alert_level && <p>Level: {incident.alert_level}</p>}
         {role && <p>Role: {role}</p>}
         <p>Camera ID: {incident.location.camera_id}</p>
         <p>Incident ID: {incident.incident_id}</p>

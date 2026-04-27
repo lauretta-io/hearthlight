@@ -90,6 +90,7 @@ class Tracker:
                             bbox=track[0:4].tolist(),
                             cam_id=frame.cam_id,
                             clss=self.classes[clss_id].upper(),
+                            confidence=float(class_dets[det_idx][4]) if len(class_dets[det_idx]) > 4 else None,
                             timestamp=frame.timestamp,
                             frame_id=frame_id,
                             feature=class_features[det_idx],

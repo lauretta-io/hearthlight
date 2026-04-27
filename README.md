@@ -42,6 +42,36 @@ More detail:
 - Deployment seeds/init assets: `deploy/README.md`
 - Project roadmap: `TODO.md`
 
+## Model Selection and Alerts
+
+Hearthlight now has one consistent model-selection story:
+
+- the launcher CLI is the host-side startup and model-inventory path
+- the Settings UI is the control-plane binding path for live runs
+
+The effective runtime model set is resolved per source:
+
+- a source-specific override wins if it is saved on the source row
+- otherwise the saved default binding for that stage is used
+
+The current model stages are:
+
+- detector
+- tracker
+- person ReID
+- anomaly Stage 1
+- anomaly Stage 2
+
+Operator-facing surfaces use readable names such as `YOLOX Small` and `TransReID Person + Hybrid Bag`.
+Stable internal keys such as `builtin_yolox_s_cpu` remain unchanged underneath for storage,
+automation, and compatibility.
+
+Triggered alerts follow the same control-plane model:
+
+- detector alert targets come from the effective detector model metadata for that source
+- anomaly object and anomaly activity targets come only from the saved anomaly prompt settings
+- the browser does not parse YAML or registry files directly; the backend prepares those option lists
+
 ## Current State of the Docs
 
 Use this README plus `docs/architecture.md`, `docs/repository.md`, and
@@ -112,10 +142,10 @@ enabled source queue into the in-memory runtime config before publishing the sys
 
 The runtime config still owns:
 
-- enabled tasks per camera
+- thresholds and tuning values
 - model registries and default stage bindings
-- thresholds
 - output paths
+- compatibility config blocks that the launcher still writes for older runtime readers
 
 ## Startup
 
@@ -148,10 +178,8 @@ The recommended startup path is the Hearthlight CLI launcher. It adds startup-ti
 - service mode (`api` or `pipeline`)
 - config template
 - camera/source preset
-- detector model
-- tracker
-- pose enablement and pose model
-- feature extractor model
+- detector model inventory
+- tracker inventory
 - CPU or CUDA execution
 - visible CUDA devices
 - dashboard auto-open and DB reset behavior
@@ -162,7 +190,7 @@ Interactive launch:
 python3 -m hearthlight start --interactive
 ```
 
-Inspect available templates and model names:
+Inspect available templates and model inventory:
 
 ```bash
 python3 -m hearthlight list-models
@@ -220,7 +248,7 @@ The launcher will:
 
 - detect API-only vs full pipeline startup based on host defaults, with `--mode` or `HEARTHLIGHT_DOCKER_MODE` as overrides
 - discover config templates from `shared/configs/`
-- discover detector, tracker, and feature-extractor choices from repo registries and pose choices from repo configs
+- discover detector, tracker, ReID, and anomaly model inventory from the registry-backed control-plane catalog
 - write the generated startup config to `shared/configs/generated/`
 - copy the selected launch config to `shared/configs/config.yaml`
 - use base `docker-compose.yaml` for CPU runs
@@ -268,13 +296,14 @@ run/README.md
 ```
 
 After startup, open the frontend in your browser at `http://localhost:3000`,
-configure the camera sources, and use the dashboard start/stop controls to run
-the pipeline.
+configure sources, save default model bindings, save anomaly prompts, define any triggered alerts,
+and then use the dashboard start/stop controls to run the pipeline.
 
 Then open:
 
 - frontend: `http://localhost:3000`
-- API: `http://localhost:8000`
+- API through the same origin proxy: `http://localhost:3000/api`
+- direct API for scripts and debugging: `http://localhost:8000`
 
 You can also use the launcher scripts in `run/` if that matches your environment better.
 
@@ -338,8 +367,14 @@ Important routes exposed by the FastAPI service:
 - `DELETE /sources/uploads/{id}`
 - `GET /models`
 - `GET /models/{stage}`
+- `GET /model-options`
 - `GET /model-bindings`
 - `PUT /model-bindings`
+- `GET /settings/anomaly-prompts`
+- `PUT /settings/anomaly-prompts`
+- `GET /settings/alert-rules`
+- `PUT /settings/alert-rules`
+- `GET /settings/alert-rule-options`
 - `GET /system/model-health`
 - `GET /feeds/algorithm`
 - `GET /monitoring/overview`
@@ -367,6 +402,10 @@ retained as a fallback.
 `GET /sources/{source_id}/preview.mjpeg` is a backend MJPEG proxy for the Live page. It allows the
 browser UI to preview RTSP-backed or otherwise non-browser-native live sources as long as the
 backend container can open the source.
+
+`GET /model-options` and `GET /settings/alert-rule-options` are backend-prepared option catalogs.
+They return readable display names while preserving stable model keys and exact saved anomaly prompt
+strings for automation and alert creation.
 
 ## Security Notes
 

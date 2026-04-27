@@ -23,7 +23,9 @@ from shared.utils.input_sources import (
     coerce_source_value,
     derive_source_error,
     derive_upload_lifecycle_state,
+    format_supported_video_extensions,
     probe_source_connection,
+    validate_uploaded_video_file,
 )
 from shared.utils.logger import (
     get_bootstrap_log_dir,
@@ -65,6 +67,8 @@ try:
     from shared.utils.model_registry import (
         MODEL_STAGE_DETECTOR,
         MODEL_STAGE_TRACKER,
+        build_model_option_catalog,
+        build_model_display_name,
         build_default_bindings,
         build_runtime_binding_block,
         load_registry_bundle,
@@ -74,6 +78,8 @@ try:
 except ModuleNotFoundError:
     MODEL_STAGE_DETECTOR = None
     MODEL_STAGE_TRACKER = None
+    build_model_option_catalog = None
+    build_model_display_name = None
     build_default_bindings = None
     build_runtime_binding_block = None
     load_registry_bundle = None
@@ -414,6 +420,25 @@ class InputSourceUtilsTests(unittest.TestCase):
             )
         )
 
+    def test_validate_uploaded_video_file_accepts_supported_extension(self):
+        self.assertIsNone(validate_uploaded_video_file("clip.mp4", "video/mp4"))
+
+    def test_validate_uploaded_video_file_rejects_unsupported_extension(self):
+        error = validate_uploaded_video_file("clip.txt", "text/plain")
+        self.assertEqual(
+            error,
+            "unsupported video type '.txt'. "
+            f"Supported types: {format_supported_video_extensions()}",
+        )
+
+    def test_validate_uploaded_video_file_rejects_non_video_content_type(self):
+        error = validate_uploaded_video_file("clip.mp4", "text/plain")
+        self.assertEqual(
+            error,
+            "uploaded file content type 'text/plain' is not a video. "
+            f"Supported types: {format_supported_video_extensions()}",
+        )
+
     def test_probe_source_connection_reports_open_failure(self):
         class FakeCapture:
             def open(self, source, *_args):
@@ -745,7 +770,7 @@ class ModelRegistryTests(unittest.TestCase):
 
         self.assertIn(MODEL_STAGE_DETECTOR, defaults)
         self.assertIn(MODEL_STAGE_TRACKER, defaults)
-        self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_gpu")
+        self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_cpu")
         self.assertEqual(
             bundle["models"]["anomaly_stage_1"]["heuristic_presence_stage_1"]["healthcheck"]["import_path"],
             "hearthlight_model_zoo.anomaly_detectors",
@@ -758,6 +783,77 @@ class ModelRegistryTests(unittest.TestCase):
         defaults = build_default_bindings(bundle, has_gpu=False)
 
         self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_cpu")
+
+    @unittest.skipIf(build_model_display_name is None, "omegaconf is not installed")
+    def test_build_model_display_name_humanizes_common_models(self):
+        self.assertEqual(
+            build_model_display_name(
+                "detector",
+                "builtin_yolox_s_cpu",
+                {"artifact_ref": "yolox-s", "adapter": "yolox_detector", "runtime": {}},
+            ),
+            "YOLOX Small",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "tracker",
+                "builtin_bytetrack",
+                {
+                    "artifact_ref": "bytetrack",
+                    "adapter": "bytetrack_tracker",
+                    "runtime": {"tracker_name": "bytetrack"},
+                },
+            ),
+            "ByteTrack",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "reid",
+                "builtin_transreid_person_hybrid_bag",
+                {
+                    "artifact_ref": "transreid-person-hybrid-bag",
+                    "adapter": "transreid_person_hybrid_bag",
+                    "runtime": {},
+                },
+            ),
+            "TransReID Person + Hybrid Bag",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_1",
+                "heuristic_presence_stage_1",
+                {
+                    "artifact_ref": "heuristic-presence-stage-1",
+                    "adapter": "heuristic_presence_stage_1",
+                    "runtime": {},
+                },
+            ),
+            "Heuristic Presence Stage 1",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "prompt_rules_stage_2",
+                {
+                    "artifact_ref": "prompt-rules-stage-2",
+                    "adapter": "prompt_rules_stage_2",
+                    "runtime": {},
+                },
+            ),
+            "Prompt Rules Stage 2",
+        )
+
+    @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")
+    def test_build_model_option_catalog_enriches_detector_classes_from_model_zoo_artifacts(self):
+        catalog = build_model_option_catalog(load_registry_bundle())
+        detector_stage = next(entry for entry in catalog["stages"] if entry["stage"] == "detector")
+        yolox_option = next(
+            option for option in detector_stage["options"] if option["model_key"] == "builtin_yolox_s_cpu"
+        )
+        self.assertEqual(
+            yolox_option["capabilities"].get("classes"),
+            ["person", "backpack", "handbag", "suitcase"],
+        )
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_load_model_registries_merges_upstream_master_with_local_entries(self):

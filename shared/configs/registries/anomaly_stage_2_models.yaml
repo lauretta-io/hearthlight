@@ -13,8 +13,6 @@ prompt_rules_stage_2:
       - camera_url
       - video_upload
       - webcam
-  healthcheck:
-    import_path: src.anomaly.adapters
   requires_gpu: false
   resource_profile:
     cpu_cores: 1
@@ -32,8 +30,6 @@ passthrough_stage_2:
       - camera_url
       - video_upload
       - webcam
-  healthcheck:
-    import_path: src.anomaly.adapters
   requires_gpu: false
   resource_profile:
     cpu_cores: 1

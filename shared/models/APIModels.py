@@ -29,6 +29,16 @@ MODEL_BINDING_STAGES = {
     "anomaly_stage_1",
     "anomaly_stage_2",
 }
+ALERT_SIGNAL_FAMILIES = {
+    "detector",
+    "anomaly_object",
+    "anomaly_activity",
+}
+ALERT_LEVELS = {
+    "low",
+    "medium",
+    "high",
+}
 
 
 def normalize_source_kind(value: str) -> str:
@@ -167,6 +177,7 @@ class ModuleRuntimeMetrics(BaseModel):
 
 class ModelRegistration(BaseModel):
     model_key: str
+    display_name: str | None = None
     stage: str
     adapter: str
     artifact_ref: str | None = None
@@ -176,6 +187,46 @@ class ModelRegistration(BaseModel):
     requires_gpu: bool = False
     resource_profile: dict = Field(default_factory=dict)
     source_path: str | None = None
+
+
+class ModelOption(BaseModel):
+    model_key: str
+    display_name: str
+    stage: str
+    adapter: str
+    artifact_ref: str | None = None
+    runtime: dict = Field(default_factory=dict)
+    capabilities: dict = Field(default_factory=dict)
+    healthcheck: dict = Field(default_factory=dict)
+    requires_gpu: bool = False
+    resource_profile: dict = Field(default_factory=dict)
+    source_path: str | None = None
+    option_origin: str
+    comes_from_model_zoo: bool = False
+    overrides_model_zoo: bool = False
+
+
+class ModelOptionStage(BaseModel):
+    stage: str
+    options: list[ModelOption] = Field(default_factory=list)
+    model_zoo_option_count: int = 0
+    local_option_count: int = 0
+    local_override_count: int = 0
+
+
+class ModelZooSource(BaseModel):
+    package_name: str
+    version: str | None = None
+    repository_url: str | None = None
+    commit_sha: str | None = None
+    commit_short: str | None = None
+    resolved_from: str | None = None
+    catalog_available: bool = False
+
+
+class ModelOptionCatalog(BaseModel):
+    model_zoo: ModelZooSource
+    stages: list[ModelOptionStage] = Field(default_factory=list)
 
 
 class ModelBinding(BaseModel):
@@ -292,6 +343,76 @@ class AnomalyPromptSettings(BaseModel):
         return validate_non_empty_string(value, "yaml")
 
 
+class AlertRule(BaseModel):
+    id: int | None = None
+    source_id: int
+    enabled: bool = True
+    rule_label: str | None = Field(default=None, max_length=255)
+    signal_family: str
+    target_key: str
+    min_confidence: float = Field(ge=0.0, le=1.0)
+    alert_level: str
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("source_id")
+    def validate_source_id(cls, value):
+        if value <= 0:
+            raise ValueError("source_id must be a positive integer")
+        return value
+
+    @field_validator("rule_label")
+    def validate_rule_label(cls, value):
+        if value is None:
+            return value
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("signal_family")
+    def validate_signal_family(cls, value):
+        normalized = validate_non_empty_string(value, "signal_family").lower()
+        if normalized not in ALERT_SIGNAL_FAMILIES:
+            raise ValueError(
+                "signal_family must be one of detector, anomaly_object, anomaly_activity"
+            )
+        return normalized
+
+    @field_validator("target_key")
+    def validate_target_key(cls, value):
+        return validate_non_empty_string(value, "target_key")
+
+    @field_validator("alert_level")
+    def validate_alert_level(cls, value):
+        normalized = validate_non_empty_string(value, "alert_level").lower()
+        if normalized not in ALERT_LEVELS:
+            raise ValueError("alert_level must be one of low, medium, high")
+        return normalized
+
+
+class AlertRuleOption(BaseModel):
+    key: str
+    label: str
+
+
+class AlertRuleSignalOptions(BaseModel):
+    signal_family: str
+    options: list[AlertRuleOption] = Field(default_factory=list)
+    unavailable_reason: str | None = None
+
+
+class AlertRuleSourceOptions(BaseModel):
+    source_id: int
+    source_label: str
+    detector_model_key: str | None = None
+    anomaly_stage_1_model_key: str | None = None
+    anomaly_stage_2_model_key: str | None = None
+    signal_options: list[AlertRuleSignalOptions] = Field(default_factory=list)
+
+
+class AlertRuleOptionCatalog(BaseModel):
+    sources: list[AlertRuleSourceOptions] = Field(default_factory=list)
+
+
 class FeedLocation(BaseModel):
     camera_id: int | None = None
     zone_id: int | None = None
@@ -311,6 +432,9 @@ class AlgorithmIncidentFeedItem(BaseModel):
     run_identifier: str
     incident_id: str
     incident_type: str
+    display_title: str | None = None
+    alert_level: str | None = None
+    metadata: dict[str, str | float | int | None] = Field(default_factory=dict)
     status: str
     incident_time: str | None = None
     last_update_time: str | None = None

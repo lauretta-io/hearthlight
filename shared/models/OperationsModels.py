@@ -57,6 +57,9 @@ class IncidentUpdate(BaseModel):
 class IncidentCard(BaseModel):
     incident_id: str
     incident_type: str
+    display_title: Optional[str] = None
+    alert_level: Optional[str] = None
+    metadata: Optional[dict] = None
     incident_time: str
     status: str
     location: Location
@@ -104,6 +107,9 @@ class AssociatedEntity(BaseModel):
 class Incident(BaseModel):
     incident_id: str
     incident_type: str
+    display_title: Optional[str] = None
+    alert_level: Optional[str] = None
+    metadata: Optional[dict] = None
     incident_time: str
     status: str
     location: Location

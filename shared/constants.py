@@ -19,6 +19,8 @@ STREAM_MESSAGES_PER_FRAME = 5
 # fmt: off
 VIDEO_EXTENSIONS = ["mp4", "mov", "wmv", "avi", "avchd", "flv", "f4v", "mkv", "webm", "ts"]
 # fmt: on
+VIDEO_CONTENT_TYPE_PREFIX = "video/"
+VIDEO_CONTENT_TYPE_FALLBACKS = ["application/octet-stream"]
 
 
 class ModuleNames:
@@ -63,12 +65,14 @@ class IncidentType:
     UNATTENDED_BAG = "UNATTENDED BAG"
     LOITERING = "LOITERING"
     ANOMALY = "ANOMALY"
+    ALERT = "ALERT"
 
     INCIDENT_TYPE_ABBR = {
         GUN: "GUN",
         UNATTENDED_BAG: "UB",
         LOITERING: "LT",
         ANOMALY: "AN",
+        ALERT: "AL",
     }
 
     @classmethod
@@ -81,6 +85,7 @@ IncidentTypeStr = Literal[
     "UNATTENDED BAG",
     "LOITERING",
     "ANOMALY",
+    "ALERT",
 ]
 
 

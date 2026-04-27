@@ -8,6 +8,13 @@ const formatPercent = (value) => (
 );
 
 const endpointURL = (path) => `${BaseURL}${path}`;
+const STAGE_LABELS = {
+  detector: 'Detector',
+  tracker: 'Tracker',
+  reid: 'Person ReID',
+  anomaly_stage_1: 'Anomaly Stage 1',
+  anomaly_stage_2: 'Anomaly Stage 2',
+};
 
 const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const [overview, setOverview] = useState(null);
@@ -69,6 +76,27 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const anomalies = overview?.latest_anomalies || [];
   const recentEvents = overview?.recent_events || [];
   const feedEndpoints = overview?.feed_endpoints || [];
+  const modelDisplayNames = modelRegistrations.reduce((result, registration) => {
+    result[registration.model_key] = registration.display_name || registration.model_key;
+    return result;
+  }, {});
+  const defaultModelKeysByStage = modelBindings.reduce((result, binding) => {
+    if (binding.binding_scope === 'default' && binding.model_key) {
+      result[binding.stage] = binding.model_key;
+    }
+    return result;
+  }, {});
+  const getDisplayNameForModelKey = (modelKey, fallbackLabel = 'Unconfigured') => {
+    if (!modelKey) {
+      return fallbackLabel;
+    }
+    return modelDisplayNames[modelKey] || modelKey;
+  };
+  const describeEffectiveBinding = (stage, explicitModelKey) => {
+    const effectiveKey = explicitModelKey || defaultModelKeysByStage[stage] || null;
+    return getDisplayNameForModelKey(effectiveKey, `No ${STAGE_LABELS[stage] || stage}`);
+  };
+  const formatStageLabel = (stage) => STAGE_LABELS[stage] || stage;
 
   const content = (
     <div className={embedded ? 'monitor-shell monitor-shell-embedded' : 'monitor-shell'}>
@@ -221,8 +249,8 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
             {modelHealth.map(([modelKey, health]) => (
               <div key={modelKey} className="monitor-data-row">
                 <div>
-                  <strong>{modelKey}</strong>
-                  <div className="monitor-muted">{health.stage} · {health.adapter}</div>
+                  <strong>{getDisplayNameForModelKey(modelKey, modelKey)}</strong>
+                  <div className="monitor-muted">{formatStageLabel(health.stage)} · {health.adapter}</div>
                   <div className="monitor-muted">{health.detail || 'healthy'}</div>
                 </div>
                 <div className="monitor-data-meta">
@@ -252,7 +280,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                 className="monitor-data-row"
               >
                 <div>
-                  <strong>{binding.stage}</strong>
+                  <strong>{formatStageLabel(binding.stage)}</strong>
                   <div className="monitor-muted">
                     {binding.binding_scope === 'default'
                       ? 'Default binding'
@@ -260,7 +288,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                   </div>
                 </div>
                 <div className="monitor-data-meta">
-                  <span>{binding.model_key || 'none'}</span>
+                  <span>{getDisplayNameForModelKey(binding.model_key, 'None')}</span>
                 </div>
               </div>
             ))}
@@ -315,12 +343,11 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                   <strong>{source.label}</strong>
                   <div className="monitor-muted">{source.kind}</div>
                   <div className="monitor-muted">
-                    {source.detector_model_key || 'default detector'} · {source.tracker_model_key || 'default tracker'} · {source.reid_model_key || 'default reid'} · {source.anomaly_stage_1_model_key || 'default anomaly stage 1'} · {source.anomaly_stage_2_model_key || 'default anomaly stage 2'}
+                    {describeEffectiveBinding('detector', source.detector_model_key)} · {describeEffectiveBinding('tracker', source.tracker_model_key)} · {describeEffectiveBinding('reid', source.reid_model_key)} · {describeEffectiveBinding('anomaly_stage_1', source.anomaly_stage_1_model_key)} · {describeEffectiveBinding('anomaly_stage_2', source.anomaly_stage_2_model_key)}
                   </div>
                 </div>
                 <div className="monitor-source-meta">
                   <span className={`monitor-pill monitor-pill-${source.state}`}>{source.state}</span>
-                  <span className="monitor-muted">{source.tasks.join(', ')}</span>
                 </div>
               </div>
             ))}
@@ -339,16 +366,17 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
               <div className="monitor-empty">No incidents available.</div>
             )}
             {incidents.map((incident) => (
-              <div key={incident.incident_id} className="monitor-data-row">
-                <div>
-                  <strong>{incident.incident_type}</strong>
-                  <div className="monitor-muted">{incident.incident_id}</div>
+                <div key={incident.incident_id} className="monitor-data-row">
+                  <div>
+                    <strong>{incident.display_title || incident.incident_type}</strong>
+                    <div className="monitor-muted">{incident.incident_id}</div>
+                  </div>
+                  <div className="monitor-data-meta">
+                    {incident.alert_level && <span>{incident.alert_level}</span>}
+                    <span>{incident.status}</span>
+                    <span>{formatDateTime(incident.incident_time)}</span>
+                  </div>
                 </div>
-                <div className="monitor-data-meta">
-                  <span>{incident.status}</span>
-                  <span>{formatDateTime(incident.incident_time)}</span>
-                </div>
-              </div>
             ))}
           </div>
         </div>
@@ -395,9 +423,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                 <div>
                   <strong>{anomaly.category}</strong>
                   <div className="monitor-muted">
-                    {anomaly.model_key}
+                    {getDisplayNameForModelKey(anomaly.model_key, anomaly.model_key)}
                     {anomaly.stage_1_model_key || anomaly.stage_2_model_key
-                      ? ` (S1 ${anomaly.stage_1_model_key || 'n/a'} · S2 ${anomaly.stage_2_model_key || 'n/a'})`
+                      ? ` (S1 ${getDisplayNameForModelKey(anomaly.stage_1_model_key, 'n/a')} · S2 ${getDisplayNameForModelKey(anomaly.stage_2_model_key, 'n/a')})`
                       : ''}
                   </div>
                   <div className="monitor-muted">{anomaly.reasoning || 'No reasoning provided'}</div>

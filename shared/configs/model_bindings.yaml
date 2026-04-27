@@ -1,5 +1,5 @@
 defaults:
-  detector: builtin_yolox_s_gpu
+  detector: builtin_yolox_s_cpu
   tracker: builtin_bytetrack
   reid: builtin_transreid_person_hybrid_bag
   anomaly_stage_1: heuristic_presence_stage_1

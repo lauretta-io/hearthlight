@@ -22,8 +22,9 @@ if str(ROOT_DIR) not in sys.path:
 
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
 try:
-    from shared.utils.model_registry import load_registry_bundle
+    from shared.utils.model_registry import build_model_display_name, load_registry_bundle
 except ModuleNotFoundError:  # pragma: no cover - launcher fallback in thin test envs
+    build_model_display_name = None
     load_registry_bundle = None
 from hearthlight.runtime import run_local_reset_db
 
@@ -40,6 +41,13 @@ BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
 CUDA_COMPOSE_PATH = ROOT_DIR / "run" / "docker-compose.cuda.yaml"
 API_SERVICES = ["db", "rabbitmq", "webapp"]
 PIPELINE_SERVICES = API_SERVICES + ["ingestor", "reid", "association", "anomaly"]
+REGISTRY_STAGE_LABELS = {
+    "detector": "Detector",
+    "tracker": "Tracker",
+    "reid": "Person ReID",
+    "anomaly_stage_1": "Anomaly Stage 1",
+    "anomaly_stage_2": "Anomaly Stage 2",
+}
 
 
 @dataclass(frozen=True)
@@ -149,6 +157,9 @@ def _registry_option_inventory() -> dict[str, set[str]]:
     options: dict[str, set[str]] = {
         "detector": set(),
         "tracker": set(),
+        "reid": set(),
+        "anomaly_stage_1": set(),
+        "anomaly_stage_2": set(),
         "pose": set(),
         "feature_extractor": set(),
     }
@@ -170,7 +181,8 @@ def _registry_option_inventory() -> dict[str, set[str]]:
             if artifact_ref:
                 options["tracker"].add(artifact_ref)
         reid_models = bundle.get("models", {}).get("reid", {})
-        for registration in reid_models.values():
+        for model_key, registration in reid_models.items():
+            options["reid"].add(str(model_key))
             runtime = (registration or {}).get("runtime") or {}
             feature_model_name = (
                 str(runtime.get("feature_extractor_model") or "").strip()
@@ -179,6 +191,10 @@ def _registry_option_inventory() -> dict[str, set[str]]:
             )
             if feature_model_name:
                 options["feature_extractor"].add(feature_model_name)
+        for model_key in (bundle.get("models", {}).get("anomaly_stage_1", {}) or {}).keys():
+            options["anomaly_stage_1"].add(str(model_key))
+        for model_key in (bundle.get("models", {}).get("anomaly_stage_2", {}) or {}).keys():
+            options["anomaly_stage_2"].add(str(model_key))
     else:
         for entry in _parse_registry_file(REGISTRY_DIR / "detectors.yaml"):
             artifact_ref = str(entry.get("artifact_ref") or "").strip()
@@ -195,15 +211,41 @@ def _registry_option_inventory() -> dict[str, set[str]]:
             if artifact_ref:
                 options["tracker"].add(artifact_ref)
         for entry in _parse_registry_file(REGISTRY_DIR / "reid_models.yaml"):
+            model_key = str(entry.get("model_key") or "").strip()
+            if model_key:
+                options["reid"].add(model_key)
             runtime = entry.get("runtime") or {}
             if isinstance(runtime, dict):
                 feature_model_name = str(runtime.get("feature_extractor_model") or "").strip()
                 if feature_model_name:
                     options["feature_extractor"].add(feature_model_name)
+        for entry in _parse_registry_file(REGISTRY_DIR / "anomaly_stage_1_models.yaml"):
+            model_key = str(entry.get("model_key") or "").strip()
+            if model_key:
+                options["anomaly_stage_1"].add(model_key)
+        for entry in _parse_registry_file(REGISTRY_DIR / "anomaly_stage_2_models.yaml"):
+            model_key = str(entry.get("model_key") or "").strip()
+            if model_key:
+                options["anomaly_stage_2"].add(model_key)
     for key, values in _load_master_stage_options().items():
         if key in options:
             options[key].update(values)
     return options
+
+
+def _registry_stage_display_inventory() -> dict[str, list[str]]:
+    if load_registry_bundle is None or build_model_display_name is None:
+        return {}
+    bundle = load_registry_bundle()
+    inventory: dict[str, list[str]] = {}
+    for stage in ("detector", "tracker", "reid", "anomaly_stage_1", "anomaly_stage_2"):
+        stage_models = bundle.get("models", {}).get(stage, {}) or {}
+        display_rows: list[str] = []
+        for model_key, registration in sorted(stage_models.items()):
+            display_name = build_model_display_name(stage, str(model_key), registration or {})
+            display_rows.append(f"{display_name} [{model_key}]")
+        inventory[stage] = display_rows
+    return inventory
 
 
 def extract_registry_model_names() -> list[str]:
@@ -252,6 +294,9 @@ def discover_model_options() -> dict[str, list[str]]:
     combined: dict[str, set[str]] = {
         "detector": set(),
         "tracker": set(),
+        "reid": set(),
+        "anomaly_stage_1": set(),
+        "anomaly_stage_2": set(),
         "pose": set(),
         "feature_extractor": set(),
     }
@@ -653,12 +698,18 @@ def build_interactive_selection() -> LaunchSelection:
 def print_model_inventory() -> None:
     templates = list_config_templates()
     model_options = discover_model_options()
+    registry_inventory = _registry_stage_display_inventory()
     print("Config templates:")
     for name, path in templates.items():
         print(f"  - {name}: {path}")
     print("\nDiscovered model options:")
     for key, values in model_options.items():
         print(f"  - {key}: {', '.join(values) if values else 'none'}")
+    if registry_inventory:
+        print("\nRegistry-backed stage inventory:")
+        for stage, values in registry_inventory.items():
+            label = REGISTRY_STAGE_LABELS.get(stage, stage)
+            print(f"  - {label}: {', '.join(values) if values else 'none'}")
     print("\nRegistry-only entries:")
     for value in extract_registry_model_names():
         print(f"  - {value}")

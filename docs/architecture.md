@@ -87,7 +87,7 @@ flowchart LR
 
 - `webapp` is both the operator-facing control plane and the API surface for external systems.
 - Source definitions, uploaded media, resource telemetry, model registrations, model bindings,
-  and model-binding templates all persist under the Postgres `control` schema.
+  anomaly prompt settings, and alert rules all persist under the Postgres `control` schema.
 - Runtime entities such as runs, incidents, entities, journey nodes, recordings, frames, and
   anomaly events persist under `dicos`.
 - Model registration is config-backed, then mirrored into Postgres for API/UI visibility.
@@ -106,7 +106,7 @@ sequenceDiagram
     participant ANOM as Anomaly
     participant ASSOC as Association
 
-    UI->>WEB: Save sources / model bindings
+    UI->>WEB: Save sources / model bindings / anomaly prompts / alert rules
     WEB->>DB: Persist control-plane rows
     UI->>WEB: POST /start
     WEB->>DB: Read enabled sources + control config
@@ -208,7 +208,8 @@ Entry points:
 Current responsibilities:
 
 - Serve REST endpoints for run control, mixed-source configuration, upload staging, status,
-  resource telemetry, POI registration, and Operations-style views.
+  resource telemetry, model option catalogs, anomaly prompt settings, alert rules, POI registration,
+  and Operations-style views.
 - Read/write incident and entity data from Postgres.
 - Persist operator-managed control-plane data under the Postgres `control` schema.
 - Push start/stop and POI messages into RabbitMQ.
@@ -218,6 +219,9 @@ Notable route groups:
 
 - `/start`, `/stop`, `/status`
 - `/sources`, `/sources/uploads`, `/system/resources`
+- `/model-options`, `/model-bindings`
+- `/settings/anomaly-prompts`
+- `/settings/alert-rules`, `/settings/alert-rule-options`
 - `/system/modules/{module_name}/restart`
 - `/camera_stream`, `/camera_streams` (compatibility endpoints)
 - `/register_poi`
@@ -243,7 +247,7 @@ Notable route groups:
 Current schemas:
 
 - `dicos`: runs, incidents, entities, journey nodes, recordings, POI data
-- `control`: source templates, uploaded media metadata, resource snapshots, resource events
+- `control`: source templates, uploaded media metadata, resource snapshots, resource events, alert rules
 
 ## Shared Code
 
@@ -265,9 +269,17 @@ The `shared/` directory is the main contract surface between services. It contai
   `shared/configs/example_config.yaml`.
 - Camera and video source ownership has moved out of `config.yaml`; operators manage those rows in
   the web UI and the API persists them in Postgres before a run starts.
+- Operator-facing model names are generated centrally in the backend so the Settings page,
+  Monitoring page, and API display fields all show the same readable labels while stable internal
+  model keys stay unchanged underneath.
+- Alert-rule option lists are backend-prepared. Detector targets come from the effective detector
+  binding metadata for a source, while anomaly object and anomaly activity targets come only from
+  the saved anomaly prompt settings.
 - FOIA services are now behind an explicit `foia` compose profile and should be treated as
   optional unless that profile is enabled and the supporting files are present.
-- The frontend is served from the `webapp` container and expects the API on port `8000`.
+- The frontend is served through the `reverse_proxy` service and normally reaches the API on the
+  same origin under `/api`, with direct port `8000` access still available for scripts and
+  debugging.
 
 ## Testing Boundaries
 

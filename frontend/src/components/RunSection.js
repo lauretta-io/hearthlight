@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { BaseURL } from '../config';
+import {
+  formatUploadedVideoSummary,
+  SUPPORTED_VIDEO_LABEL,
+  validateSelectedVideoFile,
+  VIDEO_UPLOAD_ACCEPT,
+} from '../utils/videoUpload';
 import '../styles/CameraConfig.css';
 
 const TASK_OPTIONS = ['PERSON', 'BAG'];
@@ -102,6 +108,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
   const [banner, setBanner] = useState(null);
   const [rowErrors, setRowErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
+  const [uploadFeedback, setUploadFeedback] = useState({});
 
   useEffect(() => {
     localStorage.setItem('controlSourcesDraft', JSON.stringify(sources));
@@ -183,6 +190,11 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
   };
 
   const setSourceKind = (clientKey, kind) => {
+    setUploadFeedback((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
     setSources((previous) =>
       previous.map((source, index) => {
         if (source.clientKey !== clientKey) {
@@ -227,6 +239,11 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
   };
 
   const removeSource = (clientKey) => {
+    setUploadFeedback((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
     setSources((previous) => {
       const next = previous.filter((source) => source.clientKey !== clientKey);
       return next.length > 0 ? next : [createSourceDraft()];
@@ -282,7 +299,20 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
     if (!file) {
       return;
     }
+    const validationError = validateSelectedVideoFile(file);
+    if (validationError) {
+      setUploadFeedback((previous) => ({
+        ...previous,
+        [clientKey]: { kind: 'error', text: validationError },
+      }));
+      setBanner({ kind: 'error', text: validationError });
+      return;
+    }
     setBusyUploads((previous) => ({ ...previous, [clientKey]: true }));
+    setUploadFeedback((previous) => ({
+      ...previous,
+      [clientKey]: { kind: 'pending', text: `Uploading ${file.name}...` },
+    }));
     const formData = new FormData();
     formData.append('file', file);
     try {
@@ -310,8 +340,17 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
         ...previous,
         [clientKey]: undefined,
       }));
-      setBanner({ kind: 'success', text: `Uploaded ${data.upload.original_filename}.` });
+      const successMessage = `Uploaded ${data.upload.original_filename} successfully.`;
+      setUploadFeedback((previous) => ({
+        ...previous,
+        [clientKey]: { kind: 'success', text: successMessage },
+      }));
+      setBanner({ kind: 'success', text: successMessage });
     } catch (error) {
+      setUploadFeedback((previous) => ({
+        ...previous,
+        [clientKey]: { kind: 'error', text: error.message },
+      }));
       setBanner({ kind: 'error', text: error.message });
     } finally {
       setBusyUploads((previous) => ({ ...previous, [clientKey]: false }));
@@ -461,16 +500,23 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
                         <span>Video Upload</span>
                         <input
                           type="file"
-                          accept="video/*"
-                          onChange={(event) => handleUpload(source.clientKey, event.target.files?.[0])}
+                          accept={VIDEO_UPLOAD_ACCEPT}
+                          onChange={(event) => {
+                            handleUpload(source.clientKey, event.target.files?.[0]);
+                            event.target.value = '';
+                          }}
                         />
                         <small>
                           {busyUploads[source.clientKey]
                             ? 'Uploading...'
-                            : source.upload
-                              ? `${source.upload.original_filename} (${Math.round(source.upload.size_bytes / 1024 / 1024)} MB)`
-                              : 'Choose a video file'}
+                            : formatUploadedVideoSummary(source.upload)}
                         </small>
+                        <small className="muted-text">Accepted video types: {SUPPORTED_VIDEO_LABEL}</small>
+                        {uploadFeedback[source.clientKey] && (
+                          <div className={`upload-feedback upload-feedback-${uploadFeedback[source.clientKey].kind}`}>
+                            {uploadFeedback[source.clientKey].text}
+                          </div>
+                        )}
                       </label>
                     ) : (
                       <label>

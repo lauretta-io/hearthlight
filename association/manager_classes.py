@@ -8,14 +8,14 @@ import numpy as np
 
 from .object_classes import Person, Bag
 from .incident_classes import Incident, GunIncident, UnattendedBag
-from ..shared.models.DataModels import TrackInstance, Frames, ResolutionMessage
-from ..shared.constants import (
+from shared.models.DataModels import TrackInstance, Frames, ResolutionMessage
+from shared.constants import (
     DetectorClasses,
     IncidentStatus,
     IncidentType,
     IncidentTypeStr,
 )
-from ..shared.utils.bbox import IoA, bbox_centroid, xyxy2xywh
+from shared.utils.bbox import IoA, bbox_centroid, xyxy2xywh
 
 logger = logging.getLogger(__name__)
 

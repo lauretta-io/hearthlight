@@ -13,19 +13,19 @@ from .manager_classes import (
     BagManager,
     GunManager,
 )
-from ..shared.rabbit_messenger import (
+from shared.rabbit_messenger import (
     get_association_message_consumer,
     ResolutionConsumer,
     StatusPublisher,
     RoutingKey,
 )
-from ..shared.models.DataModels import Status, StatusMessage
-from ..shared.utils.backpressure import summarize_queue_backpressure
-from ..shared.utils.timer import LoopTimer
-from ..shared.utils.runtime_guard import get_dead_thread_names
-from ..shared.slave import run_command_listener
-from ..shared.utils.logger import set_run_logging
-from ..shared.constants import (
+from shared.models.DataModels import Status, StatusMessage
+from shared.utils.backpressure import summarize_queue_backpressure
+from shared.utils.timer import LoopTimer
+from shared.utils.runtime_guard import get_dead_thread_names
+from shared.slave import run_command_listener
+from shared.utils.logger import set_run_logging
+from shared.constants import (
     QUEUE_TIMEOUT,
     FPS_INTERVAL,
     FRAME_UPDATE_INTERVAL,

@@ -10,8 +10,21 @@ from .database import SessionLocal
 from ..models import SQLModels
 from ..models.SQLModels import Base
 from ..models import DataModels
+from ..utils.alert_rules import (
+    ALERT_SIGNAL_FAMILY_ANOMALY_ACTIVITY,
+    ALERT_SIGNAL_FAMILY_ANOMALY_OBJECT,
+    ALERT_SIGNAL_FAMILY_DETECTOR,
+    build_alert_incident_title,
+    ensure_alert_rule_tables,
+)
 from ..utils.backoff import with_exponential_backoff
 from ..constants import DetectorClasses, IncidentStatus, IncidentType
+from ..utils.model_registry import (
+    MODEL_STAGE_DETECTOR,
+    build_default_bindings,
+    load_registry_bundle,
+    resolve_bindings_for_source,
+)
 
 logger = logging.getLogger(__name__)
 SQLModel = TypeVar("SQLModel", bound=Base)
@@ -42,6 +55,9 @@ class DatabaseWorker:
         self.confirmed_persons = set()
         self.confirmed_bags = set()
         self.journey_node_ids = defaultdict(lambda: defaultdict(dict))
+        self.source_template_ids_by_camera_id = {}
+        self.source_rows_by_id = {}
+        self.runtime_binding_defaults = None
 
         self.SessionLocal = SessionLocal
 
@@ -96,6 +112,233 @@ class DatabaseWorker:
         with self.SessionLocal() as self.db:
             db_models = self.db.query(SQLModels.Person).all()
         return db_models
+
+    def get_source_template_id_for_camera(self, camera_id: int | None) -> int | None:
+        if camera_id is None:
+            return None
+        if camera_id in self.source_template_ids_by_camera_id:
+            return self.source_template_ids_by_camera_id[camera_id]
+        recording = (
+            self.db.query(SQLModels.CameraRecording)
+            .filter_by(run_id=DatabaseWorker.run_id, cam_id=camera_id)
+            .order_by(SQLModels.CameraRecording.id.desc())
+            .first()
+        )
+        source_template_id = (
+            recording.source_template_id if recording is not None else None
+        )
+        self.source_template_ids_by_camera_id[camera_id] = source_template_id
+        return source_template_id
+
+    def get_source_row_by_id(self, source_id: int | None):
+        if source_id is None:
+            return None
+        if source_id in self.source_rows_by_id:
+            return self.source_rows_by_id[source_id]
+        source_row = (
+            self.db.query(SQLModels.InputSourceTemplate)
+            .filter_by(id=source_id)
+            .order_by(SQLModels.InputSourceTemplate.id.desc())
+            .first()
+        )
+        self.source_rows_by_id[source_id] = source_row
+        return source_row
+
+    def get_runtime_binding_defaults(self) -> dict[str, str | None]:
+        if self.runtime_binding_defaults is not None:
+            return self.runtime_binding_defaults
+        bundle = load_registry_bundle()
+        self.runtime_binding_defaults = build_default_bindings(bundle)
+        return self.runtime_binding_defaults
+
+    def resolve_model_keys_for_source(self, source_id: int | None) -> dict[str, str | None]:
+        source_row = self.get_source_row_by_id(source_id)
+        if source_row is None:
+            return {}
+        return resolve_bindings_for_source(
+            source_row,
+            self.get_runtime_binding_defaults(),
+        )
+
+    def get_enabled_alert_rules(
+        self,
+        *,
+        source_id: int | None,
+        signal_family: str,
+    ) -> list[SQLModels.AlertRuleTemplate]:
+        if source_id is None:
+            return []
+        ensure_alert_rule_tables()
+        return (
+            self.db.query(SQLModels.AlertRuleTemplate)
+            .filter_by(
+                source_template_id=source_id,
+                signal_family=signal_family,
+                enabled=True,
+                is_deleted=False,
+            )
+            .order_by(
+                SQLModels.AlertRuleTemplate.sort_order.asc(),
+                SQLModels.AlertRuleTemplate.id.asc(),
+            )
+            .all()
+        )
+
+    def create_alert_incident(
+        self,
+        *,
+        alert_rule_id: int,
+        source_id: int | None,
+        signal_family: str,
+        matched_target: str,
+        confidence: float,
+        alert_level: str,
+        camera_id: int | None,
+        timestamp: float | None,
+        dedupe_key: str,
+        model_keys: dict[str, str | None],
+    ) -> SQLModels.AlertIncident | None:
+        ensure_alert_rule_tables()
+        existing = (
+            self.db.query(SQLModels.AlertIncident)
+            .filter_by(
+                run_id=DatabaseWorker.run_id,
+                dedupe_key=dedupe_key,
+                is_deleted=False,
+            )
+            .first()
+        )
+        if existing is not None:
+            return existing
+
+        incident_model = SQLModels.Incident(
+            run_id=DatabaseWorker.run_id,
+            incident_type=IncidentType.ALERT,
+            status=IncidentStatus.UNCONFIRMED,
+            camera_id=camera_id,
+            zone_id=None,
+            timestamp=timestamp,
+            updated_by="system",
+        )
+        alert_model = SQLModels.AlertIncident(
+            run_id=DatabaseWorker.run_id,
+            alert_rule_id=alert_rule_id,
+            source_template_id=source_id,
+            signal_family=signal_family,
+            matched_target=matched_target,
+            confidence=confidence,
+            alert_level=alert_level,
+            title=build_alert_incident_title(matched_target),
+            model_keys_json=json.dumps(model_keys),
+            dedupe_key=dedupe_key,
+        )
+        try:
+            self.db.add(incident_model)
+            self.db.flush()
+            alert_model.incident_id = incident_model.id
+            self.db.add(alert_model)
+            self.db.commit()
+            self.db.refresh(alert_model)
+            return alert_model
+        except SQLAlchemyError:
+            self.db.rollback()
+            logger.exception("Failed to create alert incident")
+            return None
+
+    def maybe_create_detector_alerts(self, track: DataModels.TrackInstance):
+        source_id = self.get_source_template_id_for_camera(track.cam_id)
+        if source_id is None:
+            return
+        confidence = float(track.confidence or 0.0)
+        matched_target = str(track.clss or "").strip().upper()
+        if not matched_target:
+            return
+        rules = self.get_enabled_alert_rules(
+            source_id=source_id,
+            signal_family=ALERT_SIGNAL_FAMILY_DETECTOR,
+        )
+        if not rules:
+            return
+        model_keys = self.resolve_model_keys_for_source(source_id)
+        for rule in rules:
+            if str(rule.target_key).strip().upper() != matched_target:
+                continue
+            if confidence < float(rule.min_confidence):
+                continue
+            dedupe_key = (
+                f"detector:{rule.id}:{source_id}:{matched_target}:{track.track_id}"
+            )
+            self.create_alert_incident(
+                alert_rule_id=rule.id,
+                source_id=source_id,
+                signal_family=ALERT_SIGNAL_FAMILY_DETECTOR,
+                matched_target=matched_target,
+                confidence=confidence,
+                alert_level=rule.alert_level,
+                camera_id=track.cam_id,
+                timestamp=track.timestamp,
+                dedupe_key=dedupe_key,
+                model_keys={
+                    "detector": model_keys.get(MODEL_STAGE_DETECTOR),
+                },
+            )
+
+    def maybe_create_anomaly_alerts(self, event: DataModels.AnomalyEvent):
+        source_id = (
+            event.source_id
+            if event.source_id is not None
+            else self.get_source_template_id_for_camera(event.camera_id)
+        )
+        if source_id is None:
+            return
+        confidence = float(event.score or 0.0)
+        model_keys = {
+            "anomaly_stage_1": event.stage_1_model_key,
+            "anomaly_stage_2": event.stage_2_model_key or event.model_key,
+        }
+        for signal_family, candidates in (
+            (
+                ALERT_SIGNAL_FAMILY_ANOMALY_OBJECT,
+                event.visible_items,
+            ),
+            (
+                ALERT_SIGNAL_FAMILY_ANOMALY_ACTIVITY,
+                event.visible_activities,
+            ),
+        ):
+            rules = self.get_enabled_alert_rules(
+                source_id=source_id,
+                signal_family=signal_family,
+            )
+            if not rules:
+                continue
+            normalized_candidates = {
+                str(candidate).strip().lower(): str(candidate).strip()
+                for candidate in candidates
+                if str(candidate).strip()
+            }
+            if not normalized_candidates:
+                continue
+            for rule in rules:
+                normalized_target = str(rule.target_key).strip().lower()
+                matched_target = normalized_candidates.get(normalized_target)
+                if matched_target is None:
+                    continue
+                if confidence < float(rule.min_confidence):
+                    continue
+                dedupe_key = f"anomaly:{rule.id}:{event.event_id}:{normalized_target}"
+                self.create_alert_incident(
+                    alert_rule_id=rule.id,
+                    source_id=source_id,
+                    signal_family=signal_family,
+                    matched_target=matched_target,
+                    confidence=confidence,
+                    alert_level=rule.alert_level,
+                    camera_id=event.camera_id,
+                    timestamp=None,
+                    dedupe_key=dedupe_key,
+                    model_keys=model_keys,
+                )
 
     # Create functions
 
@@ -397,6 +640,7 @@ class DatabaseWorker:
                         self.create_person_instance(track)
                     elif clss == DetectorClasses.BAG:
                         self.create_bag_instance(track)
+                    self.maybe_create_detector_alerts(track)
 
     def publish_journey_data(
         self,
@@ -479,6 +723,7 @@ class DatabaseWorker:
                 created_event = self.create_anomaly_event(event)
                 if created_event is not None:
                     self.create_incident_from_anomaly_event(event)
+                    self.maybe_create_anomaly_alerts(event)
 
     def check_for_resolutions(self, incidents: set | list):
         resolved_incidents = set()

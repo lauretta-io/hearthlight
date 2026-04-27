@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import json
+from importlib import metadata
 from importlib.util import find_spec
 from pathlib import Path
 import importlib
 import logging
+import re
 from typing import Any
 
 from omegaconf import OmegaConf
@@ -22,8 +25,20 @@ MODEL_BINDING_STAGES = (
     MODEL_STAGE_ANOMALY_STAGE_1,
     MODEL_STAGE_ANOMALY_STAGE_2,
 )
+MODEL_ZOO_PACKAGE_NAME = "hearthlight_model_zoo"
+MODEL_ZOO_MASTER_CATALOG_SOURCE = "hearthlight_model_zoo:master_catalog.json"
+MODEL_ZOO_REPOSITORY_URL = "https://github.com/lauretta-io/hearthlight_model_zoo.git"
+MODEL_ZOO_REQUIREMENT_PATHS = (
+    Path("webapp/requirements.txt"),
+    Path("ingestor/requirements.txt"),
+    Path("reid/requirements.txt"),
+)
+MODEL_ZOO_COMMIT_PATTERN = re.compile(
+    r"git\+https://github\.com/lauretta-io/hearthlight_model_zoo\.git@(?P<commit>[0-9a-f]{7,40})"
+)
 
 SHARED_ROOT = Path(__file__).resolve().parents[1]
+REPO_ROOT = SHARED_ROOT.parent
 CONFIG_ROOT = SHARED_ROOT / "configs"
 REGISTRY_DIR = CONFIG_ROOT / "registries"
 MODEL_BINDINGS_PATH = CONFIG_ROOT / "model_bindings.yaml"
@@ -55,6 +70,14 @@ LEGACY_TRACKER_NAME_MAP = {
 
 logger = logging.getLogger(__name__)
 
+STAGE_LABELS = {
+    MODEL_STAGE_DETECTOR: "Detector",
+    MODEL_STAGE_TRACKER: "Tracker",
+    MODEL_STAGE_REID: "Person ReID",
+    MODEL_STAGE_ANOMALY_STAGE_1: "Anomaly Stage 1",
+    MODEL_STAGE_ANOMALY_STAGE_2: "Anomaly Stage 2",
+}
+
 
 def _load_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
@@ -67,7 +90,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 def _load_upstream_master_catalog() -> dict[str, Any]:
     try:
-        catalog_module = importlib.import_module("hearthlight_model_zoo.catalog")
+        catalog_module = importlib.import_module(f"{MODEL_ZOO_PACKAGE_NAME}.catalog")
     except ModuleNotFoundError:
         return {}
     loader = getattr(catalog_module, "load_master_catalog", None)
@@ -83,6 +106,36 @@ def _load_upstream_master_catalog() -> dict[str, Any]:
     return loaded
 
 
+def _load_artifact_classes(artifact_ref: str | None) -> list[str]:
+    if not artifact_ref:
+        return []
+    try:
+        artifacts_module = importlib.import_module(f"{MODEL_ZOO_PACKAGE_NAME}.artifacts")
+    except ModuleNotFoundError:
+        return []
+    getter = getattr(artifacts_module, "get_artifact_spec", None)
+    if getter is None:
+        return []
+    try:
+        spec = getter(str(artifact_ref))
+    except Exception:
+        return []
+    return [str(item).strip() for item in getattr(spec, "classes", ()) if str(item).strip()]
+
+
+def get_registration_capabilities(registration: dict[str, Any]) -> dict[str, Any]:
+    capabilities = dict(registration.get("capabilities") or {})
+    stage = str(registration.get("stage") or "").strip().lower()
+    if stage == MODEL_STAGE_DETECTOR and not any(
+        isinstance(capabilities.get(key), list) and capabilities.get(key)
+        for key in ("classes", "detector_classes")
+    ):
+        artifact_classes = _load_artifact_classes(registration.get("artifact_ref"))
+        if artifact_classes:
+            capabilities["classes"] = artifact_classes
+    return capabilities
+
+
 def _normalize_registrations(
     registrations: dict[str, Any],
     *,
@@ -94,7 +147,7 @@ def _normalize_registrations(
         entry = dict(registration or {})
         entry.setdefault("stage", stage)
         entry.setdefault("adapter", model_key)
-        entry.setdefault("capabilities", {})
+        entry["capabilities"] = get_registration_capabilities(entry)
         entry.setdefault("runtime", {})
         entry.setdefault("healthcheck", {})
         entry.setdefault("resource_profile", {})
@@ -117,7 +170,7 @@ def load_model_registries(registry_dir: Path | None = None) -> dict[str, dict[st
                 _normalize_registrations(
                     dict(upstream_models.get(stage) or {}),
                     stage=stage,
-                    source_path="hearthlight_model_zoo:master_catalog.json",
+                    source_path=MODEL_ZOO_MASTER_CATALOG_SOURCE,
                 )
             )
         normalized.update(
@@ -141,6 +194,236 @@ def load_registry_bundle() -> dict[str, Any]:
     return {
         "models": load_model_registries(),
         "bindings": load_model_bindings(),
+    }
+
+
+def _read_model_zoo_direct_url() -> dict[str, Any]:
+    try:
+        distribution = metadata.distribution(MODEL_ZOO_PACKAGE_NAME)
+    except metadata.PackageNotFoundError:
+        return {}
+    direct_url_text = None
+    try:
+        direct_url_text = distribution.read_text("direct_url.json")
+    except Exception:
+        direct_url_text = None
+    if not direct_url_text:
+        return {}
+    try:
+        loaded = json.loads(direct_url_text)
+    except json.JSONDecodeError:
+        return {}
+    return loaded if isinstance(loaded, dict) else {}
+
+
+def _find_model_zoo_requirement_pin() -> str | None:
+    for relative_path in MODEL_ZOO_REQUIREMENT_PATHS:
+        requirement_path = REPO_ROOT / relative_path
+        if not requirement_path.exists():
+            continue
+        try:
+            lines = requirement_path.read_text().splitlines()
+        except OSError:
+            continue
+        for line in lines:
+            match = MODEL_ZOO_COMMIT_PATTERN.search(line.strip())
+            if match:
+                return match.group("commit")
+    return None
+
+
+def get_model_zoo_source_info() -> dict[str, Any]:
+    source_info: dict[str, Any] = {
+        "package_name": MODEL_ZOO_PACKAGE_NAME,
+        "version": None,
+        "repository_url": MODEL_ZOO_REPOSITORY_URL,
+        "commit_sha": None,
+        "commit_short": None,
+        "resolved_from": None,
+        "catalog_available": bool(_load_upstream_master_catalog()),
+    }
+
+    try:
+        distribution = metadata.distribution(MODEL_ZOO_PACKAGE_NAME)
+    except metadata.PackageNotFoundError:
+        distribution = None
+    if distribution is not None:
+        source_info["version"] = distribution.version
+
+    direct_url = _read_model_zoo_direct_url()
+    vcs_info = direct_url.get("vcs_info") if isinstance(direct_url, dict) else {}
+    commit_sha = None
+    if isinstance(vcs_info, dict):
+        commit_sha = vcs_info.get("commit_id") or vcs_info.get("requested_revision")
+    if commit_sha:
+        source_info["commit_sha"] = str(commit_sha)
+        source_info["commit_short"] = str(commit_sha)[:8]
+        source_info["resolved_from"] = "installed_package"
+        url = direct_url.get("url")
+        if isinstance(url, str) and url:
+            source_info["repository_url"] = url
+        return source_info
+
+    pinned_commit = _find_model_zoo_requirement_pin()
+    if pinned_commit:
+        source_info["commit_sha"] = pinned_commit
+        source_info["commit_short"] = pinned_commit[:8]
+        source_info["resolved_from"] = "requirements_pin"
+    return source_info
+
+
+def _titleize_token(token: str) -> str:
+    lowered = token.lower()
+    if lowered in {"cpu", "gpu", "fp16", "fp32", "onnx", "yaml", "json"}:
+        return lowered.upper()
+    if lowered == "reid":
+        return "ReID"
+    if lowered == "yolox":
+        return "YOLOX"
+    if lowered == "bytetrack":
+        return "ByteTrack"
+    if lowered == "botsort":
+        return "BoT-SORT"
+    if lowered == "ocsort":
+        return "OC-SORT"
+    if lowered == "strongsort":
+        return "StrongSORT"
+    if lowered == "transreid":
+        return "TransReID"
+    if lowered == "vlm":
+        return "VLM"
+    if lowered == "rtmo":
+        return "RTMO"
+    if len(token) == 1:
+        return token.upper()
+    return token.replace("_", " ").title()
+
+
+def build_model_display_name(stage: str, model_key: str, registration: dict[str, Any]) -> str:
+    runtime = dict(registration.get("runtime") or {})
+    artifact_ref = str(registration.get("artifact_ref") or "").strip()
+    adapter = str(registration.get("adapter") or "").strip()
+
+    if stage == MODEL_STAGE_DETECTOR:
+        if artifact_ref.startswith("yolox-"):
+            size = artifact_ref.split("-", 1)[1]
+            size_label = {
+                "nano": "Nano",
+                "tiny": "Tiny",
+                "s": "Small",
+                "m": "Medium",
+                "l": "Large",
+                "x": "Extra Large",
+            }.get(size.lower(), _titleize_token(size))
+            return f"YOLOX {size_label}"
+        if "yolox" in adapter:
+            return "YOLOX Detector"
+    elif stage == MODEL_STAGE_TRACKER:
+        tracker_name = str(runtime.get("tracker_name") or artifact_ref or model_key).strip()
+        tracker_label_map = {
+            "bytetrack": "ByteTrack",
+            "bytetrack-s": "ByteTrack Small",
+            "bytetrack-balanced": "ByteTrack Balanced",
+            "botsort": "BoT-SORT",
+            "ocsort": "OC-SORT",
+            "strongsort": "StrongSORT",
+            "cmtrack": "CMTrack",
+            "ocsort-tuned": "OC-SORT Tuned",
+        }
+        if tracker_name in tracker_label_map:
+            return tracker_label_map[tracker_name]
+    elif stage == MODEL_STAGE_REID:
+        if "transreid" in artifact_ref or "transreid" in adapter:
+            if "hybrid_bag" in adapter:
+                return "TransReID Person + Hybrid Bag"
+            return "TransReID"
+    elif stage == MODEL_STAGE_ANOMALY_STAGE_1:
+        if adapter == "heuristic_presence_stage_1":
+            return "Heuristic Presence Stage 1"
+    elif stage == MODEL_STAGE_ANOMALY_STAGE_2:
+        if adapter == "prompt_rules_stage_2":
+            return "Prompt Rules Stage 2"
+        if adapter == "passthrough_stage_2":
+            return "Pass-Through Stage 2"
+        if adapter == "vlm_anomaly_demo_stage_2":
+            return "VLM Anomaly Demo Stage 2"
+
+    cleaned_key = model_key.removeprefix("builtin_").replace("-", " ").replace("_", " ")
+    parts = [part for part in cleaned_key.split() if part]
+    if not parts:
+        return STAGE_LABELS.get(stage, "Model")
+    return " ".join(_titleize_token(part) for part in parts)
+
+
+def _build_model_option_display_name(model_key: str, registration: dict[str, Any], *, option_origin: str) -> str:
+    stage = str(registration.get("stage") or "").strip().lower()
+    base_name = build_model_display_name(stage, model_key, registration)
+    suffix = ""
+    if option_origin == "local_override":
+        suffix = " (Local Override)"
+    elif option_origin == "local_registry":
+        suffix = " (Local)"
+    return f"{base_name}{suffix}"
+
+
+def build_model_option_catalog(bundle: dict[str, Any]) -> dict[str, Any]:
+    upstream_catalog = _load_upstream_master_catalog()
+    upstream_models = upstream_catalog.get("models") if isinstance(upstream_catalog, dict) else {}
+    stages = []
+    for stage in MODEL_BINDING_STAGES:
+        stage_models = bundle.get("models", {}).get(stage, {})
+        upstream_stage = dict(upstream_models.get(stage) or {}) if isinstance(upstream_models, dict) else {}
+        options = []
+        model_zoo_option_count = 0
+        local_option_count = 0
+        local_override_count = 0
+        for model_key in sorted(stage_models):
+            registration = dict(stage_models.get(model_key) or {})
+            source_path = registration.get("source_path")
+            if source_path == MODEL_ZOO_MASTER_CATALOG_SOURCE:
+                option_origin = "model_zoo"
+                model_zoo_option_count += 1
+            elif model_key in upstream_stage:
+                option_origin = "local_override"
+                local_override_count += 1
+                local_option_count += 1
+            else:
+                option_origin = "local_registry"
+                local_option_count += 1
+            options.append(
+                {
+                    "model_key": model_key,
+                    "display_name": _build_model_option_display_name(
+                        model_key,
+                        registration,
+                        option_origin=option_origin,
+                    ),
+                    "stage": stage,
+                    "adapter": registration.get("adapter"),
+                    "artifact_ref": registration.get("artifact_ref"),
+                    "runtime": dict(registration.get("runtime") or {}),
+                    "capabilities": get_registration_capabilities(registration),
+                    "healthcheck": dict(registration.get("healthcheck") or {}),
+                    "requires_gpu": bool(registration.get("requires_gpu")),
+                    "resource_profile": dict(registration.get("resource_profile") or {}),
+                    "source_path": source_path,
+                    "option_origin": option_origin,
+                    "comes_from_model_zoo": option_origin == "model_zoo",
+                    "overrides_model_zoo": option_origin == "local_override",
+                }
+            )
+        stages.append(
+            {
+                "stage": stage,
+                "options": options,
+                "model_zoo_option_count": model_zoo_option_count,
+                "local_option_count": local_option_count,
+                "local_override_count": local_override_count,
+            }
+        )
+    return {
+        "model_zoo": get_model_zoo_source_info(),
+        "stages": stages,
     }
 
 

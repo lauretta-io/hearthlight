@@ -34,6 +34,7 @@ from ...shared.models.OperationsModels import (
     POIResult,
 )
 from ...shared.constants import EntityType, IncidentStatus, IncidentType
+from ...shared.utils.alert_rules import ensure_alert_rule_tables
 from ...shared.rabbit_messenger import ResolutionPublisher
 from ...shared.models.DataModels import ResolutionMessage
 from ...shared.utils.security import is_valid_incident_status_transition
@@ -539,7 +540,17 @@ def parse_incident_id(incident_id: str):
     return int(id_parts[2])
 
 
+def get_alert_incident_row(incident_db_id: int, db: Session):
+    ensure_alert_rule_tables()
+    return (
+        db.query(SQLModels.AlertIncident)
+        .filter_by(incident_id=incident_db_id, is_deleted=False)
+        .first()
+    )
+
+
 def get_incident_card(incident: SQLModels.Incident, db: Session, include_crop=True):
+    alert_row = get_alert_incident_row(incident.id, db)
     if include_crop:
         model = SQLModels.IncidentPersonMapping
         person_mapping = db.query(model).filter_by(incident_id=incident.id).first()
@@ -566,6 +577,17 @@ def get_incident_card(incident: SQLModels.Incident, db: Session, include_crop=Tr
     return IncidentCard(
         incident_id=create_incident_id(incident),
         incident_type=incident.incident_type,
+        display_title=alert_row.title if alert_row is not None else None,
+        alert_level=alert_row.alert_level if alert_row is not None else None,
+        metadata=(
+            {
+                "signal_family": alert_row.signal_family,
+                "matched_target": alert_row.matched_target,
+                "confidence": float(alert_row.confidence),
+            }
+            if alert_row is not None
+            else None
+        ),
         incident_time=incident.created_at.isoformat(),
         status=incident.status,
         location=Location(camera_id=incident.camera_id, zone_id=incident.zone_id),
@@ -691,9 +713,21 @@ def get_journey_crop(journey_node: SQLModels.JourneyNode, db: Session):
 def get_incident(incident_id: str, incident: SQLModels.Incident, db: Session):
     entities, crop = get_associated_entities_incident(incident, db)
     update_history = get_incident_update_history(incident_id, incident, db)
+    alert_row = get_alert_incident_row(incident.id, db)
     return Incident(
         incident_id=incident_id,
         incident_type=incident.incident_type,
+        display_title=alert_row.title if alert_row is not None else None,
+        alert_level=alert_row.alert_level if alert_row is not None else None,
+        metadata=(
+            {
+                "signal_family": alert_row.signal_family,
+                "matched_target": alert_row.matched_target,
+                "confidence": float(alert_row.confidence),
+            }
+            if alert_row is not None
+            else None
+        ),
         incident_time=incident.created_at.isoformat(),
         status=incident.status,
         location=Location(camera_id=incident.camera_id, zone_id=incident.zone_id),
@@ -721,7 +755,7 @@ def get_associated_entities_incident(incident: SQLModels.Incident, db: Session):
             )
             if crop is None and entity_card.crop is not None:
                 crop = entity_card.crop
-    elif incident.incident_type not in {IncidentType.UNATTENDED_BAG, IncidentType.ANOMALY}:
+    elif incident.incident_type not in {IncidentType.UNATTENDED_BAG, IncidentType.ANOMALY, IncidentType.ALERT}:
         raise HTTPException(status_code=404, detail="associated persons not found")
     bag_mapping = (
         db.query(SQLModels.IncidentBagMapping).filter_by(incident_id=incident.id).all()

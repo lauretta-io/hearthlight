@@ -28,14 +28,57 @@ beforeEach(() => {
         },
       ]);
     }
-    if (url.endsWith('/models')) {
-      return buildJsonResponse([
-        { model_key: 'builtin_yolox_s_gpu', stage: 'detector', adapter: 'yolox_detector' },
-        { model_key: 'builtin_bytetrack', stage: 'tracker', adapter: 'bytetrack_tracker' },
-        { model_key: 'builtin_transreid_person_hybrid_bag', stage: 'reid', adapter: 'transreid_person_hybrid_bag' },
-        { model_key: 'heuristic_presence_stage_1', stage: 'anomaly_stage_1', adapter: 'heuristic_presence_stage_1' },
-        { model_key: 'prompt_rules_stage_2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2' },
-      ]);
+    if (url.endsWith('/model-options')) {
+      return buildJsonResponse({
+        model_zoo: {
+          package_name: 'hearthlight_model_zoo',
+          commit_sha: '273feddf9e381b8de143c83deadf23fc9c4c4184',
+          commit_short: '273feddf',
+          resolved_from: 'requirements_pin',
+          catalog_available: true,
+        },
+        stages: [
+          {
+            stage: 'detector',
+            options: [
+              {
+                model_key: 'builtin_yolox_s_gpu',
+                display_name: 'YOLOX Small',
+                stage: 'detector',
+                adapter: 'yolox_detector',
+                capabilities: {
+                  tasks: ['PERSON', 'BAG'],
+                  classes: ['person', 'backpack', 'handbag', 'suitcase'],
+                },
+              },
+            ],
+          },
+          {
+            stage: 'tracker',
+            options: [
+              { model_key: 'builtin_bytetrack', display_name: 'ByteTrack', stage: 'tracker', adapter: 'bytetrack_tracker' },
+            ],
+          },
+          {
+            stage: 'reid',
+            options: [
+              { model_key: 'builtin_transreid_person_hybrid_bag', display_name: 'TransReID Person + Hybrid Bag', stage: 'reid', adapter: 'transreid_person_hybrid_bag' },
+            ],
+          },
+          {
+            stage: 'anomaly_stage_1',
+            options: [
+              { model_key: 'heuristic_presence_stage_1', display_name: 'Heuristic Presence Stage 1', stage: 'anomaly_stage_1', adapter: 'heuristic_presence_stage_1' },
+            ],
+          },
+          {
+            stage: 'anomaly_stage_2',
+            options: [
+              { model_key: 'prompt_rules_stage_2', display_name: 'Prompt Rules Stage 2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2' },
+            ],
+          },
+        ],
+      });
     }
     if (url.endsWith('/model-bindings') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
@@ -50,6 +93,57 @@ beforeEach(() => {
       return buildJsonResponse({
         text_prompt_yaml: 'template: |\n  prompt',
         anomaly_type_yaml: 'anomaly_object_list:\n  - weapon\nanomaly_activity_list:\n  - running',
+      });
+    }
+    if (url.endsWith('/settings/alert-rules') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([
+        {
+          id: 11,
+          source_id: 1,
+          enabled: true,
+          rule_label: 'Bag Watch',
+          signal_family: 'detector',
+          target_key: 'BAG',
+          min_confidence: 0.7,
+          alert_level: 'high',
+        },
+      ]);
+    }
+    if (url.endsWith('/settings/alert-rule-options') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({
+        sources: [
+          {
+            source_id: 1,
+            source_label: 'Gate 1',
+            detector_model_key: 'builtin_yolox_s_gpu',
+            anomaly_stage_1_model_key: 'heuristic_presence_stage_1',
+            anomaly_stage_2_model_key: 'prompt_rules_stage_2',
+            signal_options: [
+              {
+                signal_family: 'detector',
+                options: [
+                  { key: 'PERSON', label: 'PERSON' },
+                  { key: 'BAG', label: 'BAG' },
+                ],
+                unavailable_reason: null,
+              },
+              {
+                signal_family: 'anomaly_object',
+                options: [
+                  { key: 'weapon', label: 'weapon' },
+                ],
+                unavailable_reason: null,
+              },
+              {
+                signal_family: 'anomaly_activity',
+                options: [
+                  { key: 'running', label: 'running' },
+                ],
+                unavailable_reason: null,
+              },
+            ],
+          },
+        ],
       });
     }
     if (url.endsWith('/settings/input-sources') && options.method === 'PUT') {
@@ -79,6 +173,20 @@ beforeEach(() => {
         { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);
     }
+    if (url.endsWith('/settings/alert-rules') && options.method === 'PUT') {
+      return buildJsonResponse([
+        {
+          id: 11,
+          source_id: 1,
+          enabled: true,
+          rule_label: 'Bag Watch',
+          signal_family: 'detector',
+          target_key: 'BAG',
+          min_confidence: 0.7,
+          alert_level: 'high',
+        },
+      ]);
+    }
     return buildJsonResponse({});
   });
 });
@@ -101,6 +209,7 @@ test('renders source settings and saves to settings endpoint', async () => {
   expect(screen.getByRole('tab', { name: 'Sources' }).getAttribute('aria-selected')).toBe('true');
   expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
   expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
+  expect(screen.getByText('Enable Video AI')).toBeTruthy();
 
   await act(async () => {
     fireEvent.click(screen.getByText('Save Source Settings'));
@@ -126,4 +235,91 @@ test('renders initialization tab content when selected', async () => {
   expect(await screen.findByText('Repository Initialization')).toBeTruthy();
   expect(screen.getByText(/Recommended Launch Command/)).toBeTruthy();
   expect(screen.getByText(/python3 run\/run\.py start --mode api --template active --profile cpu --open-dashboard/)).toBeTruthy();
+});
+
+test('renders alert rules and saves through the alert settings endpoint', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=alerts']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Triggered Alerts')).toBeTruthy();
+  expect(screen.getByDisplayValue('Bag Watch')).toBeTruthy();
+  expect(screen.getByDisplayValue('BAG')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Save Alert Rules'));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/alert-rules$/),
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+});
+
+test('renders model library with readable stage and model descriptions', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=model-library']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Model Library')).toBeTruthy();
+  expect(screen.getByText('Detector Models')).toBeTruthy();
+  expect(screen.getByText('YOLOX Small')).toBeTruthy();
+  expect(screen.getByText('Default')).toBeTruthy();
+  expect(screen.getByText(/find people and bags in each frame/i)).toBeTruthy();
+  expect(screen.getByText(/Available detector classes include person, backpack, handbag, suitcase/i)).toBeTruthy();
+  expect(screen.getByText(/Prompt Rules Stage 2/)).toBeTruthy();
+  expect(screen.getByText(/GET .*\/model-options/)).toBeTruthy();
+});
+
+test('shows a helpful tip when no saved sources exist for alert rules', async () => {
+  global.fetch = jest.fn((url, options = {}) => {
+    if (url.endsWith('/settings/input-sources') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/model-options')) {
+      return buildJsonResponse({ model_zoo: { catalog_available: true }, stages: [] });
+    }
+    if (url.endsWith('/model-bindings') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/anomaly-prompts/standard')) {
+      return buildJsonResponse({
+        text_prompt_yaml: 'template: |\n  prompt',
+        anomaly_type_yaml: 'anomaly_object_list:\n  - weapon\nanomaly_activity_list:\n  - running',
+      });
+    }
+    if (url.endsWith('/settings/anomaly-prompts') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({
+        text_prompt_yaml: 'template: |\n  prompt',
+        anomaly_type_yaml: 'anomaly_object_list:\n  - weapon\nanomaly_activity_list:\n  - running',
+      });
+    }
+    if (url.endsWith('/settings/alert-rules') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/alert-rule-options') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({ sources: [] });
+    }
+    return buildJsonResponse({});
+  });
+
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=alerts']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Please connect and save a source first in the Sources tab.')).toBeTruthy();
 });

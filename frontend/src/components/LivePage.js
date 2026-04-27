@@ -147,7 +147,6 @@ const LivePage = () => {
                 </div>
 
                 <div className="live-card__details">
-                  <span><strong>Tasks:</strong> {(source.tasks || []).join(', ') || 'n/a'}</span>
                   <span><strong>Source:</strong> {getSourceDescription(source)}</span>
                 </div>
               </article>

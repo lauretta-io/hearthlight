@@ -1,5 +1,8 @@
 from typing import List
-from typing_extensions import Self
+try:
+    from typing_extensions import Self
+except ModuleNotFoundError:  # pragma: no cover - Python 3.11+ fallback
+    from typing import Self
 from datetime import datetime
 import uuid
 
@@ -118,6 +121,7 @@ class TrackInstance(BaseModel, arbitrary_types_allowed=True):
     bbox: list[float]
     cam_id: int
     clss: str
+    confidence: float | None = None
     timestamp: float
     frame_id: int
     confirmed: bool = False
@@ -155,6 +159,7 @@ class Detection(BaseModel, arbitrary_types_allowed=True):
     bbox: np.ndarray
     cam_id: int
     clss: str
+    confidence: float | None = None
 
     _np_int = field_validator("bbox", mode="before")(to_ndarray_int32)
     _list = field_serializer("bbox", when_used="json")(to_list)

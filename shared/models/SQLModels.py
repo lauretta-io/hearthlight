@@ -498,6 +498,25 @@ class ModelBindingTemplate(Base):
     deleted_at = mapped_column(DateTime)
 
 
+class AlertRuleTemplate(Base):
+    __tablename__ = "alert_rule_template"
+    __table_args__ = {"schema": "control"}
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_template_id = mapped_column(Integer, nullable=False)
+    enabled = mapped_column(Boolean, default=True, nullable=False)
+    sort_order = mapped_column(Integer, default=0, nullable=False)
+    rule_label = mapped_column(String(255))
+    signal_family = mapped_column(String(32), nullable=False)
+    target_key = mapped_column(String(255), nullable=False)
+    min_confidence = mapped_column(Float, default=0.5, nullable=False)
+    alert_level = mapped_column(String(16), default="medium", nullable=False)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
 class AnomalyEvent(Base):
     __tablename__ = "anomaly_event"
     __table_args__ = {"schema": "dicos"}
@@ -518,6 +537,32 @@ class AnomalyEvent(Base):
     visible_items_json = mapped_column(Text)
     visible_activities_json = mapped_column(Text)
     asset_refs_json = mapped_column(Text)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class AlertIncident(Base):
+    __tablename__ = "alert_incident"
+    __table_args__ = {"schema": "dicos"}
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id = mapped_column(Integer, nullable=False)
+    incident_id = mapped_column(Integer, nullable=False)
+    alert_rule_id = mapped_column(Integer, nullable=False)
+    source_template_id = mapped_column(Integer)
+    signal_family = mapped_column(String(32), nullable=False)
+    matched_target = mapped_column(String(255), nullable=False)
+    confidence = mapped_column(Float, nullable=False)
+    alert_level = mapped_column(String(16), nullable=False)
+    title = mapped_column(Text, nullable=False)
+    model_keys_json = mapped_column(Text)
+    dedupe_key = mapped_column(String(255), nullable=False)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)

@@ -98,6 +98,19 @@ beforeEach(() => {
             model_key: 'builtin_yolox_s_gpu',
             stage: 'detector',
             adapter: 'yolox_detector',
+            display_name: 'YOLOX Small',
+          },
+          {
+            model_key: 'heuristic_presence_stage_1',
+            stage: 'anomaly_stage_1',
+            adapter: 'heuristic_presence_stage_1',
+            display_name: 'Heuristic Presence Stage 1',
+          },
+          {
+            model_key: 'prompt_rules_stage_2',
+            stage: 'anomaly_stage_2',
+            adapter: 'prompt_rules_stage_2',
+            display_name: 'Prompt Rules Stage 2',
           },
         ],
         latest_incidents: [
@@ -176,6 +189,7 @@ test('renders monitoring overview and feed endpoint catalog', async () => {
   expect(screen.getByText('Model Health')).toBeTruthy();
   expect(screen.getByText('Anomalies')).toBeTruthy();
   expect(screen.getByText('Module Backpressure')).toBeTruthy();
+  expect(screen.getAllByText('YOLOX Small').length).toBeGreaterThan(0);
   expect(screen.getByText('database_thread at depth 12')).toBeTruthy();
   expect(screen.getByText('connection refused')).toBeTruthy();
   expect(screen.getByText(/\/feeds\/algorithm/)).toBeTruthy();

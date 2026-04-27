@@ -29,6 +29,8 @@ from ...shared.database.database import SessionLocal, get_db
 from ...shared.models import DataModels, SQLModels
 from ...shared.models.APIModels import (
     AdmissionStatus,
+    AlertRule,
+    AlertRuleOptionCatalog,
     AlgorithmEntityFeedItem,
     AlgorithmFeed,
     AssetReference as APIAssetReference,
@@ -41,6 +43,7 @@ from ...shared.models.APIModels import (
     InputSource,
     ModelBinding,
     ModelHealth,
+    ModelOptionCatalog,
     ModelRegistration,
     MODEL_BINDING_STAGES,
     MonitoringOverview,
@@ -64,6 +67,11 @@ from ...shared.rabbit_messenger import (
 )
 from ...shared.utils.dependency_health import normalize_dependency_status
 from ...shared.utils.backpressure import summarize_queue_backpressure
+from ...shared.utils.alert_rules import (
+    build_alert_rule_option_catalog,
+    build_alert_rule_option_lookup,
+    ensure_alert_rule_tables,
+)
 from ...shared.utils.image import decode_base64
 from ...shared.utils.input_sources import (
     build_runtime_camera_map,
@@ -73,13 +81,17 @@ from ...shared.utils.input_sources import (
     configure_capture_timeouts,
     derive_source_error,
     derive_upload_lifecycle_state,
+    format_supported_video_extensions,
     open_capture,
     probe_source_connection,
     source_requires_gpu,
+    validate_uploaded_video_file,
 )
 from ...shared.utils.model_registry import (
     build_default_bindings,
     build_model_health,
+    build_model_display_name,
+    build_model_option_catalog,
     build_runtime_binding_block,
     build_source_binding_overrides,
     get_registration,
@@ -982,6 +994,7 @@ def build_model_registration_responses(bundle: dict):
             registrations.append(
                 ModelRegistration(
                     model_key=model_key,
+                    display_name=build_model_display_name(stage, model_key, registration),
                     stage=stage,
                     adapter=registration.get("adapter"),
                     artifact_ref=registration.get("artifact_ref"),
@@ -1084,6 +1097,12 @@ def replace_sources(db: Session, sources: list[InputSource]):
         if row.id not in seen_ids:
             row.is_deleted = True
             row.deleted_at = datetime.utcnow()
+    ensure_alert_rule_tables()
+    active_source_ids = {row.id for row in persisted_rows if row.id is not None}
+    for alert_rule_row in db.query(SQLModels.AlertRuleTemplate).filter_by(is_deleted=False).all():
+        if alert_rule_row.source_template_id not in active_source_ids:
+            alert_rule_row.is_deleted = True
+            alert_rule_row.deleted_at = datetime.utcnow()
     sync_upload_lifecycle_states(db, source_rows=persisted_rows, active_upload_ids=set())
     db.commit()
     for row in persisted_rows:
@@ -1173,15 +1192,143 @@ def write_anomaly_prompt_settings(payload: AnomalyPromptSettings) -> AnomalyProm
     return read_anomaly_prompt_settings()
 
 
+def get_alert_rule_rows(db: Session):
+    ensure_alert_rule_tables()
+    return (
+        db.query(SQLModels.AlertRuleTemplate)
+        .filter_by(is_deleted=False)
+        .order_by(
+            SQLModels.AlertRuleTemplate.source_template_id.asc(),
+            SQLModels.AlertRuleTemplate.sort_order.asc(),
+            SQLModels.AlertRuleTemplate.id.asc(),
+        )
+        .all()
+    )
+
+
+def build_alert_rule_responses(db: Session):
+    return [
+        AlertRule(
+            id=row.id,
+            source_id=row.source_template_id,
+            enabled=row.enabled,
+            rule_label=row.rule_label,
+            signal_family=row.signal_family,
+            target_key=row.target_key,
+            min_confidence=float(row.min_confidence),
+            alert_level=row.alert_level,
+            created_at=row.created_at.isoformat() if row.created_at is not None else None,
+            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+        )
+        for row in get_alert_rule_rows(db)
+    ]
+
+
+def build_alert_rule_options_response(db: Session) -> AlertRuleOptionCatalog:
+    source_rows = get_active_source_rows(db)
+    bundle = get_registry_bundle(db, source_rows=source_rows)
+    try:
+        anomaly_prompt_settings = read_anomaly_prompt_settings()
+        anomaly_type_yaml = anomaly_prompt_settings.anomaly_type_yaml
+    except HTTPException:
+        anomaly_type_yaml = None
+    snapshot = get_current_resource_snapshot(db)
+    catalog = build_alert_rule_option_catalog(
+        bundle=bundle,
+        source_rows=source_rows,
+        anomaly_type_yaml=anomaly_type_yaml,
+        has_gpu=bool(snapshot.get("gpus")),
+    )
+    return AlertRuleOptionCatalog.model_validate(catalog)
+
+
+def validate_alert_rules_payload(
+    db: Session,
+    rules: list[AlertRule],
+) -> tuple[dict[int, SQLModels.InputSourceTemplate], dict[int, dict[str, dict]]]:
+    source_rows = get_active_source_rows(db)
+    source_by_id = {row.id: row for row in source_rows}
+    option_catalog = build_alert_rule_options_response(db)
+    option_lookup = build_alert_rule_option_lookup(option_catalog.model_dump())
+
+    for rule in rules:
+        if rule.source_id not in source_by_id:
+            raise HTTPException(status_code=404, detail=f"source {rule.source_id} not found")
+        source_signal_options = option_lookup.get(rule.source_id, {})
+        signal_options = source_signal_options.get(rule.signal_family)
+        if signal_options is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"signal family {rule.signal_family} is unavailable for source {rule.source_id}",
+            )
+        if signal_options.get("unavailable_reason"):
+            raise HTTPException(
+                status_code=400,
+                detail=signal_options["unavailable_reason"],
+            )
+        valid_targets = {
+            str(option.get("key")).strip().lower()
+            for option in signal_options.get("options", [])
+        }
+        if rule.target_key.strip().lower() not in valid_targets:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"invalid target '{rule.target_key}' for source {rule.source_id} "
+                    f"and signal family {rule.signal_family}"
+                ),
+            )
+    return source_by_id, option_lookup
+
+
+def replace_alert_rules(db: Session, rules: list[AlertRule]):
+    ensure_alert_rule_tables()
+    existing_rows = get_alert_rule_rows(db)
+    existing_by_id = {row.id: row for row in existing_rows}
+    source_by_id, _ = validate_alert_rules_payload(db, rules)
+    del source_by_id
+
+    seen_ids = set()
+    persisted_rows = []
+    source_rule_counts: dict[int, int] = {}
+    for rule in rules:
+        row = existing_by_id.get(rule.id) if rule.id is not None else None
+        if row is None:
+            row = SQLModels.AlertRuleTemplate()
+            db.add(row)
+        source_order = source_rule_counts.get(rule.source_id, 0)
+        source_rule_counts[rule.source_id] = source_order + 1
+        row.source_template_id = rule.source_id
+        row.enabled = rule.enabled
+        row.sort_order = source_order
+        row.rule_label = rule.rule_label
+        row.signal_family = rule.signal_family
+        row.target_key = rule.target_key
+        row.min_confidence = rule.min_confidence
+        row.alert_level = rule.alert_level
+        row.is_deleted = False
+        row.deleted_at = None
+        persisted_rows.append(row)
+        if row.id is not None:
+            seen_ids.add(row.id)
+
+    db.flush()
+    seen_ids.update(row.id for row in persisted_rows if row.id is not None)
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_alert_rule_responses(db)
+
+
 async def store_uploaded_source_video(
     file: UploadFile,
     db: Session,
 ):
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="file name is required")
-    suffix = Path(file.filename).suffix.lower().lstrip(".")
-    if suffix not in VIDEO_EXTENSIONS:
-        raise HTTPException(status_code=400, detail="uploaded file must be a supported video")
+    validation_error = validate_uploaded_video_file(file.filename, file.content_type)
+    if validation_error is not None:
+        raise HTTPException(status_code=400, detail=validation_error)
 
     upload_dir = get_upload_dir()
     stored_path = upload_dir / build_upload_filename(file.filename)
@@ -1194,7 +1341,13 @@ async def store_uploaded_source_video(
                     break
                 size_bytes += len(chunk)
                 if size_bytes > MAX_UPLOAD_BYTES:
-                    raise HTTPException(status_code=413, detail="uploaded file is too large")
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            "uploaded file is too large; "
+                            f"supported video types: {format_supported_video_extensions()}"
+                        ),
+                    )
                 handle.write(chunk)
     except Exception:
         if stored_path.exists():
@@ -1444,6 +1597,21 @@ def build_run_summaries(db: Session, limit: int | None = None):
     return [build_run_summary(db, run_row) for run_row in run_rows]
 
 
+def get_alert_incident_lookup(db: Session, incident_ids: list[int]) -> dict[int, SQLModels.AlertIncident]:
+    if not incident_ids:
+        return {}
+    ensure_alert_rule_tables()
+    rows = (
+        db.query(SQLModels.AlertIncident)
+        .filter(
+            SQLModels.AlertIncident.incident_id.in_(incident_ids),
+            SQLModels.AlertIncident.is_deleted.is_(False),
+        )
+        .all()
+    )
+    return {row.incident_id: row for row in rows}
+
+
 def build_incident_feed_items(
     db: Session,
     run_row: SQLModels.Run | None,
@@ -1460,11 +1628,34 @@ def build_incident_feed_items(
         .limit(normalized_limit)
         .all()
     )
+    alert_lookup = get_alert_incident_lookup(
+        db,
+        [incident_row.id for incident_row in incident_rows],
+    )
     return [
         AlgorithmIncidentFeedItem(
             run_identifier=run_row.run_identifier,
             incident_id=create_incident_id(incident_row),
             incident_type=incident_row.incident_type,
+            display_title=(
+                alert_lookup[incident_row.id].title
+                if incident_row.id in alert_lookup
+                else None
+            ),
+            alert_level=(
+                alert_lookup[incident_row.id].alert_level
+                if incident_row.id in alert_lookup
+                else None
+            ),
+            metadata=(
+                {
+                    "signal_family": alert_lookup[incident_row.id].signal_family,
+                    "matched_target": alert_lookup[incident_row.id].matched_target,
+                    "confidence": float(alert_lookup[incident_row.id].confidence),
+                }
+                if incident_row.id in alert_lookup
+                else {}
+            ),
             status=incident_row.status,
             incident_time=(
                 incident_row.created_at.isoformat()
@@ -1869,6 +2060,24 @@ def update_anomaly_prompt_settings(payload: AnomalyPromptSettings):
     return write_anomaly_prompt_settings(payload)
 
 
+@external_router.get("/settings/alert-rules", response_model=list[AlertRule])
+def get_settings_alert_rules(db: Session = Depends(get_db)):
+    return build_alert_rule_responses(db)
+
+
+@external_router.put("/settings/alert-rules", response_model=list[AlertRule])
+def update_settings_alert_rules(
+    rules: list[AlertRule],
+    db: Session = Depends(get_db),
+):
+    return replace_alert_rules(db, rules)
+
+
+@external_router.get("/settings/alert-rule-options", response_model=AlertRuleOptionCatalog)
+def get_settings_alert_rule_options(db: Session = Depends(get_db)):
+    return build_alert_rule_options_response(db)
+
+
 @external_router.get("/sources/{source_id}/preview.mjpeg")
 async def get_source_preview(source_id: int, request: Request, db: Session = Depends(get_db)):
     source_row = get_source_row_by_id(source_id, db)
@@ -2011,6 +2220,13 @@ def get_models_by_stage(stage: str, db: Session = Depends(get_db)):
         for registration in build_model_registration_responses(bundle)
         if registration.stage == normalized_stage
     ]
+
+
+@external_router.get("/model-options", response_model=ModelOptionCatalog)
+def get_model_options(db: Session = Depends(get_db)):
+    source_rows = get_active_source_rows(db)
+    bundle = get_registry_bundle(db, source_rows=source_rows)
+    return ModelOptionCatalog.model_validate(build_model_option_catalog(bundle))
 
 
 @external_router.get("/model-bindings", response_model=list[ModelBinding])

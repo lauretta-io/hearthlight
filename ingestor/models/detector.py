@@ -147,6 +147,7 @@ class Detector:
                 bbox=det[:4],
                 clss=detection_classes[det[5]].upper(),
                 cam_id=frame.cam_id,
+                confidence=float(det[4]) if len(det) > 4 else None,
             )
             for det in det_array
         ]

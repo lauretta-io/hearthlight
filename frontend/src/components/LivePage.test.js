@@ -64,9 +64,9 @@ test('renders first two live sources and all uploaded video sources', async () =
     expect(global.fetch).toHaveBeenCalledWith(expect.stringMatching(/\/settings\/input-sources$/));
   });
 
-  expect(container.querySelector('img[src="http://localhost:8000/sources/1/preview.mjpeg"]')).toBeTruthy();
-  expect(container.querySelector('img[src="http://localhost:8000/sources/2/preview.mjpeg"]')).toBeTruthy();
-  expect(container.querySelector('img[src="http://localhost:8000/sources/3/preview.mjpeg"]')).toBeTruthy();
+  expect(container.querySelector('img[src="http://localhost/api/sources/1/preview.mjpeg"]')).toBeTruthy();
+  expect(container.querySelector('img[src="http://localhost/api/sources/2/preview.mjpeg"]')).toBeTruthy();
+  expect(container.querySelector('img[src="http://localhost/api/sources/3/preview.mjpeg"]')).toBeTruthy();
   expect(screen.getByText('segment-01.mp4')).toBeTruthy();
 });
 
@@ -76,7 +76,7 @@ test('shows backend preview failure message when preview image load fails', asyn
     ({ container } = render(<LivePage />));
   });
 
-  const previewImage = await waitFor(() => container.querySelector('img[src="http://localhost:8000/sources/1/preview.mjpeg"]'));
+  const previewImage = await waitFor(() => container.querySelector('img[src="http://localhost/api/sources/1/preview.mjpeg"]'));
   act(() => {
     previewImage.dispatchEvent(new Event('error'));
   });

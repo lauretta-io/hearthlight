@@ -155,6 +155,92 @@
   margin-top: 16px;
 }
 
+.alert-option-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.model-library-stage-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.model-library-stage {
+  border: 1px solid #d9e1eb;
+  border-radius: 12px;
+  padding: 18px;
+  background: #fbfdff;
+}
+
+.model-library-stage-meta,
+.model-library-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.model-library-stage-meta span,
+.model-library-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #edf4fb;
+  color: #24476b;
+  font-size: 0.88rem;
+}
+
+.model-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 18rem), 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.model-library-card {
+  border: 1px solid #d8e2ec;
+  border-radius: 12px;
+  padding: 16px;
+  background: white;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.model-library-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-library-fact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 10rem), 1fr));
+  gap: 10px;
+}
+
+.model-library-fact {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.model-library-fact span,
+.model-library-fact code {
+  overflow-wrap: anywhere;
+}
+
+.model-library-fact-label {
+  color: #5f6b7a;
+  font-size: 0.88rem;
+}
+
 .source-grid label,
 .model-binding-grid label,
 .toggle-field,
@@ -166,7 +252,9 @@
 
 .source-grid input,
 .source-grid select,
+.model-binding-grid input,
 .model-binding-grid select,
+.model-binding-grid textarea,
 .upload-field input[type="file"] {
   border: 1px solid #c8d3df;
   border-radius: 9px;
@@ -270,6 +358,30 @@
   background: #edf9f2;
   border-color: #b5e2c6;
   color: #1f5f3f;
+}
+
+.upload-feedback {
+  border-radius: 8px;
+  padding: 10px 12px;
+  font-size: 0.92rem;
+}
+
+.upload-feedback-success {
+  background: #edf9f2;
+  border: 1px solid #b5e2c6;
+  color: #1f5f3f;
+}
+
+.upload-feedback-error {
+  background: #fff1f1;
+  border: 1px solid #f0c4c4;
+  color: #8d1d1d;
+}
+
+.upload-feedback-pending {
+  background: #eef5ff;
+  border: 1px solid #c8d9f2;
+  color: #24476b;
 }
 
 .banner-error,
@@ -422,7 +534,8 @@
 
 @media (max-width: 720px) {
   .source-grid,
-  .metric-grid {
+  .metric-grid,
+  .model-library-fact-grid {
     grid-template-columns: 1fr;
   }
 

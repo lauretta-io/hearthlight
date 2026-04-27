@@ -30,6 +30,7 @@ DEFAULT_ORIGINS = [
     "http://127.0.0.1:3001",
     "http://127.0.0.1:3100",
 ]
+DEFAULT_LOCAL_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
 
 def get_allowed_origins():
@@ -37,6 +38,13 @@ def get_allowed_origins():
     if not raw_origins:
         return DEFAULT_ORIGINS
     return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
+
+def get_allowed_origin_regex():
+    raw_regex = os.environ.get("WEBAPP_ALLOWED_ORIGIN_REGEX")
+    if raw_regex is not None:
+        return raw_regex.strip() or None
+    return DEFAULT_LOCAL_ORIGIN_REGEX
 
 
 API_KEY = os.environ.get("WEBAPP_API_KEY")
@@ -52,6 +60,7 @@ PUBLIC_PATHS = {
 app.add_middleware(
     CORSMiddleware,
     allow_origins=get_allowed_origins(),
+    allow_origin_regex=get_allowed_origin_regex(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -11,6 +11,11 @@ try:
 except ImportError:  # pragma: no cover - optional local dependency
     cv2 = None
 
+from ..constants import (
+    VIDEO_CONTENT_TYPE_FALLBACKS,
+    VIDEO_CONTENT_TYPE_PREFIX,
+    VIDEO_EXTENSIONS,
+)
 from .security import sanitize_identifier
 from .config import normalize_camera_tasks
 
@@ -24,6 +29,42 @@ UPLOAD_STATE_DELETED = "deleted"
 DEFAULT_SOURCE_PROBE_TIMEOUT_MS = 5000
 
 logger = logging.getLogger(__name__)
+
+
+def format_supported_video_extensions() -> str:
+    return ", ".join(f".{extension}" for extension in VIDEO_EXTENSIONS)
+
+
+def validate_uploaded_video_file(
+    filename: str | None,
+    content_type: str | None = None,
+) -> str | None:
+    if not filename:
+        return "file name is required"
+
+    suffix = Path(filename).suffix.lower().lstrip(".")
+    if suffix not in VIDEO_EXTENSIONS:
+        if suffix:
+            return (
+                f"unsupported video type '.{suffix}'. "
+                f"Supported types: {format_supported_video_extensions()}"
+            )
+        return (
+            "uploaded file must include a supported video extension: "
+            f"{format_supported_video_extensions()}"
+        )
+
+    normalized_content_type = (content_type or "").strip().lower()
+    if (
+        normalized_content_type
+        and normalized_content_type not in VIDEO_CONTENT_TYPE_FALLBACKS
+        and not normalized_content_type.startswith(VIDEO_CONTENT_TYPE_PREFIX)
+    ):
+        return (
+            f"uploaded file content type '{normalized_content_type}' is not a video. "
+            f"Supported types: {format_supported_video_extensions()}"
+        )
+    return None
 
 
 def build_upload_filename(original_filename: str) -> str:
