@@ -16,6 +16,7 @@ from ..utils.alert_rules import (
     ALERT_SIGNAL_FAMILY_DETECTOR,
     build_alert_incident_title,
     ensure_alert_rule_tables,
+    resolve_alert_level_label,
 )
 from ..utils.backoff import with_exponential_backoff
 from ..constants import DetectorClasses, IncidentStatus, IncidentType
@@ -24,6 +25,15 @@ from ..utils.model_registry import (
     build_default_bindings,
     load_registry_bundle,
     resolve_bindings_for_source,
+)
+from ..utils.apple_messages_notifications import (
+    ensure_apple_message_subscription_tables,
+    queue_apple_message_trigger_notifications,
+)
+from ..utils.telegram_notifications import (
+    build_trigger_notification_text,
+    ensure_telegram_subscription_tables,
+    queue_telegram_trigger_notifications,
 )
 
 logger = logging.getLogger(__name__)
@@ -238,12 +248,98 @@ class DatabaseWorker:
             alert_model.incident_id = incident_model.id
             self.db.add(alert_model)
             self.db.commit()
+            self.db.refresh(incident_model)
             self.db.refresh(alert_model)
+            self.queue_trigger_notifications(
+                incident_model,
+                display_title=alert_model.title,
+                source_id=source_id,
+                alert_level=resolve_alert_level_label(alert_level),
+                metadata={
+                    "signal_family": signal_family,
+                    "matched_target": matched_target,
+                    "confidence": round(float(confidence), 3),
+                },
+            )
             return alert_model
         except SQLAlchemyError:
             self.db.rollback()
             logger.exception("Failed to create alert incident")
             return None
+
+    def get_enabled_telegram_subscriptions(self):
+        ensure_telegram_subscription_tables()
+        return (
+            self.db.query(SQLModels.TelegramTriggerSubscription)
+            .filter_by(
+                enabled=True,
+                is_deleted=False,
+            )
+            .order_by(SQLModels.TelegramTriggerSubscription.id.asc())
+            .all()
+        )
+
+    def get_enabled_apple_message_subscriptions(self):
+        ensure_apple_message_subscription_tables()
+        return (
+            self.db.query(SQLModels.AppleMessageTriggerSubscription)
+            .filter_by(
+                enabled=True,
+                is_deleted=False,
+            )
+            .order_by(SQLModels.AppleMessageTriggerSubscription.id.asc())
+            .all()
+        )
+
+    def queue_trigger_notifications(
+        self,
+        incident_row: SQLModels.Incident,
+        *,
+        display_title: str | None = None,
+        source_id: int | None = None,
+        alert_level: str | None = None,
+        metadata: dict | None = None,
+    ) -> None:
+        telegram_subscriptions = self.get_enabled_telegram_subscriptions()
+        apple_message_subscriptions = self.get_enabled_apple_message_subscriptions()
+        if not telegram_subscriptions and not apple_message_subscriptions:
+            return
+        run_row = (
+            self.db.query(SQLModels.Run)
+            .filter_by(id=DatabaseWorker.run_id)
+            .order_by(SQLModels.Run.id.desc())
+            .first()
+        )
+        source_label = None
+        if source_id is not None:
+            source_row = self.get_source_row_by_id(source_id)
+            source_label = source_row.label if source_row is not None else None
+        occurred_at = None
+        if incident_row.created_at is not None:
+            occurred_at = incident_row.created_at.isoformat()
+        elif incident_row.timestamp is not None:
+            occurred_at = datetime.fromtimestamp(incident_row.timestamp).isoformat()
+        trigger_text = build_trigger_notification_text(
+            trigger_id=f"{incident_row.incident_type}-{incident_row.id}",
+            trigger_type=str(incident_row.incident_type),
+            display_title=display_title or str(incident_row.incident_type),
+            run_identifier=run_row.run_identifier if run_row is not None else None,
+            source_label=source_label,
+            camera_id=incident_row.camera_id,
+            alert_level=alert_level,
+            occurred_at=occurred_at,
+            metadata=metadata,
+        )
+        if telegram_subscriptions:
+            queue_telegram_trigger_notifications(
+                telegram_subscriptions,
+                trigger_text=trigger_text,
+            )
+        if apple_message_subscriptions:
+            queue_apple_message_trigger_notifications(
+                apple_message_subscriptions,
+                trigger_text=trigger_text,
+            )
 
     def maybe_create_detector_alerts(self, track: DataModels.TrackInstance):
         source_id = self.get_source_template_id_for_camera(track.cam_id)
@@ -457,6 +553,10 @@ class DatabaseWorker:
             else:
                 logger.error(f"Unknown entity class {entity.clss}")
                 return
+        self.queue_trigger_notifications(
+            incident_row,
+            source_id=self.get_source_template_id_for_camera(incident.cam_id),
+        )
 
     def create_incident_person_mapping(
         self, incident_id: int, person_id: int, role: str
@@ -600,7 +700,18 @@ class DatabaseWorker:
             timestamp=None,
             updated_by="system",
         )
-        self.create(incident_model)
+        incident_row = self.create(incident_model)
+        if incident_row is None:
+            return
+        self.queue_trigger_notifications(
+            incident_row,
+            display_title=event.title or event.category,
+            source_id=event.source_id,
+            metadata={
+                "category": event.category,
+                "score": round(float(event.score or 0.0), 3),
+            },
+        )
 
     # Update Functions
 
@@ -709,6 +820,10 @@ class DatabaseWorker:
             logger.error(f"Failed to create loitering incident for person {incident.person_id}")
             return
         self.create_incident_person_mapping(incident_row.id, incident.person_id, incident.role)
+        self.queue_trigger_notifications(
+            incident_row,
+            source_id=self.get_source_template_id_for_camera(incident.cam_id),
+        )
 
     def publish_loitering_incidents(self, incidents: list) -> None:
         if not incidents:

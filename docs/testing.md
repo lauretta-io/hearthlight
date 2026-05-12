@@ -30,18 +30,15 @@ The following parts of the system are not practical to validate with plain local
 - database-backed API flows in `webapp`
 - full incident generation in `association`
 
-For those paths, use Docker-based validation after creating `.env`, `foia.env`, and
+For those paths, use Docker-based validation after creating `.env` and
 `shared/configs/config.yaml`.
-
-For the default core stack, only `.env` and `shared/configs/config.yaml` are required. `foia.env`
-is only needed when running the optional `foia` compose profile.
 
 Recommended validation flow:
 
 ```bash
 python3 scripts/container_preflight.py
 docker compose up -d db rabbitmq
-python3 -m hearthlight reset-db
+hearthlight reset-db
 docker compose up webapp
 docker compose --profile pipeline up ingestor reid anomaly association
 ```
@@ -62,7 +59,6 @@ You can override that explicitly:
 ```bash
 python3 scripts/docker_build_test.py --mode api
 python3 scripts/docker_build_test.py --mode core
-python3 scripts/docker_build_test.py --mode foia
 ```
 
 Or target a custom subset:
@@ -76,7 +72,7 @@ is a useful narrower smoke test:
 
 ```bash
 docker compose up -d db rabbitmq
-python3 -m hearthlight reset-db
+hearthlight reset-db
 docker compose up webapp
 curl http://localhost:8000/healthz
 curl http://localhost:8000/readyz

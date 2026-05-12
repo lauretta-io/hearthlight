@@ -334,13 +334,35 @@ class UploadResponse(BaseModel):
     upload: UploadedMedia
 
 
-class AnomalyPromptSettings(BaseModel):
-    text_prompt_yaml: str
-    anomaly_type_yaml: str
+class AnomalyItemSetting(BaseModel):
+    item: str
+    trigger_score: int = Field(ge=1, le=10)
 
-    @field_validator("text_prompt_yaml", "anomaly_type_yaml")
-    def validate_yaml_payload(cls, value):
-        return validate_non_empty_string(value, "yaml")
+    @field_validator("item")
+    def validate_item(cls, value):
+        return validate_non_empty_string(value, "item")
+
+
+class AnomalyPromptSettings(BaseModel):
+    anomaly_items: list[AnomalyItemSetting] = Field(default_factory=list)
+    anomaly_behaviors: list[str] = Field(default_factory=list)
+
+    @field_validator("anomaly_behaviors", mode="before")
+    def validate_anomaly_behaviors(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("anomaly_behaviors must be a list")
+        normalized: list[str] = []
+        seen: set[str] = set()
+        for item in value:
+            label = validate_non_empty_string(str(item), "anomaly_behavior")
+            lowered = label.lower()
+            if lowered in seen:
+                continue
+            seen.add(lowered)
+            normalized.append(label)
+        return normalized
 
 
 class AlertRule(BaseModel):
@@ -411,6 +433,69 @@ class AlertRuleSourceOptions(BaseModel):
 
 class AlertRuleOptionCatalog(BaseModel):
     sources: list[AlertRuleSourceOptions] = Field(default_factory=list)
+
+
+class TelegramTriggerSubscription(BaseModel):
+    id: int | None = None
+    enabled: bool = True
+    subscription_label: str | None = Field(default=None, max_length=255)
+    bot_token: str
+    chat_id: str
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("subscription_label")
+    def validate_subscription_label(cls, value):
+        if value is None:
+            return value
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("bot_token")
+    def validate_bot_token(cls, value):
+        return validate_non_empty_string(value, "bot_token")
+
+    @field_validator("chat_id")
+    def validate_chat_id(cls, value):
+        return validate_non_empty_string(value, "chat_id")
+
+
+class TelegramTriggerTestResponse(BaseModel):
+    status: str
+    detail: str | None = None
+
+
+class AppleMessageTriggerSubscription(BaseModel):
+    id: int | None = None
+    enabled: bool = True
+    subscription_label: str | None = Field(default=None, max_length=255)
+    recipient_handle: str
+    service: str = "iMessage"
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("subscription_label")
+    def validate_apple_subscription_label(cls, value):
+        if value is None:
+            return value
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("recipient_handle")
+    def validate_apple_recipient_handle(cls, value):
+        return validate_non_empty_string(value, "recipient_handle")
+
+    @field_validator("service")
+    def validate_apple_service(cls, value):
+        normalized = validate_non_empty_string(value, "service")
+        if normalized not in {"iMessage", "SMS"}:
+            raise ValueError("service must be iMessage or SMS")
+        return normalized
+
+
+class AppleMessageTriggerTestResponse(BaseModel):
+    status: str
+    detail: str | None = None
 
 
 class FeedLocation(BaseModel):

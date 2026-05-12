@@ -60,12 +60,6 @@ beforeEach(() => {
             ],
           },
           {
-            stage: 'reid',
-            options: [
-              { model_key: 'builtin_transreid_person_hybrid_bag', display_name: 'TransReID Person + Hybrid Bag', stage: 'reid', adapter: 'transreid_person_hybrid_bag' },
-            ],
-          },
-          {
             stage: 'anomaly_stage_1',
             options: [
               { model_key: 'heuristic_presence_stage_1', display_name: 'Heuristic Presence Stage 1', stage: 'anomaly_stage_1', adapter: 'heuristic_presence_stage_1' },
@@ -84,15 +78,16 @@ beforeEach(() => {
       return buildJsonResponse([
         { stage: 'detector', model_key: 'builtin_yolox_s_gpu', binding_scope: 'default', source_id: null },
         { stage: 'tracker', model_key: 'builtin_bytetrack', binding_scope: 'default', source_id: null },
-        { stage: 'reid', model_key: 'builtin_transreid_person_hybrid_bag', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);
     }
     if (url.endsWith('/settings/anomaly-prompts') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse({
-        text_prompt_yaml: 'template: |\n  prompt',
-        anomaly_type_yaml: 'anomaly_object_list:\n  - weapon\nanomaly_activity_list:\n  - running',
+        anomaly_items: [
+          { item: 'weapon', trigger_score: 8 },
+        ],
+        anomaly_behaviors: ['running'],
       });
     }
     if (url.endsWith('/settings/alert-rules') && (!options.method || options.method === 'GET')) {
@@ -146,6 +141,28 @@ beforeEach(() => {
         ],
       });
     }
+    if (url.endsWith('/settings/telegram-trigger-subscriptions') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([
+        {
+          id: 41,
+          enabled: true,
+          subscription_label: 'Ops Chat',
+          bot_token: '123456:ABCDEF',
+          chat_id: '-1001234567890',
+        },
+      ]);
+    }
+    if (url.endsWith('/settings/apple-message-trigger-subscriptions') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([
+        {
+          id: 51,
+          enabled: true,
+          subscription_label: 'Ops iMessage',
+          recipient_handle: '+15551234567',
+          service: 'iMessage',
+        },
+      ]);
+    }
     if (url.endsWith('/settings/input-sources') && options.method === 'PUT') {
       return buildJsonResponse([
         {
@@ -168,7 +185,6 @@ beforeEach(() => {
       return buildJsonResponse([
         { stage: 'detector', model_key: 'builtin_yolox_s_gpu', binding_scope: 'default', source_id: null },
         { stage: 'tracker', model_key: 'builtin_bytetrack', binding_scope: 'default', source_id: null },
-        { stage: 'reid', model_key: 'builtin_transreid_person_hybrid_bag', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
         { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);
@@ -186,6 +202,48 @@ beforeEach(() => {
           alert_level: 'high',
         },
       ]);
+    }
+    if (url.endsWith('/settings/telegram-trigger-subscriptions') && options.method === 'PUT') {
+      return buildJsonResponse([
+        {
+          id: 41,
+          enabled: true,
+          subscription_label: 'Ops Chat',
+          bot_token: '123456:ABCDEF',
+          chat_id: '-1001234567890',
+        },
+      ]);
+    }
+    if (url.endsWith('/settings/telegram-trigger-subscriptions/test') && options.method === 'POST') {
+      return buildJsonResponse({
+        status: 'sent',
+        detail: 'Telegram test message sent.',
+      });
+    }
+    if (url.endsWith('/settings/apple-message-trigger-subscriptions') && options.method === 'PUT') {
+      return buildJsonResponse([
+        {
+          id: 51,
+          enabled: true,
+          subscription_label: 'Ops iMessage',
+          recipient_handle: '+15551234567',
+          service: 'iMessage',
+        },
+      ]);
+    }
+    if (url.endsWith('/settings/apple-message-trigger-subscriptions/test') && options.method === 'POST') {
+      return buildJsonResponse({
+        status: 'sent',
+        detail: 'Apple Messages test message sent.',
+      });
+    }
+    if (url.endsWith('/settings/anomaly-prompts') && options.method === 'PUT') {
+      return buildJsonResponse({
+        anomaly_items: [
+          { item: 'weapon', trigger_score: 8 },
+        ],
+        anomaly_behaviors: ['running'],
+      });
     }
     return buildJsonResponse({});
   });
@@ -207,6 +265,8 @@ test('renders source settings and saves to settings endpoint', async () => {
 
   expect(await screen.findByText('Settings')).toBeTruthy();
   expect(screen.getByRole('tab', { name: 'Sources' }).getAttribute('aria-selected')).toBe('true');
+  expect(screen.queryByRole('tab', { name: 'Rules' })).toBeNull();
+  expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
   expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
   expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
   expect(screen.getByText('Enable Video AI')).toBeTruthy();
@@ -237,16 +297,43 @@ test('renders initialization tab content when selected', async () => {
   expect(screen.getByText(/python3 run\/run\.py start --mode api --template active --profile cpu --open-dashboard/)).toBeTruthy();
 });
 
-test('renders alert rules and saves through the alert settings endpoint', async () => {
+test('renders stage 2 anomaly config and saves structured anomaly settings', async () => {
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=alerts']}>
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
         <SettingsPage />
       </MemoryRouter>,
     );
   });
 
-  expect(await screen.findByText('Triggered Alerts')).toBeTruthy();
+  expect(await screen.findByText('Anomaly Prompt Settings')).toBeTruthy();
+  expect(screen.getByDisplayValue('weapon')).toBeTruthy();
+  expect(screen.getByDisplayValue('8')).toBeTruthy();
+  expect(screen.getByDisplayValue('running')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Save Stage 2 Anomaly Config'));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/anomaly-prompts$/),
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+});
+
+test('renders alert rules and saves through the alert settings endpoint', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/rules']}>
+        <SettingsPage forcedTab="rules" hideTabBar pageTitle="Rules" />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByRole('heading', { name: 'Rules', level: 2 })).toBeTruthy();
+  expect(screen.queryByRole('tab', { name: 'Rules' })).toBeNull();
   expect(screen.getByDisplayValue('Bag Watch')).toBeTruthy();
   expect(screen.getByDisplayValue('BAG')).toBeTruthy();
 
@@ -257,6 +344,46 @@ test('renders alert rules and saves through the alert settings endpoint', async 
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringMatching(/\/settings\/alert-rules$/),
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+
+});
+
+test('renders connectors tab and saves both connector subscription types', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/connectors']}>
+        <SettingsPage forcedTab="connectors" hideTabBar pageTitle="Connectors" />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Telegram Trigger Subscriptions')).toBeTruthy();
+  expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
+  expect(screen.getByDisplayValue('Ops Chat')).toBeTruthy();
+  expect(screen.getByDisplayValue('-1001234567890')).toBeTruthy();
+  expect(screen.getByDisplayValue('Ops iMessage')).toBeTruthy();
+  expect(screen.getByDisplayValue('+15551234567')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Save Telegram Subscriptions'));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/telegram-trigger-subscriptions$/),
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Save Apple Messages Subscriptions'));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/apple-message-trigger-subscriptions$/),
       expect.objectContaining({ method: 'PUT' }),
     );
   });
@@ -271,13 +398,14 @@ test('renders model library with readable stage and model descriptions', async (
     );
   });
 
-  expect(await screen.findByText('Model Library')).toBeTruthy();
+  expect(await screen.findByRole('heading', { name: 'Model Library' })).toBeTruthy();
   expect(screen.getByText('Detector Models')).toBeTruthy();
   expect(screen.getByText('YOLOX Small (GPU)')).toBeTruthy();
-  expect(screen.getByText('Default')).toBeTruthy();
+  expect(screen.getAllByText('Default').length).toBeGreaterThan(0);
   expect(screen.getByText(/find people and bags in each frame/i)).toBeTruthy();
   expect(screen.getByText(/Available detector classes include person, backpack, handbag, suitcase/i)).toBeTruthy();
-  expect(screen.getByText(/Prompt Rules Stage 2/)).toBeTruthy();
+  expect(screen.getAllByText(/Prompt Rules Stage 2/).length).toBeGreaterThan(0);
+  expect(screen.queryByText('Person ReID Models')).toBeNull();
   expect(screen.getByText(/GET .*\/model-options/)).toBeTruthy();
 });
 
@@ -294,14 +422,18 @@ test('shows a helpful tip when no saved sources exist for alert rules', async ()
     }
     if (url.endsWith('/settings/anomaly-prompts/standard')) {
       return buildJsonResponse({
-        text_prompt_yaml: 'template: |\n  prompt',
-        anomaly_type_yaml: 'anomaly_object_list:\n  - weapon\nanomaly_activity_list:\n  - running',
+        anomaly_items: [
+          { item: 'weapon', trigger_score: 8 },
+        ],
+        anomaly_behaviors: ['running'],
       });
     }
     if (url.endsWith('/settings/anomaly-prompts') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse({
-        text_prompt_yaml: 'template: |\n  prompt',
-        anomaly_type_yaml: 'anomaly_object_list:\n  - weapon\nanomaly_activity_list:\n  - running',
+        anomaly_items: [
+          { item: 'weapon', trigger_score: 8 },
+        ],
+        anomaly_behaviors: ['running'],
       });
     }
     if (url.endsWith('/settings/alert-rules') && (!options.method || options.method === 'GET')) {
@@ -310,13 +442,19 @@ test('shows a helpful tip when no saved sources exist for alert rules', async ()
     if (url.endsWith('/settings/alert-rule-options') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse({ sources: [] });
     }
+    if (url.endsWith('/settings/telegram-trigger-subscriptions') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/apple-message-trigger-subscriptions') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
     return buildJsonResponse({});
   });
 
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=alerts']}>
-        <SettingsPage />
+      <MemoryRouter initialEntries={['/rules']}>
+        <SettingsPage forcedTab="rules" hideTabBar pageTitle="Rules" />
       </MemoryRouter>,
     );
   });

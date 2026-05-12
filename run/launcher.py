@@ -21,12 +21,18 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
+from shared.utils.local_worker_runtime import (
+    WORKER_RUNTIME_DOCKER,
+    WORKER_RUNTIME_HYBRID_LOCAL_CPU,
+    detect_default_worker_runtime,
+)
 try:
     from shared.utils.model_registry import build_model_display_name, load_registry_bundle
 except ModuleNotFoundError:  # pragma: no cover - launcher fallback in thin test envs
     build_model_display_name = None
     load_registry_bundle = None
 from hearthlight.runtime import run_local_reset_db
+from hearthlight.runtime import resolve_start_defaults
 
 try:
     from hearthlight_model_zoo.catalog import load_master_catalog
@@ -39,7 +45,7 @@ GENERATED_CONFIG_DIR = CONFIG_DIR / "generated"
 REGISTRY_DIR = ROOT_DIR / "shared" / "configs" / "registries"
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
 CUDA_COMPOSE_PATH = ROOT_DIR / "run" / "docker-compose.cuda.yaml"
-API_SERVICES = ["db", "rabbitmq", "webapp"]
+API_SERVICES = ["db", "rabbitmq", "webapp", "reverse_proxy"]
 PIPELINE_SERVICES = API_SERVICES + ["ingestor", "reid", "association", "anomaly"]
 REGISTRY_STAGE_LABELS = {
     "detector": "Detector",
@@ -55,6 +61,7 @@ class LaunchSelection:
     template_path: Path
     source_preset_path: Path | None
     run_mode: str
+    worker_runtime: str
     detector_model: str
     tracker_model: str
     detector_device: str
@@ -81,6 +88,13 @@ def detect_run_mode() -> tuple[str, str]:
     if system == "Darwin" or machine in {"arm64", "aarch64"}:
         return "api", f"defaulting to API mode on {system} {machine}"
     return "pipeline", f"defaulting to full pipeline mode on {system} {machine}"
+
+
+def detect_worker_runtime(run_mode: str, profile: str) -> tuple[str, str]:
+    runtime = detect_default_worker_runtime(run_mode=run_mode, profile=profile)
+    if runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU:
+        return runtime, "defaulting to hybrid-local-cpu on macOS CPU pipeline runs"
+    return runtime, "defaulting to docker worker runtime"
 
 
 def list_config_templates() -> dict[str, Path]:
@@ -483,7 +497,12 @@ def build_effective_config(selection: LaunchSelection, activate: bool = True) ->
     config_text = set_nested_scalar(
         config_text, ["feature_extractor"], "device", selection.feature_extractor_device
     )
-    config_text = set_nested_scalar(config_text, ["output", "visualize"], "show_vid", selection.show_video)
+    effective_show_video = (
+        False
+        if selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU
+        else selection.show_video
+    )
+    config_text = set_nested_scalar(config_text, ["output", "visualize"], "show_vid", effective_show_video)
 
     generated_name = (
         f"launcher_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{selection.template_path.stem}.yaml"
@@ -499,6 +518,8 @@ def build_effective_config(selection: LaunchSelection, activate: bool = True) ->
         f"# pose_model: {selection.pose_model}",
         f"# feature_extractor: {selection.feature_extractor_model}",
         f"# use_cuda: {selection.use_cuda}",
+        f"# worker_runtime: {selection.worker_runtime}",
+        f"# show_video: {effective_show_video}",
         "",
     ]
     generated_path.write_text("\n".join(header) + config_text)
@@ -526,6 +547,8 @@ def compose_environment(selection: LaunchSelection) -> dict[str, str]:
     env = build_docker_env(docker_binary)
     env["RELOAD"] = "1" if selection.reload else ""
     env["CUDA_VISIBLE_DEVICES"] = selection.cuda_visible_devices if selection.use_cuda else ""
+    env["HEARTHLIGHT_WORKER_RUNTIME"] = selection.worker_runtime
+    env["HEARTHLIGHT_HOST_PROJECT_ROOT"] = str(ROOT_DIR)
     return env
 
 
@@ -550,7 +573,11 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
         raise SystemExit("Docker CLI not found. Install Docker Desktop or add docker to PATH.")
     command = compose_command(docker_binary, selection.use_cuda)
     env = compose_environment(selection)
-    services = PIPELINE_SERVICES if selection.run_mode == "pipeline" else API_SERVICES
+    docker_pipeline = (
+        selection.run_mode == "pipeline"
+        and selection.worker_runtime == WORKER_RUNTIME_DOCKER
+    )
+    services = PIPELINE_SERVICES if docker_pipeline else API_SERVICES
 
     print(f"Template: {selection.template_path}")
     print(
@@ -558,6 +585,7 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
         + (str(selection.source_preset_path) if selection.source_preset_path is not None else "template default")
     )
     print(f"Run mode: {selection.run_mode}")
+    print(f"Worker runtime: {selection.worker_runtime}")
     print(f"Generated config: {generated_path}")
     print(f"Active config: {active_path}")
     print(f"Detector: {selection.detector_model} on {selection.detector_device}")
@@ -588,6 +616,14 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
         dashboard_thread = threading.Thread(target=_wait_and_open_dashboard, daemon=True)
         dashboard_thread.start()
 
+    if selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU:
+        subprocess.run(command + ["up", "-d", *API_SERVICES], cwd=ROOT_DIR, env=env, check=True)
+        return subprocess.call(
+            [sys.executable, "-m", "hearthlight.local_workers", "start"],
+            cwd=ROOT_DIR,
+            env=env,
+        )
+
     return subprocess.call(command + ["up", *services], cwd=ROOT_DIR, env=env)
 
 
@@ -597,6 +633,11 @@ def _wait_and_open_dashboard():
 
 
 def stop_stack(use_cuda: bool = False) -> int:
+    subprocess.call(
+        [sys.executable, "-m", "hearthlight.local_workers", "stop"],
+        cwd=ROOT_DIR,
+        env=os.environ.copy(),
+    )
     docker_binary = find_docker_binary()
     if docker_binary is None:
         raise SystemExit("Docker CLI not found. Install Docker Desktop or add docker to PATH.")
@@ -644,6 +685,7 @@ def build_interactive_selection() -> LaunchSelection:
     templates = list_config_templates()
     model_options = discover_model_options()
     current = read_current_selection()
+    start_defaults = resolve_start_defaults(ROOT_DIR)
 
     template_name = prompt_choice("Config template", list(templates.keys()), default="active" if "active" in templates else next(iter(templates)))
     source_preset_name = prompt_choice(
@@ -657,14 +699,25 @@ def build_interactive_selection() -> LaunchSelection:
         ["api", "pipeline"],
         default=detected_run_mode,
     )
-    profile = prompt_choice("Execution profile", ["cpu", "cuda"], default="cuda" if "cuda" in current.get("rtdetr_device", "") else "cpu")
+    profile = prompt_choice(
+        "Execution profile",
+        ["cpu", "cuda"],
+        default="cuda" if "cuda" in current.get("rtdetr_device", "") else start_defaults["profile"],
+    )
+    detected_worker_runtime, detected_worker_runtime_reason = detect_worker_runtime(run_mode, profile)
+    worker_runtime = prompt_choice(
+        f"Worker runtime ({detected_worker_runtime_reason})",
+        [WORKER_RUNTIME_DOCKER, WORKER_RUNTIME_HYBRID_LOCAL_CPU],
+        default=detected_worker_runtime,
+    )
     use_cuda = profile == "cuda"
-    detector_device = "cuda" if use_cuda else "cpu"
-    pose_device = "cuda" if use_cuda else "cpu"
-    feature_device = "cuda:0" if use_cuda else "cpu"
-    cuda_visible_devices = input("CUDA visible devices [all]: ").strip() if use_cuda else ""
+    detector_device = start_defaults["detector_device"] if use_cuda else "cpu"
+    pose_device = start_defaults["pose_device"] if use_cuda else "cpu"
+    feature_device = start_defaults["feature_device"] if use_cuda else "cpu"
+    default_cuda_visible_devices = start_defaults["cuda_visible_devices"] or "all"
+    cuda_visible_devices = input(f"CUDA visible devices [{default_cuda_visible_devices}]: ").strip() if use_cuda else ""
     if use_cuda and not cuda_visible_devices:
-        cuda_visible_devices = "all"
+        cuda_visible_devices = default_cuda_visible_devices
 
     pose_enabled = prompt_bool("Enable pose estimation", default=current.get("pose_enable", "false").lower() == "true")
     show_video = prompt_bool("Show video windows", default=current.get("show_vid", "true").lower() == "true")
@@ -676,6 +729,7 @@ def build_interactive_selection() -> LaunchSelection:
         template_path=templates[template_name],
         source_preset_path=None if source_preset_name == "template default" else templates[source_preset_name],
         run_mode=run_mode,
+        worker_runtime=worker_runtime,
         detector_model=prompt_choice("Detector model", model_options["detector"], default=current.get("detector")),
         tracker_model=prompt_choice("Tracker", model_options["tracker"], default=current.get("tracker")),
         detector_device=detector_device,
@@ -719,6 +773,7 @@ def build_selection_from_args(args) -> LaunchSelection:
     templates = list_config_templates()
     model_options = discover_model_options()
     current = read_current_selection()
+    start_defaults = resolve_start_defaults(ROOT_DIR)
 
     template_key = args.template or ("active" if "active" in templates else next(iter(templates)))
     if template_key not in templates:
@@ -730,15 +785,22 @@ def build_selection_from_args(args) -> LaunchSelection:
 
     use_cuda = args.profile == "cuda"
     detected_run_mode, _ = detect_run_mode()
-    detector_device = args.detector_device or ("cuda" if use_cuda else "cpu")
-    pose_device = args.pose_device or ("cuda" if use_cuda else "cpu")
-    feature_device = args.feature_device or ("cuda:0" if use_cuda else "cpu")
+    selected_run_mode = args.mode or detected_run_mode
+    detected_worker_runtime, _ = detect_worker_runtime(selected_run_mode, args.profile)
+    detector_device = args.detector_device or (
+        start_defaults["detector_device"] if use_cuda else "cpu"
+    )
+    pose_device = args.pose_device or (start_defaults["pose_device"] if use_cuda else "cpu")
+    feature_device = args.feature_device or (
+        start_defaults["feature_device"] if use_cuda else "cpu"
+    )
     pose_enabled = args.pose_enabled if args.pose_enabled is not None else current.get("pose_enable", "false").lower() == "true"
 
     return LaunchSelection(
         template_path=templates[template_key],
         source_preset_path=templates[args.source_preset] if args.source_preset else None,
-        run_mode=args.mode or detected_run_mode,
+        run_mode=selected_run_mode,
+        worker_runtime=args.worker_runtime or detected_worker_runtime,
         detector_model=args.detector or current.get("detector") or model_options["detector"][0],
         tracker_model=args.tracker or current.get("tracker") or model_options["tracker"][0],
         detector_device=detector_device,
@@ -753,7 +815,9 @@ def build_selection_from_args(args) -> LaunchSelection:
         feature_extractor_device=feature_device,
         show_video=args.show_video if args.show_video is not None else current.get("show_vid", "true").lower() == "true",
         use_cuda=use_cuda,
-        cuda_visible_devices=args.cuda_visible_devices or ("all" if use_cuda else ""),
+        cuda_visible_devices=args.cuda_visible_devices or (
+            start_defaults["cuda_visible_devices"] if use_cuda else ""
+        ),
         reload=args.reload,
         skip_reset_db=args.skip_reset_db,
         open_dashboard=args.open_dashboard,

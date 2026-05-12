@@ -32,6 +32,12 @@ from shared.utils.logger import (
     get_run_log_dir,
     set_bootstrap_logging,
 )
+from shared.utils.local_worker_runtime import (
+    WORKER_RUNTIME_DOCKER,
+    WORKER_RUNTIME_HYBRID_LOCAL_CPU,
+    detect_default_worker_runtime,
+    map_container_path_to_host,
+)
 from shared.utils.micro_batch import build_asset_reference, build_micro_batch_envelope
 from shared.utils.monitoring_feed import (
     build_feed_endpoint_catalog,
@@ -85,6 +91,11 @@ except ModuleNotFoundError:
     load_registry_bundle = None
     resolve_tracker_name = None
     validate_source_bindings = None
+
+try:
+    from shared.rabbit_messenger import get_rabbit_settings
+except ModuleNotFoundError:
+    get_rabbit_settings = None
 
 
 class BackoffTests(unittest.TestCase):
@@ -189,6 +200,44 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(tasks, {Tasks.PERSON, Tasks.POI, "UNKNOWN-TASK"})
         warning.assert_called_once_with("Unknown task %s for %s", "UNKNOWN-TASK", "camera cam-1")
+
+
+class LocalWorkerRuntimeTests(unittest.TestCase):
+    def test_detect_default_worker_runtime_prefers_hybrid_on_macos_cpu_pipeline(self):
+        with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
+            runtime = detect_default_worker_runtime(run_mode="pipeline", profile="cpu")
+        self.assertEqual(runtime, WORKER_RUNTIME_HYBRID_LOCAL_CPU)
+
+    def test_detect_default_worker_runtime_keeps_docker_for_api_mode(self):
+        with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
+            runtime = detect_default_worker_runtime(run_mode="api", profile="cpu")
+        self.assertEqual(runtime, WORKER_RUNTIME_DOCKER)
+
+    def test_map_container_path_to_host_uses_host_project_root(self):
+        with patch.dict(
+            os.environ,
+            {"HEARTHLIGHT_HOST_PROJECT_ROOT": "/tmp/hearthlight-host"},
+            clear=False,
+        ):
+            mapped = map_container_path_to_host("/app/src/shared/output/source_uploads/test.mp4")
+        self.assertEqual(
+            mapped,
+            str(Path("/tmp/hearthlight-host/shared/output/source_uploads/test.mp4").resolve()),
+        )
+
+    @unittest.skipIf(get_rabbit_settings is None, "rabbit messenger unavailable")
+    def test_get_rabbit_settings_honors_port_override(self):
+        with patch.dict(
+            os.environ,
+            {
+                "RABBITMQ_HOST": "localhost",
+                "RABBITMQ_PORT": "5673",
+                "RABBITMQ_EXCHANGE": "test",
+            },
+            clear=False,
+        ):
+            host, port, exchange = get_rabbit_settings()
+        self.assertEqual((host, port, exchange), ("localhost", 5673, "test"))
 
 
 class LoggerTests(unittest.TestCase):
@@ -861,7 +910,11 @@ class ModelRegistryTests(unittest.TestCase):
 
     @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")
     def test_build_model_option_catalog_enriches_detector_classes_from_model_zoo_artifacts(self):
-        catalog = build_model_option_catalog(load_registry_bundle())
+        with patch(
+            "shared.utils.model_registry._load_artifact_classes",
+            return_value=["person", "backpack", "handbag", "suitcase"],
+        ):
+            catalog = build_model_option_catalog(load_registry_bundle())
         detector_stage = next(entry for entry in catalog["stages"] if entry["stage"] == "detector")
         yolox_option = next(
             option for option in detector_stage["options"] if option["model_key"] == "builtin_yolox_s_cpu"

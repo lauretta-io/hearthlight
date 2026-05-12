@@ -1,0 +1,180 @@
+template: 'You are a security surveillance analyst reviewing {frames_count} frames
+  from a camera feed.
+
+  Each frame is 1 second apart.
+
+
+  Frames provided:
+
+  {input_details}
+
+
+  ANOMALOUS ITEMS:
+
+  {anomaly_object_list}
+
+
+  ANOMALOUS ACTIVITIES:
+
+  {anomaly_activity_list}
+
+
+  Instructions:
+
+  1. Describe the scene briefly.
+
+  2. Score every entry in ANOMALOUS ITEMS and ANOMALOUS ACTIVITIES from 0 to 10 based
+  on how likely it is present or occurring in the frames. 0 = definitely not present,
+  10 = definitely present. Be concise: use format "item:score" separated by commas.
+
+  3. Any item or activity that scored above 5 must be listed in visible_items or visible_activities
+  respectively.
+
+  4. Set confidence (0-1) to reflect the overall anomaly likelihood derived from the
+  item and activity scores.
+
+  5. Set anomaly_detected to true if confidence is above 0.5, false otherwise.
+
+
+  Respond with a JSON object containing:
+
+  - scene_summary: Brief description of what is clearly visible in the foreground
+  scene.
+
+  - think: Scores for every item and activity in the ANOMALOUS ITEMS and ANOMALOUS
+  ACTIVITIES list. Format: "vehicle:score", "fighting:score", etc.
+
+  - visible_items: Comma-separated items from ANOMALOUS ITEMS that scored above 5.
+  Empty string if none.
+
+  - visible_activities: Comma-separated activities from ANOMALOUS ACTIVITIES that
+  scored above 5. Empty string if none.
+
+  - confidence: Overall anomaly likelihood between 0 and 1 based on the scores.
+
+  - anomaly_detected: true if confidence is above 0.5, false otherwise.
+
+  - anomaly_category: If anomaly_detected is true, name the anomaly category based
+  on the highest-scored items or activities.'
+anomaly_items:
+- item: weapon
+  trigger_score: 6
+- item: knife
+  trigger_score: 6
+- item: gun
+  trigger_score: 6
+- item: firearm
+  trigger_score: 6
+- item: rifle
+  trigger_score: 6
+- item: handgun
+  trigger_score: 6
+- item: machete
+  trigger_score: 6
+- item: baseball bat
+  trigger_score: 6
+- item: crowbar
+  trigger_score: 6
+- item: club
+  trigger_score: 6
+- item: fire
+  trigger_score: 6
+- item: flames
+  trigger_score: 6
+- item: smoke
+  trigger_score: 6
+- item: explosion
+  trigger_score: 6
+- item: debris
+  trigger_score: 6
+- item: burning object
+  trigger_score: 6
+- item: blood
+  trigger_score: 6
+- item: body on ground
+  trigger_score: 6
+- item: broken glass
+  trigger_score: 6
+- item: shattered window
+  trigger_score: 6
+- item: overturned furniture
+  trigger_score: 6
+- item: broken door
+  trigger_score: 6
+- item: protest banner
+  trigger_score: 6
+- item: protest sign
+  trigger_score: 6
+- item: flag being waved
+  trigger_score: 6
+- item: banner
+  trigger_score: 6
+- item: car
+  trigger_score: 6
+- item: truck
+  trigger_score: 6
+- item: bus
+  trigger_score: 6
+- item: van
+  trigger_score: 6
+- item: vehicle
+  trigger_score: 6
+- item: motorcycle
+  trigger_score: 6
+- item: scooter
+  trigger_score: 6
+- item: bike
+  trigger_score: 6
+- item: tram
+  trigger_score: 6
+- item: trolley
+  trigger_score: 6
+anomaly_behaviors:
+- fighting
+- assault
+- attacking
+- punching
+- kicking
+- grabbing
+- choking
+- group brawl
+- brandishing weapon
+- pointing gun
+- threatening with knife
+- running away
+- sprinting from threat
+- panicking
+- crowd stampede
+- crowd scattering
+- people dropping to ground
+- mass evacuation
+- arson
+- setting fire
+- fire spreading
+- explosion occurring
+- smoke filling area
+- theft
+- bag snatching
+- vandalism
+- breaking window
+- trespassing
+- climbing fence
+- breaking into building
+- suspicious loitering
+- stalking
+- person collapsing
+- person lying motionless
+- aggressive confrontation
+- intimidating group behaviour
+- chasing person
+- vehicle driving
+- waving banner
+- waving flag
+- holding protest sign
+- riding scooter
+- riding bike
+- riding motorcycle
+- truck driving
+- car driving
+- bus driving
+- van driving

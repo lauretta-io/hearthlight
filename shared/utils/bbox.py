@@ -1,4 +1,7 @@
-import torch
+try:
+    import torch
+except ModuleNotFoundError:  # pragma: no cover - optional CPU runtime
+    torch = None
 import numpy as np
 import cv2
 
@@ -9,7 +12,7 @@ def xyxy2xywh(x):
     bounding box to [x, y, w, h] where (x1, y1)=top-left, (x2, y2)=bottom-right
     Taken from YOLOv5: https://github.com/ultralytics/yolov5/blob/b564c1f3653a9b11038a80e348a34afbf59943be/utils/general.py
     """
-    y = x.clone() if isinstance(x, torch.Tensor) else np.copy(x)
+    y = x.clone() if torch is not None and isinstance(x, torch.Tensor) else np.copy(x)
     y[:, 0] = (x[:, 0] + x[:, 2]) / 2  # x center
     y[:, 1] = (x[:, 1] + x[:, 3]) / 2  # y center
     y[:, 2] = x[:, 2] - x[:, 0]  # width
@@ -113,7 +116,7 @@ def clip_coords(boxes, shape):
         boxes: Tensor of [x1, y1, x2, y2] bounding box coordinates
         shape: Image shape (height, width)
     """
-    if isinstance(boxes, torch.Tensor):  # faster individually
+    if torch is not None and isinstance(boxes, torch.Tensor):  # faster individually
         boxes[:, 0].clamp_(0, shape[1])  # x1
         boxes[:, 1].clamp_(0, shape[0])  # y1
         boxes[:, 2].clamp_(0, shape[1])  # x2

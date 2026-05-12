@@ -14,6 +14,8 @@ DEFAULT_DB_PORT = "5433"
 DEFAULT_DB_USER = "postgres"
 DEFAULT_DB_PASSWORD = "root"
 DEFAULT_DB_NAME = "hearthlight"
+DEFAULT_RABBIT_HOST = "localhost"
+DEFAULT_RABBIT_PORT = "5673"
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
@@ -33,6 +35,37 @@ def _load_env_file(path: Path) -> dict[str, str]:
     return loaded
 
 
+def load_project_env_file(root_dir: Path = ROOT_DIR) -> dict[str, str]:
+    return _load_env_file(root_dir / ".env")
+
+
+def resolve_start_defaults(root_dir: Path = ROOT_DIR) -> dict[str, str]:
+    env = load_project_env_file(root_dir)
+    profile = str(env.get("HEARTHLIGHT_DEFAULT_PROFILE", "cpu")).strip().lower()
+    if profile not in {"cpu", "cuda"}:
+        profile = "cpu"
+    use_cuda = profile == "cuda"
+    return {
+        "profile": profile,
+        "detector_device": str(
+            env.get("HEARTHLIGHT_DEFAULT_DETECTOR_DEVICE", "cuda" if use_cuda else "cpu")
+        ).strip()
+        or ("cuda" if use_cuda else "cpu"),
+        "pose_device": str(
+            env.get("HEARTHLIGHT_DEFAULT_POSE_DEVICE", "cuda" if use_cuda else "cpu")
+        ).strip()
+        or ("cuda" if use_cuda else "cpu"),
+        "feature_device": str(
+            env.get("HEARTHLIGHT_DEFAULT_FEATURE_DEVICE", "cuda:0" if use_cuda else "cpu")
+        ).strip()
+        or ("cuda:0" if use_cuda else "cpu"),
+        "cuda_visible_devices": str(
+            env.get("HEARTHLIGHT_DEFAULT_CUDA_VISIBLE_DEVICES", "all" if use_cuda else "")
+        ).strip()
+        or ("all" if use_cuda else ""),
+    }
+
+
 def _resolved_local_db_env(root_dir: Path = ROOT_DIR) -> dict[str, str]:
     env = os.environ.copy()
     env_file_values = _load_env_file(root_dir / ".env")
@@ -48,7 +81,7 @@ def _resolved_local_db_env(root_dir: Path = ROOT_DIR) -> dict[str, str]:
     host_port = env.get("POSTGRES_HOST_PORT", "").strip()
 
     # Resolve compose service names to host-local DB access for direct CLI resets.
-    if db_host in {"", "db", "postgres", "foia_db"}:
+    if db_host in {"", "db", "postgres"}:
         env["POSTGRES_HOST"] = env.get("POSTGRES_EXT_HOST", DEFAULT_DB_HOST)
         if host_port:
             env["POSTGRES_PORT"] = host_port
@@ -57,6 +90,29 @@ def _resolved_local_db_env(root_dir: Path = ROOT_DIR) -> dict[str, str]:
 
     env.setdefault("POSTGRES_HOST", DEFAULT_DB_HOST)
     env.setdefault("POSTGRES_PORT", DEFAULT_DB_PORT)
+    return env
+
+
+def resolve_local_worker_env(root_dir: Path = ROOT_DIR) -> dict[str, str]:
+    env = _resolved_local_db_env(root_dir)
+    env_file_values = _load_env_file(root_dir / ".env")
+    for key, value in env_file_values.items():
+        env.setdefault(key, value)
+
+    rabbit_host = env.get("RABBITMQ_HOST", "").strip().lower()
+    rabbit_port = env.get("RABBITMQ_PORT", "").strip()
+    rabbit_host_port = env.get("RABBITMQ_HOST_PORT", "").strip()
+    if rabbit_host in {"", "rabbitmq"}:
+        env["RABBITMQ_HOST"] = DEFAULT_RABBIT_HOST
+    if rabbit_host_port:
+        env["RABBITMQ_PORT"] = rabbit_host_port
+    elif not rabbit_port:
+        env["RABBITMQ_PORT"] = DEFAULT_RABBIT_PORT
+
+    env["PYTHONPATH"] = str(root_dir)
+    env["HEARTHLIGHT_CONFIG_PATH"] = str(root_dir / "shared" / "configs" / "config.yaml")
+    env["HEARTHLIGHT_HOST_PROJECT_ROOT"] = str(root_dir)
+    env["PYTHONUNBUFFERED"] = "1"
     return env
 
 
@@ -80,6 +136,18 @@ def _assert_tcp_reachable(
         "Start the stack first (`hearthlight start`) or set "
         "POSTGRES_HOST/POSTGRES_PORT for host-accessible Postgres."
     )
+
+
+def assert_local_worker_dependencies_reachable(
+    root_dir: Path = ROOT_DIR,
+    env_overrides: Mapping[str, str] | None = None,
+) -> dict[str, str]:
+    env = resolve_local_worker_env(root_dir)
+    if env_overrides:
+        env.update(dict(env_overrides))
+    _assert_tcp_reachable(env["POSTGRES_HOST"], env["POSTGRES_PORT"])
+    _assert_tcp_reachable(env["RABBITMQ_HOST"], env["RABBITMQ_PORT"])
+    return env
 
 
 def run_local_reset_db(

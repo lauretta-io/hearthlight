@@ -3,7 +3,6 @@ networks:
 
 volumes:
   postgres_data:
-  foia_data:
 
 x-nvidia-env: &nvidia-env
   NVIDIA_VISIBLE_DEVICES: ${NVIDIA_VISIBLE_DEVICES:-all}
@@ -33,7 +32,7 @@ services:
     networks:
       - mynetwork
     ports:
-      - "${RABBITMQ_HOST_PORT:-5673}:5673"
+      - "${RABBITMQ_HOST_PORT:-5673}:5672"
       - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
     restart: unless-stopped
     command: sh /usr/local/bin/init.sh
@@ -87,6 +86,9 @@ services:
     environment:
       - RELOAD=${RELOAD:-}
       - HEARTHLIGHT_CONFIG_PATH=/app/src/shared/configs/config.yaml
+      - HEARTHLIGHT_WORKER_RUNTIME=${HEARTHLIGHT_WORKER_RUNTIME:-docker}
+      - HEARTHLIGHT_LOCAL_WORKER_URL=${HEARTHLIGHT_LOCAL_WORKER_URL:-http://host.docker.internal:8070}
+      - HEARTHLIGHT_HOST_PROJECT_ROOT=${HEARTHLIGHT_HOST_PROJECT_ROOT:-}
     restart: unless-stopped
     healthcheck:
       test:
@@ -255,80 +257,3 @@ services:
       else
         python -um src.anomaly.main
       fi'
-
-  foia_db:
-    image: postgres:13-alpine
-    profiles: ["foia"]
-    networks:
-      - mynetwork
-    ports:
-      - "${FOIA_DB_HOST_PORT:-5434}:5432"
-    volumes:
-      - foia_data:/var/lib/postgresql/data/
-    env_file:
-      - foia.env
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
-      interval: 5s
-      timeout: 5s
-      retries: 12
-      start_period: 10s
-
-  foia:
-    build: ./FOIA
-    profiles: ["foia"]
-    shm_size: "2gb"
-    networks:
-      - mynetwork
-    volumes:
-      - ./shared:/app/src/shared
-      - ./FOIA:/app/src/FOIA
-    depends_on:
-      foia_db:
-        condition: service_healthy
-      db:
-        condition: service_healthy
-    env_file:
-      - foia.env
-    command: >
-      bash -c '
-      chmod +x src/FOIA/Database/import_database.sh;
-      python -um src.FOIA.DataProducer.main HEARTHLIGHT'
-
-  foia_webapp:
-    build: ./FOIA
-    profiles: ["foia"]
-    networks:
-      - mynetwork
-    ports:
-      - "${FOIA_WEBAPP_HOST_PORT:-8002}:8000"
-    volumes:
-      - ./shared:/app/src/shared
-      - ./FOIA:/app/src/FOIA
-    depends_on:
-      foia_db:
-        condition: service_healthy
-    env_file:
-      - foia.env
-    restart: unless-stopped
-    command: >
-      bash -c '
-      python -um src.FOIA.WebApp.main HEARTHLIGHT'
-
-  foia_reset_db:
-    build: ./FOIA
-    profiles: ["foia"]
-    networks:
-      - mynetwork
-    volumes:
-      - ./shared:/app/src/shared
-      - ./FOIA:/app/src/FOIA
-    depends_on:
-      foia_db:
-        condition: service_healthy
-    env_file:
-      - foia.env
-    command: >
-      bash -c '
-      python -um src.FOIA.Database.recreate_db'

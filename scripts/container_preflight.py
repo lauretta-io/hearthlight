@@ -24,26 +24,23 @@ CORE_BUILD_CONTEXTS = [
     "association",
 ]
 
-OPTIONAL_BUILD_CONTEXTS = [
-    "FOIA",
-]
-
 CORE_REQUIRED_FILES = [
     ".env",
     "shared/configs/config.yaml",
 ]
 
-OPTIONAL_REQUIRED_FILES = [
-    "foia.env",
+MODEL_ZOO_REQUIREMENT_FILES = [
+    "webapp/requirements.txt",
+    "ingestor/requirements.txt",
+    "reid/requirements.txt",
 ]
 
 MISSING_FILE_HINTS = {
-    ".env": "Copy example.env to .env and set database/RabbitMQ values for this machine.",
+    ".env": "Copy example.env to .env or run `hearthlight onboard` to generate it automatically.",
     "shared/configs/config.yaml": (
         "Copy shared/configs/example_config.yaml to shared/configs/config.yaml and replace "
         "placeholder camera sources before starting GPU-backed services."
     ),
-    "foia.env": "Create foia.env only if you plan to run the optional FOIA profile.",
 }
 
 
@@ -59,6 +56,16 @@ def check(condition: bool, message: str, failures: list[str], warnings: list[str
 def parse_compose_paths(compose_text: str, key: str) -> list[str]:
     pattern = rf"^\s*{re.escape(key)}:\s+\./([^\s]+)\s*$"
     return re.findall(pattern, compose_text, flags=re.MULTILINE)
+
+
+def requirements_declare_model_zoo() -> bool:
+    for rel_path in MODEL_ZOO_REQUIREMENT_FILES:
+        path = REPO_ROOT / rel_path
+        if not path.exists():
+            continue
+        if "hearthlight_model_zoo" in path.read_text():
+            return True
+    return False
 
 
 def main() -> int:
@@ -106,16 +113,6 @@ def main() -> int:
             warnings,
         )
 
-    for context in OPTIONAL_BUILD_CONTEXTS:
-        if context in discovered_builds:
-            check(
-                (REPO_ROOT / context / "Dockerfile").exists(),
-                f"./{context}/Dockerfile exists for optional FOIA services",
-                failures,
-                warnings,
-                optional=True,
-            )
-
     for rel_path in CORE_REQUIRED_FILES:
         exists = (REPO_ROOT / rel_path).exists()
         check(exists, f"{rel_path} exists", failures, warnings)
@@ -123,29 +120,23 @@ def main() -> int:
             print(f"INFO: {MISSING_FILE_HINTS[rel_path]}")
 
     package_available = find_spec("hearthlight_model_zoo") is not None
+    package_declared = requirements_declare_model_zoo()
     check(
-        package_available,
-        "hearthlight_model_zoo Python package is importable",
+        package_available or package_declared,
+        "hearthlight_model_zoo is installed locally or pinned in service requirements",
         failures,
         warnings,
     )
-    if not package_available:
+    if not package_available and package_declared:
+        print(
+            "INFO: Local Python does not currently import hearthlight_model_zoo, "
+            "but container/service installs pin it through the service requirements."
+        )
+    elif not package_available:
         print(
             "INFO: Install service dependencies (for example from webapp/requirements.txt, "
             "ingestor/requirements.txt, or reid/requirements.txt) before running the stack."
         )
-
-    for rel_path in OPTIONAL_REQUIRED_FILES:
-        exists = (REPO_ROOT / rel_path).exists()
-        check(
-            exists,
-            f"{rel_path} exists for optional FOIA services",
-            failures,
-            warnings,
-            optional=True,
-        )
-        if not exists and rel_path in MISSING_FILE_HINTS:
-            print(f"INFO: {MISSING_FILE_HINTS[rel_path]}")
 
     if compose_text:
         uses_nvidia_runtime = "runtime: nvidia" in compose_text
@@ -160,19 +151,22 @@ def main() -> int:
                     warnings,
                     optional=True,
                 )
-        expected_model_ports = [
-            "${WEBAPP_API_HOST_PORT:-8000}:8000",
-            "${WEBAPP_UI_HOST_PORT:-3000}:3000",
-        ]
-        for port_mapping in expected_model_ports:
+        expected_model_ports = {
+            "${WEBAPP_API_HOST_PORT:-8000}:8000": [
+                "${WEBAPP_API_HOST_PORT:-8000}:8000",
+            ],
+            "${WEBAPP_UI_HOST_PORT:-3000}:3000": [
+                "${WEBAPP_UI_HOST_PORT:-3000}:3000",
+                "${WEBAPP_UI_HOST_PORT:-3000}:80",
+            ],
+        }
+        for port_mapping, accepted_values in expected_model_ports.items():
             check(
-                port_mapping in compose_text,
+                any(value in compose_text for value in accepted_values),
                 f"compose publishes model-control endpoint mapping {port_mapping}",
                 failures,
                 warnings,
             )
-        if 'profiles: ["foia"]' in compose_text:
-            print("INFO: FOIA services are gated behind the optional `foia` compose profile.")
         if 'profiles: ["pipeline"]' in compose_text:
             print("INFO: AI worker services are gated behind the optional `pipeline` compose profile.")
 

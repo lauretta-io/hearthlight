@@ -1,12 +1,14 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from run.launcher import (
     ACTIVE_CONFIG_PATH,
     GENERATED_CONFIG_DIR,
     LaunchSelection,
     build_effective_config,
+    detect_worker_runtime,
     extract_registry_model_names,
     get_nested_scalar,
     get_top_level_block,
@@ -18,11 +20,16 @@ from run.launcher import (
 
 
 class LauncherHelpersTests(unittest.TestCase):
+    def test_detect_worker_runtime_defaults_to_hybrid_on_macos_cpu_pipeline(self):
+        with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
+            runtime, _ = detect_worker_runtime("pipeline", "cpu")
+        self.assertEqual(runtime, "hybrid-local-cpu")
+
     def test_extract_registry_model_names_contains_known_entries(self):
         names = extract_registry_model_names()
         self.assertIn("yolox-s", names)
         self.assertIn("transreid-market1501", names)
-        self.assertIn("botsort", names)
+        self.assertIn("bytetrack", names)
         self.assertIn("ocsort-tuned", names)
 
     def test_set_nested_scalar_replaces_existing_value(self):
@@ -100,6 +107,7 @@ class LauncherHelpersTests(unittest.TestCase):
                 template_path=template_path,
                 source_preset_path=None,
                 run_mode="api",
+                worker_runtime="docker",
                 detector_model="yolox-s",
                 tracker_model="bytetrack",
                 detector_device="cpu",
@@ -161,6 +169,7 @@ class LauncherHelpersTests(unittest.TestCase):
                 template_path=template_path,
                 source_preset_path=source_preset_path,
                 run_mode="pipeline",
+                worker_runtime="docker",
                 detector_model="yolox-s",
                 tracker_model="bytetrack",
                 detector_device="cpu",

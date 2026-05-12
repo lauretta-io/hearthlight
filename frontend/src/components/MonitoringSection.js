@@ -11,7 +11,6 @@ const endpointURL = (path) => `${BaseURL}${path}`;
 const STAGE_LABELS = {
   detector: 'Detector',
   tracker: 'Tracker',
-  reid: 'Person ReID',
   anomaly_stage_1: 'Anomaly Stage 1',
   anomaly_stage_2: 'Anomaly Stage 2',
 };
@@ -71,8 +70,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const sources = overview?.sources || [];
   const modelBindings = overview?.model_bindings || [];
   const modelRegistrations = overview?.model_registrations || [];
-  const incidents = overview?.latest_incidents || [];
-  const entities = overview?.latest_entities || [];
+  const triggers = overview?.latest_incidents || [];
   const anomalies = overview?.latest_anomalies || [];
   const recentEvents = overview?.recent_events || [];
   const feedEndpoints = overview?.feed_endpoints || [];
@@ -155,12 +153,12 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         <div className="monitor-summary-card">
           <span className="monitor-label">Consumers</span>
           <strong>{feedEndpoints.length} endpoints</strong>
-          <span className="monitor-muted">JSON feeds for incidents, entities, and orchestration data</span>
+          <span className="monitor-muted">JSON feeds for triggers, entities, and orchestration data</span>
         </div>
         <div className="monitor-summary-card">
           <span className="monitor-label">Model Registry</span>
           <strong>{modelRegistrations.length} models</strong>
-          <span className="monitor-muted">Detector, tracker, ReID, anomaly Stage 1, and anomaly Stage 2</span>
+          <span className="monitor-muted">Detector, tracker, anomaly Stage 1, and anomaly Stage 2</span>
         </div>
       </div>
 
@@ -202,7 +200,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
               <div key={run.run_identifier} className="monitor-table-row">
                 <span>{run.run_identifier}</span>
                 <span>{run.status}</span>
-                <span>{run.incident_count} incidents · {run.entity_count} entities</span>
+                <span>{run.incident_count} triggers</span>
               </div>
             ))}
           </div>
@@ -343,7 +341,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                   <strong>{source.label}</strong>
                   <div className="monitor-muted">{source.kind}</div>
                   <div className="monitor-muted">
-                    {describeEffectiveBinding('detector', source.detector_model_key)} · {describeEffectiveBinding('tracker', source.tracker_model_key)} · {describeEffectiveBinding('reid', source.reid_model_key)} · {describeEffectiveBinding('anomaly_stage_1', source.anomaly_stage_1_model_key)} · {describeEffectiveBinding('anomaly_stage_2', source.anomaly_stage_2_model_key)}
+                    {describeEffectiveBinding('detector', source.detector_model_key)} · {describeEffectiveBinding('tracker', source.tracker_model_key)} · {describeEffectiveBinding('anomaly_stage_1', source.anomaly_stage_1_model_key)} · {describeEffectiveBinding('anomaly_stage_2', source.anomaly_stage_2_model_key)}
                   </div>
                 </div>
                 <div className="monitor-source-meta">
@@ -357,15 +355,15 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         <div className="monitor-panel">
           <div className="monitor-panel-header">
             <div>
-              <h3>Incidents</h3>
-              <p>Latest incident output for the selected run.</p>
+              <h3>Triggers</h3>
+              <p>Latest trigger output for the selected run.</p>
             </div>
           </div>
           <div className="monitor-stack">
-            {incidents.length === 0 && (
-              <div className="monitor-empty">No incidents available.</div>
+            {triggers.length === 0 && (
+              <div className="monitor-empty">No triggers available.</div>
             )}
-            {incidents.map((incident) => (
+            {triggers.map((incident) => (
                 <div key={incident.incident_id} className="monitor-data-row">
                   <div>
                     <strong>{incident.display_title || incident.incident_type}</strong>
@@ -377,32 +375,6 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                     <span>{formatDateTime(incident.incident_time)}</span>
                   </div>
                 </div>
-            ))}
-          </div>
-        </div>
-
-        <div className="monitor-panel">
-          <div className="monitor-panel-header">
-            <div>
-              <h3>Entities</h3>
-              <p>Latest tracked entities for the selected run.</p>
-            </div>
-          </div>
-          <div className="monitor-stack">
-            {entities.length === 0 && (
-              <div className="monitor-empty">No entities available.</div>
-            )}
-            {entities.map((entity) => (
-              <div key={entity.entity_id} className="monitor-data-row">
-                <div>
-                  <strong>{entity.entity_type}</strong>
-                  <div className="monitor-muted">{entity.entity_id}</div>
-                </div>
-                <div className="monitor-data-meta">
-                  <span>{formatDateTime(entity.last_seen_time)}</span>
-                  <span>{entity.associated_incident_ids.length} linked incidents</span>
-                </div>
-              </div>
             ))}
           </div>
         </div>

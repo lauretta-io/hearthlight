@@ -5,6 +5,26 @@ const formatPercent = (value) => (
   value === null || value === undefined ? 'n/a' : `${value.toFixed(1)}%`
 );
 
+const getIngestorExplanation = ({ moduleStatus, systemStatus, admission }) => {
+  const ingestorState = moduleStatus?.INGESTOR;
+  if (!ingestorState || ingestorState === 'running') {
+    return null;
+  }
+  if (ingestorState === 'error') {
+    return 'Ingestor reported an error. Video frames are not being read or published into the pipeline.';
+  }
+  if (systemStatus === 'initializing') {
+    return 'Ingestor is still starting. It should switch to running after the pipeline workers finish booting.';
+  }
+  if (systemStatus === 'idle') {
+    if (admission?.reason) {
+      return `Ingestor is idle because the pipeline has not started. Current blocker: ${admission.reason}`;
+    }
+    return 'Ingestor is idle because no active run is feeding video into the pipeline yet.';
+  }
+  return 'Ingestor is not actively processing frames right now.';
+};
+
 const Status = () => {
   const [statusData, setStatusData] = useState({
     status: 'loading',
@@ -44,6 +64,11 @@ const Status = () => {
       : 0;
   const dependencyStatus = Object.entries(statusData.resources?.dependency_status || {});
   const moduleMetrics = Object.entries(statusData.resources?.module_metrics || {});
+  const ingestorExplanation = getIngestorExplanation({
+    moduleStatus: statusData.module_status,
+    systemStatus: statusData.status,
+    admission: statusData.admission,
+  });
 
   return (
     <div className="status-container">
@@ -99,6 +124,10 @@ const Status = () => {
 
       {statusData.admission?.reason && !statusData.admission.allowed && (
         <div className="status-warning">{statusData.admission.reason}</div>
+      )}
+
+      {ingestorExplanation && (
+        <div className="status-warning">{ingestorExplanation}</div>
       )}
 
       {statusData.frame_id !== null && (

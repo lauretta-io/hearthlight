@@ -16,7 +16,6 @@ It checks:
 - whether the Docker Desktop CLI can be discovered even if it is not on `PATH`
 - whether the core Dockerfiles exist
 - whether required runtime files exist
-- whether optional FOIA files are present
 - whether the compose file publishes the model-control API/UI ports
 - whether the compose file enables NVIDIA access for GPU-backed services
 
@@ -35,15 +34,11 @@ Main database expectation:
 Bootstrap the runtime config from the checked-in example:
 
 ```bash
-cp shared/configs/example_config.yaml shared/configs/config.yaml
+hearthlight onboard
 ```
-
-Then replace the placeholder camera sources before attempting the GPU/video services.
-
-Optional FOIA files:
-
-- `foia.env`
-- `FOIA/Dockerfile`
+If you are operating manually without onboarding, copy `shared/configs/example_config.yaml` to
+`shared/configs/config.yaml` and replace the placeholder camera sources before attempting the
+GPU/video services.
 
 ## Core Stack
 
@@ -65,7 +60,7 @@ Recommended startup sequence:
 ```bash
 docker compose build rabbitmq webapp
 docker compose up -d db rabbitmq
-python3 -m hearthlight reset-db
+hearthlight reset-db
 docker compose up webapp
 ```
 
@@ -74,15 +69,6 @@ Enable the full AI pipeline explicitly:
 ```bash
 docker compose --profile pipeline build ingestor reid anomaly association
 docker compose --profile pipeline up ingestor reid anomaly association
-```
-
-The FOIA services are now behind the optional `foia` profile. Plain core startup does not require
-`FOIA/` or `foia.env`.
-
-To enable FOIA explicitly:
-
-```bash
-docker compose --profile foia up foia_db foia foia_webapp
 ```
 
 The compose file also now uses health checks for Postgres and RabbitMQ, and core services wait on
@@ -340,7 +326,6 @@ This launcher is environment-specific and assumes:
 - `ingestor`
 - `reid`
 - `anomaly`
-- `foia`
 
 GPU-backed services now declare both:
 
@@ -354,7 +339,7 @@ and pass through:
 
 If the host does not have NVIDIA container support, those services may fail to start. For a CPU
 only API/control-plane environment, run `db`, `rabbitmq`, and `webapp` only, and invoke
-`python3 -m hearthlight reset-db` when you need schema resets.
+`hearthlight reset-db` when you need schema resets.
 
 On macOS Docker Desktop specifically, treat `ingestor` and `reid` as non-runnable unless you move
 the stack to a Linux host with NVIDIA container runtime. The `webapp` image has been made more
@@ -399,10 +384,12 @@ Check:
 - camera sources in `shared/configs/config.yaml`
 - model dependencies inside the built images
 
-### Full `docker compose up` fails because of FOIA
+### Full `docker compose up` fails because of worker services
 
-FOIA is now opt-in. If you do want FOIA, start it explicitly with the profile:
+The core worker stack is behind the `pipeline` profile. Start the minimal API stack first, then
+enable pipeline workers explicitly when the host supports them:
 
 ```bash
-docker compose --profile foia up foia_db foia foia_webapp
+docker compose up -d db rabbitmq webapp
+docker compose --profile pipeline up ingestor reid anomaly association
 ```

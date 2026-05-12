@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 import unittest
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from shared.models import DataModels
 from shared.database.database_worker import DatabaseWorker
@@ -21,7 +21,11 @@ class AlertRuleUtilityTests(unittest.TestCase):
             "capabilities": {},
         }
 
-        targets = get_detector_rule_targets(registration)
+        with patch(
+            "shared.utils.alert_rules._load_artifact_classes",
+            return_value=["person", "backpack", "handbag", "suitcase"],
+        ):
+            targets = get_detector_rule_targets(registration)
 
         self.assertEqual(targets, [{"key": "PERSON", "label": "PERSON"}, {"key": "BAG", "label": "BAG"}])
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import subprocess
 import sys
 import webbrowser
 from pathlib import Path
@@ -18,10 +19,22 @@ from run.launcher import (  # noqa: E402
     start_stack,
     stop_stack,
 )
-from hearthlight.runtime import compose_status, run_docker_reset_db, run_local_reset_db  # noqa: E402
+from hearthlight.onboarding import run_onboarding  # noqa: E402
+from hearthlight.runtime import (  # noqa: E402
+    compose_status,
+    resolve_start_defaults,
+    run_docker_reset_db,
+    run_local_reset_db,
+)
+from hearthlight.workspace import (  # noqa: E402
+    LOCAL_EXECUTION_ENV,
+    resolve_workspace,
+    workspace_python_path,
+)
 
 
 def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
+    defaults = resolve_start_defaults(ROOT_DIR)
     parser.add_argument("--template", help="Config template to use (active, example, or saved config stem)")
     parser.add_argument(
         "--source-preset",
@@ -32,7 +45,12 @@ def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
         choices=["api", "pipeline"],
         help="Service startup mode. Defaults to host-aware auto-detection or HEARTHLIGHT_DOCKER_MODE.",
     )
-    parser.add_argument("--profile", choices=["cpu", "cuda"], default="cpu")
+    parser.add_argument("--profile", choices=["cpu", "cuda"], default=defaults["profile"])
+    parser.add_argument(
+        "--worker-runtime",
+        choices=["docker", "hybrid-local-cpu"],
+        help="Worker runtime selection. Defaults to host-aware auto-detection.",
+    )
     parser.add_argument("--detector", help="Detector model name")
     parser.add_argument("--tracker", help="Tracker name")
     parser.add_argument("--detector-device", help="Detector device override, for example cpu or cuda")
@@ -56,6 +74,13 @@ def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
     parser.set_defaults(pose_enabled=None, show_video=None)
 
 
+def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--workspace",
+        help="Managed hearthlight workspace path. Defaults to saved onboarding workspace or HEARTHLIGHT_WORKSPACE.",
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     detected_run_mode, detected_reason = detect_run_mode()
     parser = argparse.ArgumentParser(
@@ -67,10 +92,12 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command")
 
     start_parser = subparsers.add_parser("start", help="Start the stack")
+    _add_workspace_arg(start_parser)
     _add_common_start_args(start_parser)
     start_parser.add_argument("--interactive", action="store_true", help="Prompt for startup selections")
 
     stop_parser = subparsers.add_parser("stop", help="Stop the stack")
+    _add_workspace_arg(stop_parser)
     stop_parser.add_argument(
         "--profile",
         choices=["cpu", "cuda"],
@@ -79,6 +106,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     reset_parser = subparsers.add_parser("reset-db", help="Reset the runtime database via direct function execution")
+    _add_workspace_arg(reset_parser)
     reset_parser.add_argument(
         "--docker",
         action="store_true",
@@ -91,6 +119,7 @@ def build_parser() -> argparse.ArgumentParser:
     reset_parser.add_argument("--postgres-db", help="Override POSTGRES_DB")
 
     status_parser = subparsers.add_parser("status", help="Show compose service status")
+    _add_workspace_arg(status_parser)
     status_parser.add_argument(
         "--profile",
         choices=["cpu", "cuda"],
@@ -98,8 +127,35 @@ def build_parser() -> argparse.ArgumentParser:
         help="Use the matching compose file set for status checks",
     )
 
-    subparsers.add_parser("list-models", help="List discovered templates and model options")
-    subparsers.add_parser("dashboard", help="Open the dashboard in a browser")
+    onboard_parser = subparsers.add_parser("onboard", help="Run step-by-step local onboarding")
+    onboard_parser.add_argument("--target-dir", help="Clone/install target directory. Defaults to ~/hearthlight.")
+    onboard_parser.add_argument("--yes", action="store_true", help="Accept onboarding steps without prompting")
+    onboard_parser.add_argument("--skip-system-packages", action="store_true", help="Skip system package checks")
+    onboard_parser.add_argument("--skip-config-copy", action="store_true", help="Skip copying example config")
+    onboard_parser.add_argument("--force-env", action="store_true", help="Overwrite .env from example.env")
+    onboard_parser.add_argument(
+        "--force-config-copy",
+        action="store_true",
+        help="Overwrite shared/configs/config.yaml from the example config",
+    )
+    onboard_parser.add_argument(
+        "--skip-python-requirements",
+        action="store_true",
+        help="Skip installing requirements.txt files",
+    )
+    onboard_parser.add_argument(
+        "--skip-notification-setup",
+        action="store_true",
+        help="Skip Telegram and Apple Messages onboarding prompts",
+    )
+    onboard_parser.add_argument("--skip-cuda-detection", action="store_true", help="Skip CPU/GPU default detection")
+    onboard_parser.add_argument("--skip-infra-init", action="store_true", help="Skip starting Docker Postgres/RabbitMQ and reset-db")
+    onboard_parser.add_argument("--start-webapp", action="store_true", help="Also start webapp and reverse proxy during onboarding")
+
+    list_models_parser = subparsers.add_parser("list-models", help="List discovered templates and model options")
+    _add_workspace_arg(list_models_parser)
+    dashboard_parser = subparsers.add_parser("dashboard", help="Open the dashboard in a browser")
+    _add_workspace_arg(dashboard_parser)
     subparsers.add_parser("gui", help="Open the legacy Tk launcher")
     return parser
 
@@ -139,15 +195,44 @@ def _reset_db_from_args(args) -> int:
     return 0
 
 
+def _proxy_to_workspace(workspace: Path, argv: list[str]) -> int:
+    python_path = workspace_python_path(workspace)
+    if not python_path.exists():
+        print(
+            f"Workspace virtualenv is missing at {python_path}. Run `hearthlight onboard --target-dir {workspace}` first.",
+            file=sys.stderr,
+        )
+        return 1
+    env = os.environ.copy()
+    env[LOCAL_EXECUTION_ENV] = "1"
+    env["HEARTHLIGHT_WORKSPACE"] = str(workspace)
+    return subprocess.call([str(python_path), "-m", "hearthlight", *argv], cwd=workspace, env=env)
+
+
 def main(argv: list[str] | None = None) -> int:
     _legacy_wrapper_notice()
+    argv = list(argv) if argv is not None else sys.argv[1:]
+    if not argv:
+        argv = ["start", "--interactive"]
     parser = build_parser()
     args = parser.parse_args(argv)
 
     command = args.command or "start"
+    if os.environ.get(LOCAL_EXECUTION_ENV) != "1" and command != "onboard":
+        workspace = resolve_workspace(getattr(args, "workspace", None))
+        if workspace is None:
+            print(
+                "No managed hearthlight workspace is configured. Run `hearthlight onboard` first or pass --workspace.",
+                file=sys.stderr,
+            )
+            return 1
+        if workspace.resolve() != ROOT_DIR.resolve():
+            return _proxy_to_workspace(workspace, argv)
     if command == "list-models":
         print_model_inventory()
         return 0
+    if command == "onboard":
+        return run_onboarding(args, ROOT_DIR)
     if command == "stop":
         return stop_stack(use_cuda=getattr(args, "profile", "cpu") == "cuda")
     if command == "status":
@@ -164,9 +249,9 @@ def main(argv: list[str] | None = None) -> int:
         gui_main()
         return 0
 
-    interactive = args.command is None or args.interactive
+    interactive = args.command is None or getattr(args, "interactive", False)
     selection = build_interactive_selection() if interactive else build_selection_from_args(args)
-    return start_stack(selection, dry_run=args.dry_run)
+    return start_stack(selection, dry_run=getattr(args, "dry_run", False))
 
 
 if __name__ == "__main__":

@@ -45,7 +45,7 @@ const Entity = () => {
         {
           entity.associated_incidents && (
             <div>
-              <h2>Incidents</h2>
+              <h2>Triggers</h2>
               <div className="history-list">
                 {
                   entity.associated_incidents.map((item) => (

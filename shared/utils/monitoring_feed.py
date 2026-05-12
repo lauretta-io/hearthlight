@@ -43,12 +43,12 @@ def build_feed_endpoint_catalog() -> list[dict[str, str]]:
         {
             "name": "Algorithm Feed",
             "path": "/feeds/algorithm",
-            "description": "Combined source, resource, incident, entity, and anomaly output for a run.",
+            "description": "Combined source, resource, trigger, entity, and anomaly output for a run.",
         },
         {
-            "name": "Incident Feed",
+            "name": "Trigger Feed",
             "path": "/feeds/incidents",
-            "description": "Incident-only algorithm output for downstream alert consumers.",
+            "description": "Trigger-only algorithm output for downstream alert consumers.",
         },
         {
             "name": "Entity Feed",

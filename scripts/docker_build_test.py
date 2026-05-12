@@ -18,7 +18,6 @@ from shared.utils.docker_cli import build_docker_env, find_docker_binary
 
 API_BUILD_SERVICES = ["rabbitmq", "webapp"]
 CORE_BUILD_SERVICES = ["rabbitmq", "webapp", "ingestor", "reid", "association", "anomaly"]
-FOIA_BUILD_SERVICES = ["foia", "foia_webapp"]
 
 
 def detect_default_mode() -> tuple[str, str]:
@@ -42,8 +41,6 @@ def get_services(mode: str, extra_services: list[str]) -> list[str]:
         return API_BUILD_SERVICES
     if mode == "core":
         return CORE_BUILD_SERVICES
-    if mode == "foia":
-        return CORE_BUILD_SERVICES + FOIA_BUILD_SERVICES
     raise ValueError(f"unsupported mode {mode}")
 
 
@@ -95,7 +92,7 @@ def main() -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=["auto", "api", "core", "foia"],
+        choices=["auto", "api", "core"],
         default="auto",
         help="build scope: auto picks api on Apple Silicon/Darwin and core otherwise",
     )

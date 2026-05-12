@@ -5,8 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "hearthlight"
 version = "0.1.0"
-description = "Hearthlight CLI management tool"
+description = "Hearthlight bootstrap and runtime CLI"
 requires-python = ">=3.10"
+readme = "README.md"
+
+[project.optional-dependencies]
+macos-app = ["pyinstaller>=6.0"]
 
 [project.scripts]
 hearthlight = "hearthlight.cli:main"

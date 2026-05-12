@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import platform
 from hashlib import sha256
 from pathlib import Path
 from typing import Iterable
@@ -187,12 +188,28 @@ def configure_capture_timeouts(capture, timeout_ms: int):
 
 
 def open_capture(capture, source) -> bool:
-    try:
-        if cv2 is None:
-            return bool(capture.open(source))
-        return bool(capture.open(source, cv2.CAP_ANY))
-    except TypeError:
-        return bool(capture.open(source))
+    backends = []
+    if cv2 is None:
+        backends = [None]
+    elif isinstance(source, int):
+        avfoundation_backend = getattr(cv2, "CAP_AVFOUNDATION", None)
+        if platform.system() == "Darwin" and avfoundation_backend is not None:
+            backends.append(avfoundation_backend)
+        backends.append(cv2.CAP_ANY)
+    else:
+        backends.append(cv2.CAP_ANY)
+
+    for backend in backends:
+        try:
+            if backend is None:
+                if capture.open(source):
+                    return True
+            elif capture.open(source, backend):
+                return True
+        except TypeError:
+            if capture.open(source):
+                return True
+    return False
 
 
 def probe_source_connection(

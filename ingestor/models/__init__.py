@@ -1,13 +1,16 @@
 import sys
-import tensorrt_bindings
 
-for attr in dir(tensorrt_bindings):
-    if not attr.startswith('__'):
-        globals()[attr] = getattr(tensorrt_bindings, attr)
+try:
+    import tensorrt_bindings  # type: ignore
+except ModuleNotFoundError:  # pragma: no cover - optional local CPU runtime
+    tensorrt_bindings = None
+else:
+    for attr in dir(tensorrt_bindings):
+        if not attr.startswith("__"):
+            globals()[attr] = getattr(tensorrt_bindings, attr)
 
-sys.modules['tensorrt.tensorrt'] = tensorrt_bindings
-
-__version__ = tensorrt_bindings.__version__
+    sys.modules["tensorrt.tensorrt"] = tensorrt_bindings
+    __version__ = tensorrt_bindings.__version__
 
 from .detector import Detector
 from .tracker import Tracker

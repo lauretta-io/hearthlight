@@ -517,6 +517,36 @@ class AlertRuleTemplate(Base):
     deleted_at = mapped_column(DateTime)
 
 
+class TelegramTriggerSubscription(Base):
+    __tablename__ = "telegram_trigger_subscription"
+    __table_args__ = {"schema": "control"}
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled = mapped_column(Boolean, default=True, nullable=False)
+    subscription_label = mapped_column(String(255))
+    bot_token = mapped_column(Text, nullable=False)
+    chat_id = mapped_column(String(255), nullable=False)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class AppleMessageTriggerSubscription(Base):
+    __tablename__ = "apple_message_trigger_subscription"
+    __table_args__ = {"schema": "control"}
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled = mapped_column(Boolean, default=True, nullable=False)
+    subscription_label = mapped_column(String(255))
+    recipient_handle = mapped_column(String(255), nullable=False)
+    service = mapped_column(String(32), nullable=False, default="iMessage")
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
 class AnomalyEvent(Base):
     __tablename__ = "anomaly_event"
     __table_args__ = {"schema": "dicos"}

@@ -4,11 +4,15 @@ import shutil
 import time
 import logging
 import asyncio
+import json
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
 from threading import Lock
 from urllib.parse import urlparse
+from urllib import error as urllib_error
+from urllib import parse as urllib_parse
+from urllib import request as urllib_request
 
 import cv2
 import numpy as np
@@ -29,6 +33,8 @@ from ...shared.database.database import SessionLocal, get_db
 from ...shared.models import DataModels, SQLModels
 from ...shared.models.APIModels import (
     AdmissionStatus,
+    AppleMessageTriggerSubscription,
+    AppleMessageTriggerTestResponse,
     AlertRule,
     AlertRuleOptionCatalog,
     AlgorithmEntityFeedItem,
@@ -55,6 +61,8 @@ from ...shared.models.APIModels import (
     SOURCE_KIND_VIDEO_UPLOAD,
     SOURCE_KIND_WEBCAM,
     Status,
+    TelegramTriggerSubscription,
+    TelegramTriggerTestResponse,
     UploadResponse,
     UploadedMedia as UploadedMediaModel,
 )
@@ -72,6 +80,14 @@ from ...shared.utils.alert_rules import (
     build_alert_rule_option_lookup,
     ensure_alert_rule_tables,
 )
+from ...shared.utils.apple_messages_notifications import (
+    ensure_apple_message_subscription_tables,
+    send_test_apple_message_trigger_message,
+)
+from ...shared.utils.telegram_notifications import (
+    ensure_telegram_subscription_tables,
+    send_test_telegram_trigger_message,
+)
 from ...shared.utils.image import decode_base64
 from ...shared.utils.input_sources import (
     build_runtime_camera_map,
@@ -86,6 +102,11 @@ from ...shared.utils.input_sources import (
     probe_source_connection,
     source_requires_gpu,
     validate_uploaded_video_file,
+)
+from ...shared.utils.local_worker_runtime import (
+    build_local_worker_url,
+    is_hybrid_local_cpu_runtime,
+    map_container_path_to_host,
 )
 from ...shared.utils.model_registry import (
     build_default_bindings,
@@ -152,6 +173,9 @@ SOURCE_PROBE_TIMEOUT_MS = max(
     250, int(os.environ.get("SOURCE_PROBE_TIMEOUT_MS", "5000"))
 )
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS = float(
+    os.environ.get("HEARTHLIGHT_LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS", "5.0")
+)
 
 
 def resolve_project_path(path_like: str | Path) -> Path:
@@ -161,9 +185,108 @@ def resolve_project_path(path_like: str | Path) -> Path:
     return (PROJECT_ROOT / path).resolve()
 
 
+def get_expected_module_names() -> list[str]:
+    modules = [
+        ModuleNames.INGESTOR,
+        ModuleNames.REID,
+        ModuleNames.ANOMALY,
+    ]
+    if not is_hybrid_local_cpu_runtime():
+        modules.insert(2, ModuleNames.ASSOCIATION)
+    return modules
+
+
+def build_host_upload_path(upload_path: str | None) -> str | None:
+    if not upload_path:
+        return None
+    return map_container_path_to_host(upload_path)
+
+
+def get_local_worker_health() -> dict:
+    if not is_hybrid_local_cpu_runtime():
+        return {
+            "status": "not-applicable",
+            "runtime": "docker",
+            "workers": {},
+        }
+    try:
+        with urllib_request.urlopen(
+            build_local_worker_url("/healthz"),
+            timeout=LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS,
+        ) as response:
+            return json.load(response)
+    except Exception:
+        logger.warning("Failed to query local worker health", exc_info=True)
+        return {
+            "status": "unavailable",
+            "runtime": "hybrid-local-cpu",
+            "workers": {
+                module_name: {
+                    "running": False,
+                    "pid": None,
+                    "reason": "local CPU workers not started",
+                }
+                for module_name in get_expected_module_names()
+            },
+        }
+
+
+def require_local_worker_ready() -> dict:
+    health = get_local_worker_health()
+    if health.get("status") == "ready":
+        return health
+    workers = health.get("workers") or {}
+    reasons = [
+        str(details.get("reason") or "").strip()
+        for details in workers.values()
+        if isinstance(details, dict) and str(details.get("reason") or "").strip()
+    ]
+    reason = reasons[0] if reasons else "local CPU workers not started"
+    raise HTTPException(status_code=409, detail=reason)
+
+
+def probe_source_via_local_worker(
+    kind: str,
+    source_value,
+    *,
+    upload_path: str | None = None,
+) -> str | None:
+    request_body = json.dumps(
+        {
+            "kind": kind,
+            "source_value": source_value,
+            "upload_path": build_host_upload_path(upload_path),
+        }
+    ).encode("utf-8")
+    request = urllib_request.Request(
+        build_local_worker_url("/probe"),
+        data=request_body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib_request.urlopen(
+            request,
+            timeout=LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS,
+        ) as response:
+            payload = json.load(response)
+    except Exception:
+        logger.warning("Failed to probe source via local worker", exc_info=True)
+        return "source validation failed on local worker"
+    if payload.get("ok", False):
+        return None
+    detail = str(payload.get("detail") or "").strip()
+    return detail or "source validation failed on local worker"
+
+
 ANOMALY_TEXT_PROMPT_PATH = Path(
     resolve_project_path(
         os.environ.get("ANOMALY_TEXT_PROMPT_PATH", "shared/prompts/prompt_v2.yaml")
+    )
+)
+ANOMALY_PROMPT_CONFIG_PATH = Path(
+    resolve_project_path(
+        os.environ.get("ANOMALY_PROMPT_CONFIG_PATH", "shared/prompts/stage2_prompt_config.yaml")
     )
 )
 ANOMALY_TYPE_PROMPT_PATH = Path(
@@ -171,8 +294,10 @@ ANOMALY_TYPE_PROMPT_PATH = Path(
         os.environ.get("ANOMALY_TYPE_PROMPT_PATH", "shared/prompts/anomaly_list.yaml")
     )
 )
+STANDARD_ANOMALY_PROMPT_CONFIG_PATH = resolve_project_path("shared/prompts/stage2_prompt_config.yaml")
 STANDARD_ANOMALY_TEXT_PROMPT_PATH = resolve_project_path("shared/prompts/prompt_v2.yaml")
 STANDARD_ANOMALY_TYPE_PROMPT_PATH = resolve_project_path("shared/prompts/anomaly_list.yaml")
+DEFAULT_ANOMALY_TRIGGER_SCORE = 6
 MODULE_RESTART_DELAY_SEC = float(os.environ.get("MODULE_RESTART_DELAY_SEC", "1.0"))
 REQUIRE_GPU_FOR_START = os.environ.get("WEBAPP_REQUIRE_GPU", "false").lower() in {
     "1",
@@ -484,6 +609,19 @@ def build_live_resource_snapshot(db: Session) -> dict:
         thresholds=get_resource_thresholds(),
     )
     source_errors = build_enabled_source_errors(source_rows, db)
+    if is_hybrid_local_cpu_runtime():
+        local_worker_health = get_local_worker_health()
+        if local_worker_health.get("status") != "ready":
+            workers = local_worker_health.get("workers") or {}
+            reasons = [
+                str(details.get("reason") or "").strip()
+                for details in workers.values()
+                if isinstance(details, dict) and str(details.get("reason") or "").strip()
+            ]
+            reason = reasons[0] if reasons else "local CPU workers not started"
+            if admission.get("allowed", True):
+                admission["allowed"] = False
+                admission["reason"] = reason
     binding_errors = build_enabled_source_binding_errors(
         registry_bundle,
         enabled_source_rows,
@@ -554,6 +692,19 @@ def get_current_resource_snapshot(db: Session) -> dict:
             thresholds=get_resource_thresholds(),
         )
         source_errors = build_enabled_source_errors(source_rows, db)
+        if is_hybrid_local_cpu_runtime():
+            local_worker_health = get_local_worker_health()
+            if local_worker_health.get("status") != "ready":
+                workers = local_worker_health.get("workers") or {}
+                reasons = [
+                    str(details.get("reason") or "").strip()
+                    for details in workers.values()
+                    if isinstance(details, dict) and str(details.get("reason") or "").strip()
+                ]
+                reason = reasons[0] if reasons else "local CPU workers not started"
+                if snapshot["admission"].get("allowed", True):
+                    snapshot["admission"]["allowed"] = False
+                    snapshot["admission"]["reason"] = reason
         binding_errors = build_enabled_source_binding_errors(
             registry_bundle,
             enabled_source_rows,
@@ -1142,53 +1293,191 @@ def _load_yaml_text(path: Path) -> str:
     return path.read_text()
 
 
-def _validate_prompt_yaml_payload(payload: AnomalyPromptSettings):
-    try:
-        prompt_cfg = OmegaConf.to_container(
-            OmegaConf.create(payload.text_prompt_yaml),
-            resolve=True,
-        )
-        anomaly_type_cfg = OmegaConf.to_container(
-            OmegaConf.create(payload.anomaly_type_yaml),
-            resolve=True,
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail="invalid anomaly prompt yaml") from exc
+def _load_yaml_mapping(path: Path) -> dict:
+    if not path.exists():
+        return {}
+    raw = OmegaConf.load(path)
+    if raw is None:
+        return {}
+    data = OmegaConf.to_container(raw, resolve=True)
+    return data if isinstance(data, dict) else {}
 
-    if not isinstance(prompt_cfg, dict) or not str(prompt_cfg.get("template", "")).strip():
-        raise HTTPException(status_code=400, detail="text prompt yaml must include a non-empty template")
-    if not isinstance(anomaly_type_cfg, dict):
-        raise HTTPException(status_code=400, detail="anomaly type yaml must be a mapping")
 
-    object_list = anomaly_type_cfg.get("anomaly_object_list")
-    activity_list = anomaly_type_cfg.get("anomaly_activity_list")
-    if not isinstance(object_list, list) or not isinstance(activity_list, list):
-        raise HTTPException(
-            status_code=400,
-            detail="anomaly type yaml must include anomaly_object_list and anomaly_activity_list arrays",
-        )
+def _normalize_anomaly_items(raw_items) -> list[dict[str, int | str]]:
+    if raw_items is None:
+        return []
+    if not isinstance(raw_items, list):
+        raise HTTPException(status_code=400, detail="anomaly_items must be a list")
+    normalized = []
+    seen = set()
+    for entry in raw_items:
+        if not isinstance(entry, dict):
+            raise HTTPException(status_code=400, detail="each anomaly item must be a mapping")
+        item = str(entry.get("item") or "").strip()
+        if not item:
+            raise HTTPException(status_code=400, detail="anomaly item name cannot be empty")
+        lowered = item.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        try:
+            trigger_score = int(entry.get("trigger_score", DEFAULT_ANOMALY_TRIGGER_SCORE))
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail="anomaly item trigger_score must be an integer from 1 to 10") from exc
+        if trigger_score < 1 or trigger_score > 10:
+            raise HTTPException(status_code=400, detail="anomaly item trigger_score must be an integer from 1 to 10")
+        normalized.append({"item": item, "trigger_score": trigger_score})
+    return normalized
+
+
+def _normalize_anomaly_behaviors(raw_behaviors) -> list[str]:
+    if raw_behaviors is None:
+        return []
+    if not isinstance(raw_behaviors, list):
+        raise HTTPException(status_code=400, detail="anomaly_behaviors must be a list")
+    normalized = []
+    seen = set()
+    for entry in raw_behaviors:
+        value = str(entry or "").strip()
+        if not value:
+            raise HTTPException(status_code=400, detail="anomaly behavior cannot be empty")
+        lowered = value.lower()
+        if lowered in seen:
+            continue
+        seen.add(lowered)
+        normalized.append(value)
+    return normalized
+
+
+def _read_stage2_prompt_config(
+    config_path: Path,
+    *,
+    fallback_prompt_path: Path,
+    fallback_type_path: Path,
+) -> dict:
+    config = _load_yaml_mapping(config_path)
+    if not config:
+        prompt_cfg = _load_yaml_mapping(fallback_prompt_path)
+        type_cfg = _load_yaml_mapping(fallback_type_path)
+        config = {
+            "template": str(prompt_cfg.get("template") or "").strip(),
+            "anomaly_items": [
+                {
+                    "item": str(item).strip(),
+                    "trigger_score": DEFAULT_ANOMALY_TRIGGER_SCORE,
+                }
+                for item in list(type_cfg.get("anomaly_object_list") or [])
+                if str(item).strip()
+            ],
+            "anomaly_behaviors": [
+                str(item).strip()
+                for item in list(type_cfg.get("anomaly_activity_list") or [])
+                if str(item).strip()
+            ],
+        }
+    template = str(config.get("template") or "").strip()
+    if not template:
+        fallback_prompt_cfg = _load_yaml_mapping(fallback_prompt_path)
+        template = str(fallback_prompt_cfg.get("template") or "").strip()
+    return {
+        "template": template,
+        "anomaly_items": _normalize_anomaly_items(config.get("anomaly_items") or []),
+        "anomaly_behaviors": _normalize_anomaly_behaviors(config.get("anomaly_behaviors") or []),
+    }
+
+
+def _build_anomaly_type_payload_from_config(config: dict) -> dict[str, list[str]]:
+    return {
+        "anomaly_object_list": [str(entry["item"]).strip() for entry in config.get("anomaly_items", []) if str(entry.get("item") or "").strip()],
+        "anomaly_activity_list": [str(item).strip() for item in config.get("anomaly_behaviors", []) if str(item).strip()],
+    }
+
+
+def _serialize_prompt_yaml(template: str) -> str:
+    return OmegaConf.to_yaml({"template": template.rstrip()}, resolve=True).rstrip() + "\n"
+
+
+def _serialize_anomaly_type_yaml(config: dict) -> str:
+    return (
+        OmegaConf.to_yaml(
+            {
+                **_build_anomaly_type_payload_from_config(config),
+                "anomaly_items": list(config.get("anomaly_items") or []),
+                "anomaly_behaviors": list(config.get("anomaly_behaviors") or []),
+            },
+            resolve=True,
+        ).rstrip()
+        + "\n"
+    )
+
+
+def _build_anomaly_prompt_settings_response(
+    config_path: Path,
+    *,
+    fallback_prompt_path: Path,
+    fallback_type_path: Path,
+) -> AnomalyPromptSettings:
+    config = _read_stage2_prompt_config(
+        config_path,
+        fallback_prompt_path=fallback_prompt_path,
+        fallback_type_path=fallback_type_path,
+    )
+    return AnomalyPromptSettings.model_validate(
+        {
+            "anomaly_items": config["anomaly_items"],
+            "anomaly_behaviors": config["anomaly_behaviors"],
+        }
+    )
+
+
+def _validate_prompt_settings_payload(payload: AnomalyPromptSettings):
+    for item in payload.anomaly_items:
+        if item.trigger_score < 1 or item.trigger_score > 10:
+            raise HTTPException(status_code=400, detail="anomaly item trigger_score must be an integer from 1 to 10")
 
 
 def read_anomaly_prompt_settings() -> AnomalyPromptSettings:
-    return AnomalyPromptSettings(
-        text_prompt_yaml=_load_yaml_text(ANOMALY_TEXT_PROMPT_PATH),
-        anomaly_type_yaml=_load_yaml_text(ANOMALY_TYPE_PROMPT_PATH),
+    return _build_anomaly_prompt_settings_response(
+        ANOMALY_PROMPT_CONFIG_PATH,
+        fallback_prompt_path=ANOMALY_TEXT_PROMPT_PATH,
+        fallback_type_path=ANOMALY_TYPE_PROMPT_PATH,
     )
 
 
 def read_standard_anomaly_prompt_settings() -> AnomalyPromptSettings:
-    return AnomalyPromptSettings(
-        text_prompt_yaml=_load_yaml_text(STANDARD_ANOMALY_TEXT_PROMPT_PATH),
-        anomaly_type_yaml=_load_yaml_text(STANDARD_ANOMALY_TYPE_PROMPT_PATH),
+    return _build_anomaly_prompt_settings_response(
+        STANDARD_ANOMALY_PROMPT_CONFIG_PATH,
+        fallback_prompt_path=STANDARD_ANOMALY_TEXT_PROMPT_PATH,
+        fallback_type_path=STANDARD_ANOMALY_TYPE_PROMPT_PATH,
     )
 
 
 def write_anomaly_prompt_settings(payload: AnomalyPromptSettings) -> AnomalyPromptSettings:
-    _validate_prompt_yaml_payload(payload)
+    _validate_prompt_settings_payload(payload)
+    existing_config = _read_stage2_prompt_config(
+        ANOMALY_PROMPT_CONFIG_PATH,
+        fallback_prompt_path=ANOMALY_TEXT_PROMPT_PATH,
+        fallback_type_path=ANOMALY_TYPE_PROMPT_PATH,
+    )
     ANOMALY_TEXT_PROMPT_PATH.parent.mkdir(parents=True, exist_ok=True)
     ANOMALY_TYPE_PROMPT_PATH.parent.mkdir(parents=True, exist_ok=True)
-    ANOMALY_TEXT_PROMPT_PATH.write_text(payload.text_prompt_yaml.rstrip() + "\n")
-    ANOMALY_TYPE_PROMPT_PATH.write_text(payload.anomaly_type_yaml.rstrip() + "\n")
+    ANOMALY_PROMPT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    config = {
+        "template": existing_config.get("template") or "",
+        "anomaly_items": [
+            {
+                "item": item.item,
+                "trigger_score": int(item.trigger_score),
+            }
+            for item in payload.anomaly_items
+        ],
+        "anomaly_behaviors": list(payload.anomaly_behaviors),
+    }
+    ANOMALY_PROMPT_CONFIG_PATH.write_text(
+        OmegaConf.to_yaml(config, resolve=True).rstrip() + "\n"
+    )
+    ANOMALY_TEXT_PROMPT_PATH.write_text(_serialize_prompt_yaml(str(config["template"])))
+    ANOMALY_TYPE_PROMPT_PATH.write_text(_serialize_anomaly_type_yaml(config))
     return read_anomaly_prompt_settings()
 
 
@@ -1229,7 +1518,16 @@ def build_alert_rule_options_response(db: Session) -> AlertRuleOptionCatalog:
     bundle = get_registry_bundle(db, source_rows=source_rows)
     try:
         anomaly_prompt_settings = read_anomaly_prompt_settings()
-        anomaly_type_yaml = anomaly_prompt_settings.anomaly_type_yaml
+        anomaly_type_yaml = (
+            OmegaConf.to_yaml(
+                {
+                    "anomaly_object_list": [item.item for item in anomaly_prompt_settings.anomaly_items],
+                    "anomaly_activity_list": list(anomaly_prompt_settings.anomaly_behaviors),
+                },
+                resolve=True,
+            ).rstrip()
+            + "\n"
+        )
     except HTTPException:
         anomaly_type_yaml = None
     snapshot = get_current_resource_snapshot(db)
@@ -1320,6 +1618,134 @@ def replace_alert_rules(db: Session, rules: list[AlertRule]):
             row.deleted_at = datetime.utcnow()
     db.commit()
     return build_alert_rule_responses(db)
+
+
+def get_telegram_trigger_subscription_rows(db: Session):
+    ensure_telegram_subscription_tables()
+    return (
+        db.query(SQLModels.TelegramTriggerSubscription)
+        .filter_by(is_deleted=False)
+        .order_by(SQLModels.TelegramTriggerSubscription.id.asc())
+        .all()
+    )
+
+
+def build_telegram_trigger_subscription_responses(db: Session):
+    return [
+        TelegramTriggerSubscription(
+            id=row.id,
+            enabled=row.enabled,
+            subscription_label=row.subscription_label,
+            bot_token=row.bot_token,
+            chat_id=row.chat_id,
+            created_at=row.created_at.isoformat() if row.created_at is not None else None,
+            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+        )
+        for row in get_telegram_trigger_subscription_rows(db)
+    ]
+
+
+def replace_telegram_trigger_subscriptions(
+    db: Session,
+    subscriptions: list[TelegramTriggerSubscription],
+):
+    ensure_telegram_subscription_tables()
+    existing_rows = get_telegram_trigger_subscription_rows(db)
+    existing_by_id = {row.id: row for row in existing_rows}
+
+    seen_ids = set()
+    persisted_rows = []
+    for subscription in subscriptions:
+        row = (
+            existing_by_id.get(subscription.id)
+            if subscription.id is not None
+            else None
+        )
+        if row is None:
+            row = SQLModels.TelegramTriggerSubscription()
+            db.add(row)
+        row.enabled = subscription.enabled
+        row.subscription_label = subscription.subscription_label
+        row.bot_token = subscription.bot_token
+        row.chat_id = subscription.chat_id
+        row.is_deleted = False
+        row.deleted_at = None
+        persisted_rows.append(row)
+        if row.id is not None:
+            seen_ids.add(row.id)
+
+    db.flush()
+    seen_ids.update(row.id for row in persisted_rows if row.id is not None)
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_telegram_trigger_subscription_responses(db)
+
+
+def get_apple_message_trigger_subscription_rows(db: Session):
+    ensure_apple_message_subscription_tables()
+    return (
+        db.query(SQLModels.AppleMessageTriggerSubscription)
+        .filter_by(is_deleted=False)
+        .order_by(SQLModels.AppleMessageTriggerSubscription.id.asc())
+        .all()
+    )
+
+
+def build_apple_message_trigger_subscription_responses(db: Session):
+    return [
+        AppleMessageTriggerSubscription(
+            id=row.id,
+            enabled=row.enabled,
+            subscription_label=row.subscription_label,
+            recipient_handle=row.recipient_handle,
+            service=row.service,
+            created_at=row.created_at.isoformat() if row.created_at is not None else None,
+            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+        )
+        for row in get_apple_message_trigger_subscription_rows(db)
+    ]
+
+
+def replace_apple_message_trigger_subscriptions(
+    db: Session,
+    subscriptions: list[AppleMessageTriggerSubscription],
+):
+    ensure_apple_message_subscription_tables()
+    existing_rows = get_apple_message_trigger_subscription_rows(db)
+    existing_by_id = {row.id: row for row in existing_rows}
+
+    seen_ids = set()
+    persisted_rows = []
+    for subscription in subscriptions:
+        row = (
+            existing_by_id.get(subscription.id)
+            if subscription.id is not None
+            else None
+        )
+        if row is None:
+            row = SQLModels.AppleMessageTriggerSubscription()
+            db.add(row)
+        row.enabled = subscription.enabled
+        row.subscription_label = subscription.subscription_label
+        row.recipient_handle = subscription.recipient_handle
+        row.service = subscription.service
+        row.is_deleted = False
+        row.deleted_at = None
+        persisted_rows.append(row)
+        if row.id is not None:
+            seen_ids.add(row.id)
+
+    db.flush()
+    seen_ids.update(row.id for row in persisted_rows if row.id is not None)
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_apple_message_trigger_subscription_responses(db)
 
 
 async def store_uploaded_source_video(
@@ -1422,18 +1848,29 @@ def build_runtime_cfg(db: Session, run_identifier: str):
             ),
         )
         if derived_error is None:
-            derived_error = probe_source_connection(
-                source_row.kind,
-                source_row.source_value,
-                upload_path=upload_path,
-                timeout_ms=SOURCE_PROBE_TIMEOUT_MS,
-            )
+            if is_hybrid_local_cpu_runtime():
+                derived_error = probe_source_via_local_worker(
+                    source_row.kind,
+                    source_row.source_value,
+                    upload_path=upload_path,
+                )
+            else:
+                derived_error = probe_source_connection(
+                    source_row.kind,
+                    source_row.source_value,
+                    upload_path=upload_path,
+                    timeout_ms=SOURCE_PROBE_TIMEOUT_MS,
+                )
         source_row.last_error = derived_error
         if derived_error:
             source_errors.append(f"{source_row.label}: {derived_error}")
             continue
         if source_row.upload_id is not None and upload_path is not None:
-            upload_paths[source_row.upload_id] = upload_path
+            upload_paths[source_row.upload_id] = (
+                build_host_upload_path(upload_path)
+                if is_hybrid_local_cpu_runtime()
+                else upload_path
+            )
     model_health = build_model_health(registry_bundle, has_gpu=has_gpu)
     source_errors.extend(
         build_enabled_source_binding_errors(
@@ -1517,7 +1954,8 @@ def refresh_runtime_status():
     global status
 
     process_messages()
-    next_status, reset_frames = derive_system_status(status, list(module_status.values()))
+    relevant_statuses = [module_status.get(module_name, DataModels.Status.IDLE) for module_name in get_expected_module_names()]
+    next_status, reset_frames = derive_system_status(status, relevant_statuses)
     with state_lock:
         status = next_status
         if reset_frames:
@@ -1909,6 +2347,8 @@ async def start(db: Session = Depends(get_db)):
             )
         )
         raise HTTPException(status_code=409, detail=reason)
+    if is_hybrid_local_cpu_runtime():
+        require_local_worker_ready()
 
     next_run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     runtime_cfg, source_rows = build_runtime_cfg(db, next_run_id)
@@ -2078,9 +2518,128 @@ def get_settings_alert_rule_options(db: Session = Depends(get_db)):
     return build_alert_rule_options_response(db)
 
 
+@external_router.get(
+    "/settings/telegram-trigger-subscriptions",
+    response_model=list[TelegramTriggerSubscription],
+)
+def get_settings_telegram_trigger_subscriptions(db: Session = Depends(get_db)):
+    return build_telegram_trigger_subscription_responses(db)
+
+
+@external_router.put(
+    "/settings/telegram-trigger-subscriptions",
+    response_model=list[TelegramTriggerSubscription],
+)
+def update_settings_telegram_trigger_subscriptions(
+    subscriptions: list[TelegramTriggerSubscription],
+    db: Session = Depends(get_db),
+):
+    return replace_telegram_trigger_subscriptions(db, subscriptions)
+
+
+@external_router.post(
+    "/settings/telegram-trigger-subscriptions/test",
+    response_model=TelegramTriggerTestResponse,
+)
+def test_settings_telegram_trigger_subscription(
+    subscription: TelegramTriggerSubscription,
+):
+    try:
+        send_test_telegram_trigger_message(subscription)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return TelegramTriggerTestResponse(
+        status="sent",
+        detail="Telegram test message sent.",
+    )
+
+
+@external_router.get(
+    "/settings/apple-message-trigger-subscriptions",
+    response_model=list[AppleMessageTriggerSubscription],
+)
+def get_settings_apple_message_trigger_subscriptions(db: Session = Depends(get_db)):
+    return build_apple_message_trigger_subscription_responses(db)
+
+
+@external_router.put(
+    "/settings/apple-message-trigger-subscriptions",
+    response_model=list[AppleMessageTriggerSubscription],
+)
+def update_settings_apple_message_trigger_subscriptions(
+    subscriptions: list[AppleMessageTriggerSubscription],
+    db: Session = Depends(get_db),
+):
+    return replace_apple_message_trigger_subscriptions(db, subscriptions)
+
+
+@external_router.post(
+    "/settings/apple-message-trigger-subscriptions/test",
+    response_model=AppleMessageTriggerTestResponse,
+)
+def test_settings_apple_message_trigger_subscription(
+    subscription: AppleMessageTriggerSubscription,
+):
+    try:
+        send_test_apple_message_trigger_message(subscription)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return AppleMessageTriggerTestResponse(
+        status="sent",
+        detail="Apple Messages test message sent.",
+    )
+
+
 @external_router.get("/sources/{source_id}/preview.mjpeg")
 async def get_source_preview(source_id: int, request: Request, db: Session = Depends(get_db)):
     source_row = get_source_row_by_id(source_id, db)
+    if is_hybrid_local_cpu_runtime():
+        upload_path = None
+        if source_row.upload_id is not None:
+            upload_row = get_upload_rows_by_id(db, [source_row.upload_id]).get(source_row.upload_id)
+            upload_path = upload_row.stored_path if upload_row is not None else None
+        query = {
+            "kind": source_row.kind,
+            "source_value": str(coerce_source_value_for_api(source_row) or ""),
+        }
+        host_upload_path = build_host_upload_path(upload_path)
+        if host_upload_path:
+            query["upload_path"] = host_upload_path
+        preview_url = build_local_worker_url("/preview.mjpeg") + "?" + urllib_parse.urlencode(query)
+        try:
+            upstream_response = urllib_request.urlopen(
+                preview_url,
+                timeout=LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS,
+            )
+        except urllib_error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="ignore").strip()
+            raise HTTPException(
+                status_code=503,
+                detail=detail or "source preview could not be opened on local worker",
+            ) from exc
+        except Exception as exc:
+            raise HTTPException(
+                status_code=503,
+                detail="source preview could not be opened on local worker",
+            ) from exc
+
+        async def proxy_stream():
+            try:
+                with upstream_response as response:
+                    while True:
+                        chunk = response.read(8192)
+                        if not chunk:
+                            break
+                        if await request.is_disconnected():
+                            break
+                        yield chunk
+            except Exception:
+                logger.exception("Failed to proxy local worker preview stream")
+
+        return StreamingResponse(
+            proxy_stream(),
+            media_type="multipart/x-mixed-replace; boundary=frame",
+        )
     preview_candidates = resolve_preview_source_candidates(source_row, db)
     prefer_live_edge_seek = source_row.kind != SOURCE_KIND_VIDEO_UPLOAD
 

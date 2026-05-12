@@ -20,6 +20,7 @@ try:
     import torch
     _torch_available = True
 except ImportError:
+    torch = None
     _torch_available = False
 
 from ..constants import VIDEO_EXTENSIONS
@@ -42,7 +43,11 @@ def to_ndarray_uint8(x):
 
 
 def to_list(x):
-    return x.tolist() if isinstance(x, np.ndarray) or isinstance(x, torch.Tensor) else x
+    if isinstance(x, np.ndarray):
+        return x.tolist()
+    if torch is not None and isinstance(x, torch.Tensor):
+        return x.tolist()
+    return x
 
 
 class SystemCommand:

@@ -108,22 +108,46 @@ RABBITMQ_EXCHANGE=test
 ```env
 POSTGRES_USER=postgres
 POSTGRES_PASSWORD=root
-POSTGRES_DB=foia
-POSTGRES_HOST=foia_db
+POSTGRES_DB=hearthlight
+POSTGRES_HOST=db
 POSTGRES_PORT=5432
 POSTGRES_EXT_HOST=localhost
-POSTGRES_EXT_PORT=5424
-
-HEARTHLIGHT_USER=postgres
-HEARTHLIGHT_PASSWORD=root
-HEARTHLIGHT_DB=hearthlight
-HEARTHLIGHT_HOST=db
-HEARTHLIGHT_PORT=5432
+POSTGRES_EXT_PORT=5433
+POSTGRES_HOST_PORT=5433
+RABBITMQ_HOST=rabbitmq
+RABBITMQ_PORT=5672
+RABBITMQ_HOST_PORT=5673
+RABBITMQ_MANAGEMENT_HOST_PORT=15672
+RABBITMQ_EXCHANGE=test
+WEBAPP_API_HOST_PORT=8000
+WEBAPP_UI_HOST_PORT=3000
 ```
 
 ## Runtime Config
 
 Bootstrap `shared/configs/config.yaml` from the checked-in example:
+
+```bash
+pip install hearthlight
+hearthlight onboard
+```
+
+The onboarding flow can:
+
+- check platform dependencies such as `libpq-dev` and `python3-dev`
+- copy `shared/configs/example_config.yaml` to `shared/configs/config.yaml`
+- install service `requirements.txt` files
+- detect CUDA and write CPU/GPU launcher defaults
+- write `.env` notification defaults for Telegram and Apple Messages
+- seed Telegram and Apple Messages trigger subscriptions from `.env` after `reset-db`
+
+Shell wrapper:
+
+```bash
+bash scripts/onboard.sh
+```
+
+Manual fallback:
 
 ```bash
 cp shared/configs/example_config.yaml shared/configs/config.yaml
@@ -167,12 +191,6 @@ For an automated, host-aware build validation instead of a raw compose build, us
 python3 scripts/docker_build_test.py
 ```
 
-Optional: install a local `hearthlight` command entrypoint:
-
-```bash
-python3 -m pip install -e .
-```
-
 The recommended startup path is the Hearthlight CLI launcher. It adds startup-time choice over:
 
 - service mode (`api` or `pipeline`)
@@ -187,61 +205,61 @@ The recommended startup path is the Hearthlight CLI launcher. It adds startup-ti
 Interactive launch:
 
 ```bash
-python3 -m hearthlight start --interactive
+hearthlight start --interactive
 ```
 
 Inspect available templates and model inventory:
 
 ```bash
-python3 -m hearthlight list-models
+hearthlight list-models
 ```
 
 Start in CPU mode:
 
 ```bash
-python3 -m hearthlight start --template active --profile cpu
+hearthlight start --template active --profile cpu
 ```
 
 Start with one template for runtime settings and another template for camera and zone presets:
 
 ```bash
-python3 -m hearthlight start --template example --source-preset master_config --profile cpu
+hearthlight start --template example --source-preset master_config --profile cpu
 ```
 
 Start in CUDA mode:
 
 ```bash
-python3 -m hearthlight start --mode pipeline --template master_config --profile cuda --cuda-visible-devices 0
+hearthlight start --mode pipeline --template master_config --profile cuda --cuda-visible-devices 0
 ```
 
 Preview a launch without changing the active config or starting Docker:
 
 ```bash
-python3 -m hearthlight start --interactive --dry-run
+hearthlight start --interactive --dry-run
 ```
 
 Stop the stack:
 
 ```bash
-python3 -m hearthlight stop
+hearthlight stop
 ```
 
 Open the dashboard:
 
 ```bash
-python3 -m hearthlight dashboard
+hearthlight dashboard
 ```
 
 Reset database state directly from the CLI:
 
 ```bash
-python3 -m hearthlight reset-db
+hearthlight reset-db
 ```
 
 Show service health/status from Docker Compose:
 
 ```bash
-python3 -m hearthlight status
+hearthlight status
 ```
 
 The launcher will:
@@ -257,7 +275,7 @@ The launcher will:
 If you still want a local GUI wrapper, it is available here:
 
 ```bash
-python3 -m hearthlight gui
+hearthlight gui
 ```
 
 If you want to launch manually without `hearthlight start`, bring up infrastructure,
@@ -265,7 +283,7 @@ run a direct reset, then start webapp:
 
 ```bash
 docker compose up -d db rabbitmq
-python3 -m hearthlight reset-db
+hearthlight reset-db
 docker compose up webapp
 ```
 
@@ -275,13 +293,8 @@ Enable the full AI pipeline explicitly:
 docker compose --profile pipeline up ingestor reid anomaly association
 ```
 
-`docker-compose.yaml` now gates AI worker services behind the optional `pipeline` profile and FOIA
-behind the optional `foia` profile, so a plain local startup does not require the worker stack,
-the `FOIA/` directory, or `foia.env`. Enable FOIA explicitly:
-
-```bash
-docker compose --profile foia up foia_db foia foia_webapp
-```
+`docker-compose.yaml` gates AI worker services behind the optional `pipeline` profile, so a plain
+local startup does not require the heavier worker stack.
 
 If video display is enabled in config and you are on Linux/X11, you may also need:
 
@@ -293,6 +306,12 @@ Startup and launcher documentation:
 
 ```bash
 run/README.md
+```
+
+macOS packaged app documentation:
+
+```bash
+docs/macos_dmg.md
 ```
 
 After startup, open the frontend in your browser at `http://localhost:3000`,

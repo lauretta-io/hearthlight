@@ -108,7 +108,7 @@ const IncidentPage = () => {
       ]);
 
       if (!incidentResponse.ok) {
-        throw new Error('Failed to fetch incidents; is the backend running?');
+        throw new Error('Failed to fetch triggers; is the backend running?');
       }
       if (!feedResponse.ok) {
         throw new Error('Failed to fetch anomaly events; is the backend running?');
@@ -193,7 +193,7 @@ const IncidentPage = () => {
   return (
     <div className="incident-page-container">
       <div className="section-header">
-        <h2>Current Incidents</h2>
+        <h2>Current Triggers</h2>
 
         {runIdentifiers.length > 0 ? (
           <div className="run-selector">
@@ -218,21 +218,21 @@ const IncidentPage = () => {
           No runs in database
         </div>
       ) : isLoading ? (
-        <LoadingAlert message="Loading incidents..." />
+        <LoadingAlert message="Loading triggers..." />
       ) : incidents.length === 0 && anomalies.length === 0 ? (
         <div className="empty-state">
-          No incidents or anomaly events found for this run.
+          No triggers or anomaly events found for this run.
         </div>
       ) : (
         <>
           <div className="incident-section">
             <div className="incident-section-header">
-              <h3>Incident Records</h3>
+              <h3>Trigger Records</h3>
               <span>{incidents.length}</span>
             </div>
             {incidents.length === 0 ? (
               <div className="empty-state compact-empty-state">
-                No incident records found for this run.
+                No trigger records found for this run.
               </div>
             ) : (
               <div className="incidents-list">

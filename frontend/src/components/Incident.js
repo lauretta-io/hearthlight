@@ -39,14 +39,14 @@ const Incident = () => {
   }, [incidentId]);
 
   if (error) return <ErrorAlert message={error} />;
-  if (isLoading) return <LoadingAlert message="Loading incident..." />;
+  if (isLoading) return <LoadingAlert message="Loading trigger..." />;
 
   const handleResolve = (() => resolveIncident(incident.incident_id));
   console.log(incident.entities);
 
   return (
     <div className="history-container">
-      <h1 className="history-title">Incident {incidentId}</h1>
+      <h1 className="history-title">Trigger {incidentId}</h1>
       <div className="history-content">
         <div className="video-wrapper">
           <div className="video-container">

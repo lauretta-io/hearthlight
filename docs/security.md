@@ -12,9 +12,6 @@ The compose stack also now waits for healthy Postgres and RabbitMQ containers be
 services that depend on them. This reduces race-condition failures during `reset-db`, `webapp`,
 and core module startup.
 
-Optional FOIA services are gated behind a `foia` compose profile so the default backend startup
-path does not accidentally rely on missing FOIA build contexts or env files.
-
 For Apple Silicon / Linux arm64 builds, the `webapp` image now installs CPU `onnxruntime` instead
 of the unavailable `onnxruntime-gpu` wheel and skips `tensorrt` and `triton`. This makes the API
 container buildable on arm64 without implying that the GPU inference services are supported there.

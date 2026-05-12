@@ -42,12 +42,13 @@ RABBIT_TIMEOUT = 180
 
 def get_rabbit_settings():
     host = os.environ.get("RABBITMQ_HOST")
+    port = os.environ.get("RABBITMQ_PORT", "5672").strip() or "5672"
     exchange = os.environ.get("RABBITMQ_EXCHANGE")
     if not host or not exchange:
         raise RuntimeError(
             "RABBITMQ_HOST and RABBITMQ_EXCHANGE must be set before using RabbitMQ"
         )
-    return host, exchange
+    return host, int(port), exchange
 
 
 class RoutingKey:
@@ -85,9 +86,10 @@ logger = logging.getLogger(__name__)
 
 @with_exponential_backoff(max_tries=RABBIT_MAX_TRIES)
 def get_connection(queue_name: str, routing_key: str, create_queue: bool):
-    host, exchange = get_rabbit_settings()
+    host, port, exchange = get_rabbit_settings()
     connection_params = pika.ConnectionParameters(
         host=host,
+        port=port,
         heartbeat=RABBIT_HEARTBEAT,
         blocked_connection_timeout=RABBIT_TIMEOUT,
     )
@@ -412,7 +414,7 @@ class Publisher:
     def publish(self, data):
         try:
             assert self.channel is not None
-            _, exchange = get_rabbit_settings()
+            _, _, exchange = get_rabbit_settings()
             body = data.model_dump_json()
             self.channel.basic_publish(
                 exchange=exchange, routing_key=self.routing_key, body=body

@@ -20,7 +20,6 @@ const SOURCE_KIND_OPTIONS = [
 const MODEL_STAGE_OPTIONS = [
   { stage: 'detector', label: 'Detector', field: 'detector_model_key' },
   { stage: 'tracker', label: 'Tracker', field: 'tracker_model_key' },
-  { stage: 'reid', label: 'Person ReID', field: 'reid_model_key' },
   { stage: 'anomaly_stage_1', label: 'Anomaly Stage 1', field: 'anomaly_stage_1_model_key' },
   { stage: 'anomaly_stage_2', label: 'Anomaly Stage 2', field: 'anomaly_stage_2_model_key' },
 ];
@@ -35,17 +34,21 @@ const ALERT_LEVEL_OPTIONS = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ];
+const HIDDEN_MODEL_STAGE_DEFAULTS = ['reid'];
 const EMPTY_PROMPT_SETTINGS = {
-  text_prompt_yaml: '',
-  anomaly_type_yaml: '',
+  anomaly_items: [],
+  anomaly_behaviors: [],
 };
 const SETTINGS_TABS = [
   { key: 'sources', label: 'Sources' },
   { key: 'model-library', label: 'Model Library' },
-  { key: 'alerts', label: 'Alerts' },
   { key: 'run', label: 'Run' },
   { key: 'monitoring', label: 'Monitoring' },
   { key: 'initialization', label: 'Initialization' },
+];
+const STANDALONE_PAGE_TABS = [
+  { key: 'rules', label: 'Rules' },
+  { key: 'connectors', label: 'Connectors' },
 ];
 const MODEL_STAGE_COPY = {
   detector: {
@@ -57,11 +60,6 @@ const MODEL_STAGE_COPY = {
     title: 'Tracker Models',
     description: 'These models keep detections linked over time so the system can follow the same person or bag across frames.',
     usedFor: 'Turning frame-by-frame detections into stable moving tracks.',
-  },
-  reid: {
-    title: 'Person ReID Models',
-    description: 'These models help the system understand when the same person or bag has appeared before.',
-    usedFor: 'Maintaining identity across time and camera views.',
   },
   anomaly_stage_1: {
     title: 'Anomaly Stage 1 Models',
@@ -88,7 +86,6 @@ const createSourceDraft = (kind = 'camera_url') => ({
   upload: null,
   detector_model_key: null,
   tracker_model_key: null,
-  reid_model_key: null,
   anomaly_stage_1_model_key: null,
   anomaly_stage_2_model_key: null,
 });
@@ -106,7 +103,6 @@ const hydrateSource = (source, fallbackIndex = 0) => ({
   upload: source.upload ?? null,
   detector_model_key: source.detector_model_key ?? null,
   tracker_model_key: source.tracker_model_key ?? null,
-  reid_model_key: source.reid_model_key ?? null,
   anomaly_stage_1_model_key: source.anomaly_stage_1_model_key ?? null,
   anomaly_stage_2_model_key: source.anomaly_stage_2_model_key ?? null,
 });
@@ -135,6 +131,68 @@ const hydrateAlertRule = (rule, fallbackIndex = 0) => ({
   alert_level: rule.alert_level ?? 'medium',
 });
 
+const createAnomalyItemDraft = (item = '', triggerScore = 6) => ({
+  clientKey: `settings-anomaly-item-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  item,
+  trigger_score: triggerScore,
+});
+
+const hydrateAnomalyItem = (item, fallbackIndex = 0) => ({
+  clientKey: `settings-anomaly-item-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+  item: item?.item ?? '',
+  trigger_score: Number.isFinite(item?.trigger_score) ? item.trigger_score : 6,
+});
+
+const createAnomalyBehaviorDraft = (value = '') => ({
+  clientKey: `settings-anomaly-behavior-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  value,
+});
+
+const hydrateAnomalyBehavior = (value, fallbackIndex = 0) => ({
+  clientKey: `settings-anomaly-behavior-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+  value: value ?? '',
+});
+
+const createTelegramSubscriptionDraft = () => ({
+  clientKey: `settings-telegram-subscription-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  id: null,
+  enabled: true,
+  subscription_label: '',
+  bot_token: '',
+  chat_id: '',
+});
+
+const hydrateTelegramSubscription = (subscription, fallbackIndex = 0) => ({
+  clientKey: subscription.id
+    ? `settings-telegram-subscription-${subscription.id}`
+    : `settings-telegram-subscription-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+  id: subscription.id ?? null,
+  enabled: subscription.enabled ?? true,
+  subscription_label: subscription.subscription_label ?? '',
+  bot_token: subscription.bot_token ?? '',
+  chat_id: subscription.chat_id ?? '',
+});
+
+const createAppleMessageSubscriptionDraft = () => ({
+  clientKey: `settings-apple-message-subscription-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  id: null,
+  enabled: true,
+  subscription_label: '',
+  recipient_handle: '',
+  service: 'iMessage',
+});
+
+const hydrateAppleMessageSubscription = (subscription, fallbackIndex = 0) => ({
+  clientKey: subscription.id
+    ? `settings-apple-message-subscription-${subscription.id}`
+    : `settings-apple-message-subscription-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+  id: subscription.id ?? null,
+  enabled: subscription.enabled ?? true,
+  subscription_label: subscription.subscription_label ?? '',
+  recipient_handle: subscription.recipient_handle ?? '',
+  service: subscription.service ?? 'iMessage',
+});
+
 const sanitizeSourcesForApi = (sources) =>
   sources.map((source, index) => ({
     id: source.id ?? undefined,
@@ -147,7 +205,7 @@ const sanitizeSourcesForApi = (sources) =>
     upload_id: source.kind === 'video_upload' ? source.upload_id : null,
     detector_model_key: source.detector_model_key || null,
     tracker_model_key: source.tracker_model_key || null,
-    reid_model_key: source.reid_model_key || null,
+    reid_model_key: null,
     anomaly_stage_1_model_key: source.anomaly_stage_1_model_key || null,
     anomaly_stage_2_model_key: source.anomaly_stage_2_model_key || null,
   }));
@@ -162,6 +220,24 @@ const sanitizeAlertRulesForApi = (rules) =>
     target_key: rule.target_key,
     min_confidence: Number(rule.min_confidence),
     alert_level: rule.alert_level,
+  }));
+
+const sanitizeTelegramSubscriptionsForApi = (subscriptions) =>
+  subscriptions.map((subscription) => ({
+    id: subscription.id ?? undefined,
+    enabled: subscription.enabled,
+    subscription_label: subscription.subscription_label?.trim() || null,
+    bot_token: subscription.bot_token.trim(),
+    chat_id: subscription.chat_id.trim(),
+  }));
+
+const sanitizeAppleMessageSubscriptionsForApi = (subscriptions) =>
+  subscriptions.map((subscription) => ({
+    id: subscription.id ?? undefined,
+    enabled: subscription.enabled,
+    subscription_label: subscription.subscription_label?.trim() || null,
+    recipient_handle: subscription.recipient_handle.trim(),
+    service: subscription.service,
   }));
 
 const buildAlertRuleSetupHint = (sources, errorDetail = null) => {
@@ -257,8 +333,6 @@ const describeModelOption = (option) => {
       return `${name} is used to find people and bags in each frame before tracking starts.`;
     case 'tracker':
       return `${name} is used to keep the same person or bag connected across frames after detection.`;
-    case 'reid':
-      return `${name} is used to recognize when the same person or bag appears again later in the run.`;
     case 'anomaly_stage_1':
       return `${name} is used as the first anomaly pass to watch for presence and timing changes worth reviewing.`;
     case 'anomaly_stage_2':
@@ -284,9 +358,6 @@ const describeModelFit = (option) => {
   if (option.stage === 'tracker') {
     return 'Best when you want stable movement tracking after detection.';
   }
-  if (option.stage === 'reid') {
-    return 'Best when you want person identity continuity plus the current hybrid bag flow.';
-  }
   if (option.stage === 'anomaly_stage_1') {
     return 'Best when you want a low-cost first-pass anomaly screen.';
   }
@@ -299,7 +370,12 @@ const describeModelFit = (option) => {
   return 'Available for specialized or compatibility use.';
 };
 
-const SettingsPage = () => {
+const SettingsPage = ({
+  forcedTab = null,
+  hideTabBar = false,
+  pageTitle = 'Settings',
+  pageSubtitle = 'Configure sources, run control, monitoring, and repository initialization from one workspace.',
+}) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [sources, setSources] = useState(() => {
     const saved = localStorage.getItem('settingsSourcesDraft');
@@ -316,18 +392,26 @@ const SettingsPage = () => {
   const [isSavingBindings, setIsSavingBindings] = useState(false);
   const [isSavingAnomalyPrompts, setIsSavingAnomalyPrompts] = useState(false);
   const [isSavingAlertRules, setIsSavingAlertRules] = useState(false);
+  const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
+  const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
   const [banner, setBanner] = useState(null);
   const [rowErrors, setRowErrors] = useState({});
   const [alertRuleErrors, setAlertRuleErrors] = useState({});
+  const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
+  const [appleMessageSubscriptionErrors, setAppleMessageSubscriptionErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
+  const [busyTelegramTests, setBusyTelegramTests] = useState({});
+  const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
   const [alertRules, setAlertRules] = useState([]);
+  const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
+  const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
-  const [anomalyTextPromptYaml, setAnomalyTextPromptYaml] = useState('');
-  const [anomalyTypeYaml, setAnomalyTypeYaml] = useState('');
+  const [anomalyItems, setAnomalyItems] = useState([]);
+  const [anomalyBehaviors, setAnomalyBehaviors] = useState([]);
   const [standardPromptSettings, setStandardPromptSettings] = useState(EMPTY_PROMPT_SETTINGS);
   const [launchPlan, setLaunchPlan] = useState(() => {
     const saved = localStorage.getItem('settingsLaunchPlanDraft');
@@ -343,14 +427,20 @@ const SettingsPage = () => {
       return createLaunchPlan();
     }
   });
-  const requestedTab = searchParams.get('tab');
-  const activeTab = SETTINGS_TABS.some((tab) => tab.key === requestedTab) ? requestedTab : 'sources';
+  const requestedTab = forcedTab || searchParams.get('tab');
+  const allowedTabs = forcedTab ? [...SETTINGS_TABS, ...STANDALONE_PAGE_TABS] : SETTINGS_TABS;
+  const activeTab = allowedTabs.some((tab) => tab.key === requestedTab)
+    ? requestedTab
+    : (forcedTab || 'sources');
 
   useEffect(() => {
+    if (forcedTab) {
+      return;
+    }
     if (!requestedTab || !SETTINGS_TABS.some((tab) => tab.key === requestedTab)) {
       setSearchParams({ tab: 'sources' }, { replace: true });
     }
-  }, [requestedTab, setSearchParams]);
+  }, [forcedTab, requestedTab, setSearchParams]);
 
   useEffect(() => {
     localStorage.setItem('settingsSourcesDraft', JSON.stringify(sources));
@@ -399,6 +489,38 @@ const SettingsPage = () => {
     }
   };
 
+  const reloadTelegramSubscriptionState = async () => {
+    const response = await fetch(`${BaseURL}/settings/telegram-trigger-subscriptions`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load Telegram trigger subscriptions');
+    }
+    const data = await response.json();
+    setTelegramSubscriptions((data || []).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
+  };
+
+  const reloadAppleMessageSubscriptionState = async () => {
+    const response = await fetch(`${BaseURL}/settings/apple-message-trigger-subscriptions`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load Apple Messages trigger subscriptions');
+    }
+    const data = await response.json();
+    setAppleMessageSubscriptions((data || []).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+  };
+
   useEffect(() => {
     const loadSources = async () => {
       try {
@@ -440,22 +562,24 @@ const SettingsPage = () => {
           if (standardPromptResponse.ok) {
             standardPromptData = await standardPromptResponse.json();
             setStandardPromptSettings({
-              text_prompt_yaml: standardPromptData.text_prompt_yaml || '',
-              anomaly_type_yaml: standardPromptData.anomaly_type_yaml || '',
+              anomaly_items: standardPromptData.anomaly_items || [],
+              anomaly_behaviors: standardPromptData.anomaly_behaviors || [],
             });
           }
           const promptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts`);
           if (promptResponse.ok) {
             const promptData = await promptResponse.json();
-            setAnomalyTextPromptYaml(promptData.text_prompt_yaml || '');
-            setAnomalyTypeYaml(promptData.anomaly_type_yaml || '');
+            setAnomalyItems((promptData.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
+            setAnomalyBehaviors((promptData.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
           } else {
-            setAnomalyTextPromptYaml(standardPromptData.text_prompt_yaml || '');
-            setAnomalyTypeYaml(standardPromptData.anomaly_type_yaml || '');
+            setAnomalyItems((standardPromptData.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
+            setAnomalyBehaviors((standardPromptData.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
           }
         } catch {
           // Keep model and source controls available even if prompt files are unavailable.
         }
+        await reloadTelegramSubscriptionState();
+        await reloadAppleMessageSubscriptionState();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
         });
@@ -539,6 +663,68 @@ const SettingsPage = () => {
     );
   };
 
+  const addTelegramSubscription = () => {
+    setTelegramSubscriptions((previous) => [
+      ...previous,
+      createTelegramSubscriptionDraft(),
+    ]);
+  };
+
+  const removeTelegramSubscription = (clientKey) => {
+    setTelegramSubscriptions((previous) =>
+      previous.filter((subscription) => subscription.clientKey !== clientKey)
+    );
+    setTelegramSubscriptionErrors((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+  };
+
+  const setTelegramSubscriptionField = (clientKey, field, value) => {
+    setTelegramSubscriptions((previous) =>
+      previous.map((subscription) =>
+        subscription.clientKey === clientKey
+          ? {
+              ...subscription,
+              [field]: value,
+            }
+          : subscription
+      )
+    );
+  };
+
+  const addAppleMessageSubscription = () => {
+    setAppleMessageSubscriptions((previous) => [
+      ...previous,
+      createAppleMessageSubscriptionDraft(),
+    ]);
+  };
+
+  const removeAppleMessageSubscription = (clientKey) => {
+    setAppleMessageSubscriptions((previous) =>
+      previous.filter((subscription) => subscription.clientKey !== clientKey)
+    );
+    setAppleMessageSubscriptionErrors((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+  };
+
+  const setAppleMessageSubscriptionField = (clientKey, field, value) => {
+    setAppleMessageSubscriptions((previous) =>
+      previous.map((subscription) =>
+        subscription.clientKey === clientKey
+          ? {
+              ...subscription,
+              [field]: value,
+            }
+          : subscription
+      )
+    );
+  };
+
   const setSourceKind = (clientKey, kind) => {
     setUploadFeedback((previous) => {
       const next = { ...previous };
@@ -617,14 +803,47 @@ const SettingsPage = () => {
     return Object.keys(nextErrors).length === 0;
   };
 
+  const validateTelegramSubscriptions = () => {
+    const nextErrors = {};
+    telegramSubscriptions.forEach((subscription) => {
+      if (!subscription.bot_token.trim()) {
+        nextErrors[subscription.clientKey] = 'Bot token is required.';
+      } else if (!subscription.chat_id.trim()) {
+        nextErrors[subscription.clientKey] = 'Chat ID is required.';
+      }
+    });
+    setTelegramSubscriptionErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const validateAppleMessageSubscriptions = () => {
+    const nextErrors = {};
+    appleMessageSubscriptions.forEach((subscription) => {
+      if (!subscription.recipient_handle.trim()) {
+        nextErrors[subscription.clientKey] = 'Recipient handle is required.';
+      } else if (!['iMessage', 'SMS'].includes(subscription.service)) {
+        nextErrors[subscription.clientKey] = 'Service must be iMessage or SMS.';
+      }
+    });
+    setAppleMessageSubscriptionErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
   const saveDefaultBindings = async () => {
     setIsSavingBindings(true);
     try {
-      const payload = MODEL_STAGE_OPTIONS.map((option) => ({
-        stage: option.stage,
-        model_key: defaultBindings[option.stage] || null,
-        binding_scope: 'default',
-      }));
+      const payload = [
+        ...MODEL_STAGE_OPTIONS.map((option) => ({
+          stage: option.stage,
+          model_key: defaultBindings[option.stage] || null,
+          binding_scope: 'default',
+        })),
+        ...HIDDEN_MODEL_STAGE_DEFAULTS.map((stage) => ({
+          stage,
+          model_key: null,
+          binding_scope: 'default',
+        })),
+      ];
       const response = await fetch(`${BaseURL}/model-bindings`, {
         method: 'PUT',
         headers: {
@@ -652,7 +871,66 @@ const SettingsPage = () => {
     }
   };
 
+  const addAnomalyItem = () => {
+    setAnomalyItems((previous) => [...previous, createAnomalyItemDraft()]);
+  };
+
+  const removeAnomalyItem = (clientKey) => {
+    setAnomalyItems((previous) => previous.filter((item) => item.clientKey !== clientKey));
+  };
+
+  const setAnomalyItemField = (clientKey, field, value) => {
+    setAnomalyItems((previous) =>
+      previous.map((item) =>
+        item.clientKey === clientKey
+          ? {
+              ...item,
+              [field]: field === 'trigger_score' ? Number(value) : value,
+            }
+          : item
+      )
+    );
+  };
+
+  const addAnomalyBehavior = () => {
+    setAnomalyBehaviors((previous) => [...previous, createAnomalyBehaviorDraft()]);
+  };
+
+  const removeAnomalyBehavior = (clientKey) => {
+    setAnomalyBehaviors((previous) => previous.filter((behavior) => behavior.clientKey !== clientKey));
+  };
+
+  const setAnomalyBehaviorField = (clientKey, value) => {
+    setAnomalyBehaviors((previous) =>
+      previous.map((behavior) =>
+        behavior.clientKey === clientKey
+          ? {
+              ...behavior,
+              value,
+            }
+          : behavior
+      )
+    );
+  };
+
+  const validateAnomalyPrompts = () => {
+    const invalidItem = anomalyItems.find((item) => !item.item.trim() || !Number.isFinite(Number(item.trigger_score)) || Number(item.trigger_score) < 1 || Number(item.trigger_score) > 10);
+    if (invalidItem) {
+      setBanner({ kind: 'error', text: 'Each anomaly item needs a name and a trigger score from 1 to 10.' });
+      return false;
+    }
+    const invalidBehavior = anomalyBehaviors.find((behavior) => !behavior.value.trim());
+    if (invalidBehavior) {
+      setBanner({ kind: 'error', text: 'Each anomaly behavior needs a name.' });
+      return false;
+    }
+    return true;
+  };
+
   const saveAnomalyPrompts = async () => {
+    if (!validateAnomalyPrompts()) {
+      return;
+    }
     setIsSavingAnomalyPrompts(true);
     try {
       const response = await fetch(`${BaseURL}/settings/anomaly-prompts`, {
@@ -661,18 +939,21 @@ const SettingsPage = () => {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          text_prompt_yaml: anomalyTextPromptYaml,
-          anomaly_type_yaml: anomalyTypeYaml,
+          anomaly_items: anomalyItems.map((item) => ({
+            item: item.item.trim(),
+            trigger_score: Number(item.trigger_score),
+          })),
+          anomaly_behaviors: anomalyBehaviors.map((behavior) => behavior.value.trim()).filter(Boolean),
         }),
       });
       const data = await response.json();
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save anomaly prompts');
       }
-      setAnomalyTextPromptYaml(data.text_prompt_yaml || '');
-      setAnomalyTypeYaml(data.anomaly_type_yaml || '');
+      setAnomalyItems((data.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
+      setAnomalyBehaviors((data.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
-      setBanner({ kind: 'success', text: 'Anomaly prompts saved.' });
+      setBanner({ kind: 'success', text: 'Stage 2 anomaly config saved.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
@@ -680,22 +961,14 @@ const SettingsPage = () => {
     }
   };
 
-  const loadStandardTextPrompt = () => {
-    if (!standardPromptSettings.text_prompt_yaml) {
-      setBanner({ kind: 'error', text: 'Standard text prompt is unavailable.' });
+  const loadStandardAnomalyPromptConfig = () => {
+    if (!standardPromptSettings.anomaly_items?.length && !standardPromptSettings.anomaly_behaviors?.length) {
+      setBanner({ kind: 'error', text: 'Standard Stage 2 anomaly config is unavailable.' });
       return;
     }
-    setAnomalyTextPromptYaml(standardPromptSettings.text_prompt_yaml);
-    setBanner({ kind: 'success', text: 'Loaded standard text prompt.' });
-  };
-
-  const loadStandardAnomalyTypePrompt = () => {
-    if (!standardPromptSettings.anomaly_type_yaml) {
-      setBanner({ kind: 'error', text: 'Standard anomaly type prompt is unavailable.' });
-      return;
-    }
-    setAnomalyTypeYaml(standardPromptSettings.anomaly_type_yaml);
-    setBanner({ kind: 'success', text: 'Loaded standard anomaly type prompt.' });
+    setAnomalyItems((standardPromptSettings.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
+    setAnomalyBehaviors((standardPromptSettings.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
+    setBanner({ kind: 'success', text: 'Loaded standard Stage 2 anomaly config.' });
   };
 
   const saveSources = async () => {
@@ -819,6 +1092,134 @@ const SettingsPage = () => {
     }
   };
 
+  const saveTelegramSubscriptions = async () => {
+    if (!validateTelegramSubscriptions()) {
+      setBanner({ kind: 'error', text: 'Fix the Telegram subscription rows first.' });
+      return;
+    }
+    setIsSavingTelegramSubscriptions(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/telegram-trigger-subscriptions`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeTelegramSubscriptionsForApi(telegramSubscriptions)),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save Telegram trigger subscriptions');
+      }
+      setTelegramSubscriptions((data || []).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
+      setTelegramSubscriptionErrors({});
+      setBanner({ kind: 'success', text: 'Telegram trigger subscriptions saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingTelegramSubscriptions(false);
+    }
+  };
+
+  const sendTelegramTestMessage = async (subscription) => {
+    if (!subscription.bot_token.trim() || !subscription.chat_id.trim()) {
+      setTelegramSubscriptionErrors((previous) => ({
+        ...previous,
+        [subscription.clientKey]: !subscription.bot_token.trim()
+          ? 'Bot token is required.'
+          : 'Chat ID is required.',
+      }));
+      setBanner({ kind: 'error', text: 'Bot token and chat ID are required for a Telegram test message.' });
+      return;
+    }
+    setBusyTelegramTests((previous) => ({ ...previous, [subscription.clientKey]: true }));
+    try {
+      const response = await fetch(`${BaseURL}/settings/telegram-trigger-subscriptions/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: subscription.enabled,
+          subscription_label: subscription.subscription_label?.trim() || null,
+          bot_token: subscription.bot_token.trim(),
+          chat_id: subscription.chat_id.trim(),
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send Telegram test message');
+      }
+      setBanner({ kind: 'success', text: data.detail || 'Telegram test message sent.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyTelegramTests((previous) => ({ ...previous, [subscription.clientKey]: false }));
+    }
+  };
+
+  const saveAppleMessageSubscriptions = async () => {
+    if (!validateAppleMessageSubscriptions()) {
+      setBanner({ kind: 'error', text: 'Fix the Apple Messages subscription rows first.' });
+      return;
+    }
+    setIsSavingAppleMessageSubscriptions(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/apple-message-trigger-subscriptions`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeAppleMessageSubscriptionsForApi(appleMessageSubscriptions)),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save Apple Messages trigger subscriptions');
+      }
+      setAppleMessageSubscriptions((data || []).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+      setAppleMessageSubscriptionErrors({});
+      setBanner({ kind: 'success', text: 'Apple Messages trigger subscriptions saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingAppleMessageSubscriptions(false);
+    }
+  };
+
+  const sendAppleMessageTest = async (subscription) => {
+    if (!subscription.recipient_handle.trim()) {
+      setAppleMessageSubscriptionErrors((previous) => ({
+        ...previous,
+        [subscription.clientKey]: 'Recipient handle is required.',
+      }));
+      setBanner({ kind: 'error', text: 'Recipient handle is required for an Apple Messages test message.' });
+      return;
+    }
+    setBusyAppleMessageTests((previous) => ({ ...previous, [subscription.clientKey]: true }));
+    try {
+      const response = await fetch(`${BaseURL}/settings/apple-message-trigger-subscriptions/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          enabled: subscription.enabled,
+          subscription_label: subscription.subscription_label?.trim() || null,
+          recipient_handle: subscription.recipient_handle.trim(),
+          service: subscription.service,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send Apple Messages test message');
+      }
+      setBanner({ kind: 'success', text: data.detail || 'Apple Messages test message sent.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyAppleMessageTests((previous) => ({ ...previous, [subscription.clientKey]: false }));
+    }
+  };
+
   const modelOptionsByStage = MODEL_STAGE_OPTIONS.reduce((result, option) => {
     const stageEntry = (modelOptionCatalog.stages || []).find((entry) => entry.stage === option.stage);
     result[option.stage] = stageEntry?.options || [];
@@ -860,26 +1261,28 @@ const SettingsPage = () => {
       <div className="settings-content">
         <div className="panel-header">
           <div>
-            <h2>Settings</h2>
+            <h2>{pageTitle}</h2>
             <p className="panel-subtitle">
-              Configure sources, run control, monitoring, and repository initialization from one workspace.
+              {pageSubtitle}
             </p>
           </div>
         </div>
-        <div className="settings-tab-bar" role="tablist" aria-label="Settings sections">
-          {SETTINGS_TABS.map((tab) => (
-            <button
-              key={tab.key}
-              type="button"
-              role="tab"
-              aria-selected={activeTab === tab.key}
-              className={`settings-tab-button ${activeTab === tab.key ? 'settings-tab-button-active' : ''}`}
-              onClick={() => setSearchParams({ tab: tab.key })}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
+        {!hideTabBar && (
+          <div className="settings-tab-bar" role="tablist" aria-label="Settings sections">
+            {SETTINGS_TABS.map((tab) => (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === tab.key}
+                className={`settings-tab-button ${activeTab === tab.key ? 'settings-tab-button-active' : ''}`}
+                onClick={() => setSearchParams({ tab: tab.key })}
+              >
+                {tab.label}
+              </button>
+            ))}
+          </div>
+        )}
 
         <div className="settings-tab-panel">
           {activeTab === 'sources' && (
@@ -1032,7 +1435,7 @@ const SettingsPage = () => {
                     <div className="card-header">
                       <div>
                         <h3>Default Model Bindings</h3>
-                        <p>Set default detector, tracker, ReID, anomaly Stage 1, and anomaly Stage 2 models for new runs.</p>
+                        <p>Set default detector, tracker, anomaly Stage 1, and anomaly Stage 2 models for new runs.</p>
                         <p className="muted-text">{modelZooSummary}</p>
                       </div>
                     </div>
@@ -1073,43 +1476,115 @@ const SettingsPage = () => {
                     <div className="card-header">
                       <div>
                         <h3>Anomaly Prompt Settings</h3>
-                        <p>Edit the text template and anomaly type prompt lists used by Stage 2 anomaly enrichment.</p>
+                        <p>Manage the Stage 2 anomaly config as structured anomaly items and anomaly behaviors. The prompt template stays hidden in the prompt config file.</p>
                       </div>
                     </div>
-                    <div className="model-binding-grid">
-                      <label>
-                        <span>Text Prompt YAML</span>
-                        <textarea
-                          value={anomalyTextPromptYaml}
-                          onChange={(event) => setAnomalyTextPromptYaml(event.target.value)}
-                          rows={10}
-                        />
-                      </label>
-                      <label>
-                        <span>Anomaly Type YAML</span>
-                        <textarea
-                          value={anomalyTypeYaml}
-                          onChange={(event) => setAnomalyTypeYaml(event.target.value)}
-                          rows={10}
-                        />
-                      </label>
+                    <div className="source-list">
+                      <div className="source-row">
+                        <div className="source-row-header">
+                          <strong>Anomaly Items</strong>
+                          <button
+                            type="button"
+                            onClick={addAnomalyItem}
+                            className="secondary-button"
+                          >
+                            Add Item
+                          </button>
+                        </div>
+                        {anomalyItems.length === 0 ? (
+                          <div className="empty-state">No anomaly items configured yet.</div>
+                        ) : (
+                          <div className="source-list">
+                            {anomalyItems.map((item, index) => (
+                              <div key={item.clientKey} className="source-row">
+                                <div className="source-row-header">
+                                  <strong>Item {index + 1}</strong>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeAnomalyItem(item.clientKey)}
+                                    className="ghost-button"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                                <div className="model-binding-grid">
+                                  <label>
+                                    <span>Item</span>
+                                    <input
+                                      type="text"
+                                      value={item.item}
+                                      onChange={(event) => setAnomalyItemField(item.clientKey, 'item', event.target.value)}
+                                      placeholder="weapon"
+                                    />
+                                  </label>
+                                  <label>
+                                    <span>Trigger Score (1-10)</span>
+                                    <input
+                                      type="number"
+                                      min="1"
+                                      max="10"
+                                      step="1"
+                                      value={item.trigger_score}
+                                      onChange={(event) => setAnomalyItemField(item.clientKey, 'trigger_score', event.target.value)}
+                                    />
+                                  </label>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="source-row">
+                        <div className="source-row-header">
+                          <strong>Anomaly Behaviors</strong>
+                          <button
+                            type="button"
+                            onClick={addAnomalyBehavior}
+                            className="secondary-button"
+                          >
+                            Add Behavior
+                          </button>
+                        </div>
+                        {anomalyBehaviors.length === 0 ? (
+                          <div className="empty-state">No anomaly behaviors configured yet.</div>
+                        ) : (
+                          <div className="source-list">
+                            {anomalyBehaviors.map((behavior, index) => (
+                              <div key={behavior.clientKey} className="source-row">
+                                <div className="source-row-header">
+                                  <strong>Behavior {index + 1}</strong>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeAnomalyBehavior(behavior.clientKey)}
+                                    className="ghost-button"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                                <label>
+                                  <span>Name</span>
+                                  <input
+                                    type="text"
+                                    value={behavior.value}
+                                    onChange={(event) => setAnomalyBehaviorField(behavior.clientKey, event.target.value)}
+                                    placeholder="running away"
+                                  />
+                                </label>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     </div>
                     <div className="control-actions">
                       <button
                         type="button"
-                        onClick={loadStandardTextPrompt}
+                        onClick={loadStandardAnomalyPromptConfig}
                         className="secondary-button"
-                        disabled={!standardPromptSettings.text_prompt_yaml}
+                        disabled={!standardPromptSettings.anomaly_items?.length && !standardPromptSettings.anomaly_behaviors?.length}
                       >
-                        Use Standard Text Prompt
-                      </button>
-                      <button
-                        type="button"
-                        onClick={loadStandardAnomalyTypePrompt}
-                        className="secondary-button"
-                        disabled={!standardPromptSettings.anomaly_type_yaml}
-                      >
-                        Use Standard Anomaly Type Prompt
+                        Use Standard Stage 2 Config
                       </button>
                       <button
                         type="button"
@@ -1117,7 +1592,7 @@ const SettingsPage = () => {
                         className="secondary-button"
                         disabled={isSavingAnomalyPrompts}
                       >
-                        {isSavingAnomalyPrompts ? 'Saving...' : 'Save Anomaly Prompts'}
+                        {isSavingAnomalyPrompts ? 'Saving...' : 'Save Stage 2 Anomaly Config'}
                       </button>
                     </div>
                   </div>
@@ -1138,6 +1613,7 @@ const SettingsPage = () => {
                       <div className="muted-text">GET {`${BaseURL}/model-options`}</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/model-bindings`}</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/settings/anomaly-prompts`}</div>
+                      <div className="muted-text">The Stage 2 prompt template is managed in `shared/prompts/stage2_prompt_config.yaml`.</div>
                     </div>
                   </div>
 
@@ -1299,7 +1775,7 @@ const SettingsPage = () => {
             </>
           )}
 
-          {activeTab === 'alerts' && (
+          {activeTab === 'rules' && (
             <>
               {banner && (
                 <div className={`banner banner-${banner.kind}`}>
@@ -1312,7 +1788,7 @@ const SettingsPage = () => {
                   <div className="card">
                     <div className="card-header">
                       <div>
-                        <h3>Triggered Alerts</h3>
+                        <h3>Rules</h3>
                         <p>Define single-condition alert rules per source, using detector classes or anomaly prompt lists.</p>
                       </div>
                     </div>
@@ -1484,7 +1960,7 @@ const SettingsPage = () => {
                     <div className="card-header">
                       <div>
                         <h3>How It Works</h3>
-                        <p>Each rule watches one source and one signal family. When the target is present above the confidence threshold, the system creates an `ALERT` incident.</p>
+                        <p>Each rule watches one source and one signal family. When the target is present above the confidence threshold, the system creates an `ALERT` trigger.</p>
                       </div>
                     </div>
                     <div className="empty-state endpoint-info">
@@ -1492,6 +1968,248 @@ const SettingsPage = () => {
                       <div className="muted-text">Prepared source-specific detector, anomaly object, and anomaly activity targets.</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/settings/alert-rules`}</div>
                       <div className="muted-text">Rules are evaluated per source during live detector and anomaly processing.</div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </>
+          )}
+
+          {activeTab === 'connectors' && (
+            <>
+              {banner && (
+                <div className={`banner banner-${banner.kind}`}>
+                  {banner.text}
+                </div>
+              )}
+
+              <section className="control-grid">
+                <div className="control-column">
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <h3>Telegram Trigger Subscriptions</h3>
+                        <p>Send each new trigger to one or more Telegram chats using a bot token and chat ID.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={addTelegramSubscription}
+                        className="secondary-button"
+                      >
+                        Add Subscription
+                      </button>
+                    </div>
+
+                    {telegramSubscriptions.length === 0 ? (
+                      <div className="empty-state">
+                        No Telegram trigger subscriptions saved yet.
+                      </div>
+                    ) : (
+                      <div className="source-list">
+                        {telegramSubscriptions.map((subscription, index) => (
+                          <div key={subscription.clientKey} className="source-row">
+                            <div className="source-row-header">
+                              <strong>Subscription {index + 1}</strong>
+                              <button
+                                type="button"
+                                onClick={() => removeTelegramSubscription(subscription.clientKey)}
+                                className="ghost-button"
+                              >
+                                Remove
+                              </button>
+                            </div>
+
+                            <div className="model-binding-grid">
+                              <label>
+                                <span>Label</span>
+                                <input
+                                  type="text"
+                                  value={subscription.subscription_label}
+                                  onChange={(event) => setTelegramSubscriptionField(subscription.clientKey, 'subscription_label', event.target.value)}
+                                  placeholder="Optional operator label"
+                                />
+                              </label>
+                              <label>
+                                <span>Bot Token</span>
+                                <input
+                                  type="password"
+                                  value={subscription.bot_token}
+                                  onChange={(event) => setTelegramSubscriptionField(subscription.clientKey, 'bot_token', event.target.value)}
+                                  placeholder="123456:ABC..."
+                                />
+                              </label>
+                              <label>
+                                <span>Chat ID</span>
+                                <input
+                                  type="text"
+                                  value={subscription.chat_id}
+                                  onChange={(event) => setTelegramSubscriptionField(subscription.clientKey, 'chat_id', event.target.value)}
+                                  placeholder="e.g. -1001234567890 or @channel_name"
+                                />
+                              </label>
+                              <label className="toggle-field">
+                                <span>Enabled</span>
+                                <input
+                                  type="checkbox"
+                                  checked={subscription.enabled}
+                                  onChange={(event) => setTelegramSubscriptionField(subscription.clientKey, 'enabled', event.target.checked)}
+                                />
+                              </label>
+                            </div>
+
+                            <div className="control-actions">
+                              <button
+                                type="button"
+                                onClick={() => sendTelegramTestMessage(subscription)}
+                                className="ghost-button"
+                                disabled={Boolean(busyTelegramTests[subscription.clientKey])}
+                              >
+                                {busyTelegramTests[subscription.clientKey] ? 'Sending Test...' : 'Send Test Message'}
+                              </button>
+                            </div>
+
+                            {telegramSubscriptionErrors[subscription.clientKey] && (
+                              <div className="row-error">{telegramSubscriptionErrors[subscription.clientKey]}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={saveTelegramSubscriptions}
+                        className="secondary-button"
+                        disabled={isSavingTelegramSubscriptions}
+                      >
+                        {isSavingTelegramSubscriptions ? 'Saving...' : 'Save Telegram Subscriptions'}
+                      </button>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/telegram-trigger-subscriptions`}</div>
+                      <div className="muted-text">POST {`${BaseURL}/settings/telegram-trigger-subscriptions/test`}</div>
+                      <div className="muted-text">Each enabled subscriber receives a Telegram message whenever a new trigger row is created.</div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="control-column">
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <h3>Apple Messages Trigger Subscriptions</h3>
+                        <p>Send each new trigger to one or more Apple Messages recipients from the macOS host running Hearthlight.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={addAppleMessageSubscription}
+                        className="secondary-button"
+                      >
+                        Add Subscription
+                      </button>
+                    </div>
+
+                    {appleMessageSubscriptions.length === 0 ? (
+                      <div className="empty-state">
+                        No Apple Messages trigger subscriptions saved yet.
+                      </div>
+                    ) : (
+                      <div className="source-list">
+                        {appleMessageSubscriptions.map((subscription, index) => (
+                          <div key={subscription.clientKey} className="source-row">
+                            <div className="source-row-header">
+                              <strong>Subscription {index + 1}</strong>
+                              <button
+                                type="button"
+                                onClick={() => removeAppleMessageSubscription(subscription.clientKey)}
+                                className="ghost-button"
+                              >
+                                Remove
+                              </button>
+                            </div>
+
+                            <div className="model-binding-grid">
+                              <label>
+                                <span>Label</span>
+                                <input
+                                  type="text"
+                                  value={subscription.subscription_label}
+                                  onChange={(event) => setAppleMessageSubscriptionField(subscription.clientKey, 'subscription_label', event.target.value)}
+                                  placeholder="Optional operator label"
+                                />
+                              </label>
+                              <label>
+                                <span>Recipient Handle</span>
+                                <input
+                                  type="text"
+                                  value={subscription.recipient_handle}
+                                  onChange={(event) => setAppleMessageSubscriptionField(subscription.clientKey, 'recipient_handle', event.target.value)}
+                                  placeholder="Phone number or Apple ID email"
+                                />
+                              </label>
+                              <label>
+                                <span>Service</span>
+                                <select
+                                  value={subscription.service}
+                                  onChange={(event) => setAppleMessageSubscriptionField(subscription.clientKey, 'service', event.target.value)}
+                                >
+                                  <option value="iMessage">iMessage</option>
+                                  <option value="SMS">SMS</option>
+                                </select>
+                              </label>
+                              <label className="toggle-field">
+                                <span>Enabled</span>
+                                <input
+                                  type="checkbox"
+                                  checked={subscription.enabled}
+                                  onChange={(event) => setAppleMessageSubscriptionField(subscription.clientKey, 'enabled', event.target.checked)}
+                                />
+                              </label>
+                            </div>
+
+                            <div className="control-actions">
+                              <button
+                                type="button"
+                                onClick={() => sendAppleMessageTest(subscription)}
+                                className="ghost-button"
+                                disabled={Boolean(busyAppleMessageTests[subscription.clientKey])}
+                              >
+                                {busyAppleMessageTests[subscription.clientKey] ? 'Sending Test...' : 'Send Test Message'}
+                              </button>
+                            </div>
+
+                            {appleMessageSubscriptionErrors[subscription.clientKey] && (
+                              <div className="row-error">{appleMessageSubscriptionErrors[subscription.clientKey]}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={saveAppleMessageSubscriptions}
+                        className="secondary-button"
+                        disabled={isSavingAppleMessageSubscriptions}
+                      >
+                        {isSavingAppleMessageSubscriptions ? 'Saving...' : 'Save Apple Messages Subscriptions'}
+                      </button>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/apple-message-trigger-subscriptions`}</div>
+                      <div className="muted-text">POST {`${BaseURL}/settings/apple-message-trigger-subscriptions/test`}</div>
+                      <div className="muted-text">Apple Messages delivery requires the macOS host to be signed into Messages and allowed to automate it.</div>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <strong>Connector Notes</strong>
+                      <div className="muted-text">Use Connectors to fan out trigger notifications without changing the core anomaly rules.</div>
+                      <div className="muted-text">Telegram is network-delivered through a bot token and chat ID.</div>
+                      <div className="muted-text">Apple Messages is host-local and depends on the macOS Messages app.</div>
                     </div>
                   </div>
                 </div>

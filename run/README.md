@@ -1,20 +1,53 @@
 # Launcher Guide
 
-The primary startup entrypoint is now the CLI launcher:
+The primary install and startup entrypoint is now the CLI launcher:
 
 ```bash
-python3 -m hearthlight start --interactive
+pip install hearthlight
+hearthlight onboard
+hearthlight start --interactive
 ```
 
 Available commands:
 
-- `python3 -m hearthlight start`
-- `python3 -m hearthlight stop`
-- `python3 -m hearthlight reset-db`
-- `python3 -m hearthlight status`
-- `python3 -m hearthlight list-models`
-- `python3 -m hearthlight dashboard`
-- `python3 -m hearthlight gui`
+- `hearthlight onboard`
+- `hearthlight start`
+- `hearthlight stop`
+- `hearthlight reset-db`
+- `hearthlight status`
+- `hearthlight list-models`
+- `hearthlight dashboard`
+- `hearthlight gui`
+
+## Onboarding
+
+For a clean local checkout, start with the onboarding flow:
+
+```bash
+hearthlight onboard
+```
+
+The onboarding command walks through:
+
+1. Checking system packages such as `libpq-dev` and `python3-dev` on Linux, or the platform equivalents on macOS.
+2. Copying `shared/configs/example_config.yaml` to `shared/configs/config.yaml`.
+3. Installing `requirements.txt` files from `webapp`, `ingestor`, `reid`, `anomaly`, and `association`.
+4. Writing `.env` defaults, including Telegram and Apple Messages trigger subscription settings.
+5. Detecting whether CUDA is usable and writing CPU or GPU launcher defaults into `.env`.
+6. Starting Docker `db` and `rabbitmq`, then running `reset-db`.
+7. Seeding Telegram and Apple Messages trigger subscriptions from `.env` when values are provided.
+
+Shell wrapper:
+
+```bash
+bash scripts/onboard.sh
+```
+
+To accept the steps without prompts:
+
+```bash
+hearthlight onboard --yes
+```
 
 ## Startup options
 

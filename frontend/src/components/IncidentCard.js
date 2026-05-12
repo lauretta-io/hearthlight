@@ -44,7 +44,7 @@ const IncidentCard = ({ incident, role, includeResolve }) => {
         {incident.alert_level && <p>Level: {incident.alert_level}</p>}
         {role && <p>Role: {role}</p>}
         <p>Camera ID: {incident.location.camera_id}</p>
-        <p>Incident ID: {incident.incident_id}</p>
+        <p>Trigger ID: {incident.incident_id}</p>
         <p className={`status ${isResolved ? 'resolved' : 'unresolved'}`}>
           Status: {isResolved ? 'Resolved' : 'Unresolved'}
         </p>
@@ -59,7 +59,7 @@ const IncidentCard = ({ incident, role, includeResolve }) => {
           <div className="image-wrapper">
             <img
               src={`data:image/jpeg;base64,${incident.crop}`}
-              alt="Incident"
+              alt="Trigger"
             />
           </div>
         </div>

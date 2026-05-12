@@ -11,12 +11,30 @@ This guide covers the full initialization routine from a fresh checkout to a run
 
 Optional:
 
-- `foia.env` if you intend to use the FOIA profile
 - X11 display access if `show_vid` is enabled and you run on Linux
 
-## 2. Bootstrap config
+## 2. Run onboarding
 
-If there is no active runtime config yet:
+For a clean local checkout:
+
+```bash
+pip install hearthlight
+hearthlight onboard
+```
+
+Shell wrapper:
+
+```bash
+bash scripts/onboard.sh
+```
+
+That flow checks system packages, copies `shared/configs/example_config.yaml` to
+`shared/configs/config.yaml`, installs service requirements, writes notification
+defaults for Telegram and Apple Messages into `.env`, seeds those subscriptions
+after `reset-db` when values are present, and chooses CPU or CUDA launcher
+defaults based on the local machine.
+
+If you need to do the config step manually:
 
 ```bash
 cp shared/configs/example_config.yaml shared/configs/config.yaml
@@ -43,13 +61,13 @@ startup attempt.
 Use the launcher for host-aware startup:
 
 ```bash
-python3 -m hearthlight start --interactive
+hearthlight start --interactive
 ```
 
 Inspect the current registry-backed model inventory first if you want to confirm available options:
 
 ```bash
-python3 -m hearthlight list-models
+hearthlight list-models
 ```
 
 The launcher can choose:
@@ -63,10 +81,10 @@ The launcher can choose:
 Useful non-interactive examples:
 
 ```bash
-python3 -m hearthlight start --mode api --template active --profile cpu
-python3 -m hearthlight start --mode pipeline --template master_config --profile cuda --cuda-visible-devices 0
-python3 -m hearthlight start --template example --source-preset master_config --profile cpu
-python3 -m hearthlight start --interactive --dry-run
+hearthlight start --mode api --template active --profile cpu
+hearthlight start --mode pipeline --template master_config --profile cuda --cuda-visible-devices 0
+hearthlight start --template example --source-preset master_config --profile cpu
+hearthlight start --interactive --dry-run
 ```
 
 ## 5. Configure the runtime in the frontend
@@ -95,7 +113,7 @@ Repository initialization happens on the host:
 - Docker stack startup
 - CPU vs CUDA selection
 - template and source-preset selection
-- model inventory inspection through `python3 -m hearthlight list-models`
+- model inventory inspection through `hearthlight list-models`
 
 Runtime initialization happens through the control plane:
 

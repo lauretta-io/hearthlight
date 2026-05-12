@@ -13,8 +13,6 @@ This document describes the current repository layout and runtime architecture.
   - `webapp`
   - `rabbitmq`
   - `db`
-- Optional items:
-  - FOIA services
 
 ## Runtime Topology
 
@@ -275,8 +273,6 @@ The `shared/` directory is the main contract surface between services. It contai
 - Alert-rule option lists are backend-prepared. Detector targets come from the effective detector
   binding metadata for a source, while anomaly object and anomaly activity targets come only from
   the saved anomaly prompt settings.
-- FOIA services are now behind an explicit `foia` compose profile and should be treated as
-  optional unless that profile is enabled and the supporting files are present.
 - The frontend is served through the `reverse_proxy` service and normally reaches the API on the
   same origin under `/api`, with direct port `8000` access still available for scripts and
   debugging.

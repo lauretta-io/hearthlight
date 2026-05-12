@@ -5,7 +5,11 @@ import logging
 from collections import deque
 
 from omegaconf import DictConfig
-import torch
+
+try:
+    import torch
+except ModuleNotFoundError:  # pragma: no cover - optional in local CPU runtime
+    torch = None
 
 from .models import Detector
 from .output_threads import OutputThread
@@ -222,12 +226,13 @@ class Ingestor(Thread):
         self.frames_thread.join()
         self.capture.join()
         self.output_thread.join()
-        try:
-            torch.cuda.empty_cache()
-        except Exception:
-            logger.exception(
-                "Failed to empty torch cuda cache", extra={"task": self.name}
-            )
+        if torch is not None:
+            try:
+                torch.cuda.empty_cache()
+            except Exception:
+                logger.exception(
+                    "Failed to empty torch cuda cache", extra={"task": self.name}
+                )
         logger.debug("Stopped", extra={"task": self.name})
 
     def stop(self):

@@ -3,6 +3,7 @@ import queue
 import time
 import logging
 import subprocess
+import platform
 from threading import Event, Lock, Thread
 
 import cv2
@@ -335,7 +336,20 @@ class Capture:
         self.cap = cv2.VideoCapture()
         if isinstance(self.source, str) and self.source.lower().startswith("rtsp://"):
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-        if self.cap.open(self.source, cv2.CAP_FFMPEG if isinstance(self.source, str) else cv2.CAP_ANY):
+        if isinstance(self.source, str):
+            backends = [cv2.CAP_FFMPEG]
+        else:
+            backends = []
+            avfoundation_backend = getattr(cv2, "CAP_AVFOUNDATION", None)
+            if platform.system() == "Darwin" and avfoundation_backend is not None:
+                backends.append(avfoundation_backend)
+            backends.append(cv2.CAP_ANY)
+        opened = False
+        for backend in backends:
+            if self.cap.open(self.source, backend):
+                opened = True
+                break
+        if opened:
             print("running cv2 for source", self.source)
             self.connection_status = ConnectionState.CONNECTED
             self.connect_attempts = 0
