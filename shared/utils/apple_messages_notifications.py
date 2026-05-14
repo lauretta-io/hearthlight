@@ -5,8 +5,7 @@ import platform
 import subprocess
 from threading import Thread
 
-from ..database.database import get_engine
-from ..models import SQLModels
+from .connector_endpoints import ensure_connector_endpoint_tables, get_connector_endpoint_config
 from .telegram_notifications import build_trigger_notification_text
 
 logger = logging.getLogger(__name__)
@@ -16,21 +15,21 @@ APPLE_MESSAGES_SUPPORTED_SERVICES = {"iMessage", "SMS"}
 
 
 def ensure_apple_message_subscription_tables() -> None:
-    engine = get_engine()
-    SQLModels.Base.metadata.create_all(
-        bind=engine,
-        tables=[SQLModels.AppleMessageTriggerSubscription.__table__],
-        checkfirst=True,
-    )
+    ensure_connector_endpoint_tables()
 
 
 def _normalize_subscription_row(row) -> dict[str, str]:
-    service = str(getattr(row, "service", "iMessage") or "iMessage").strip() or "iMessage"
+    config = get_connector_endpoint_config(row)
+    service = str(config.get("service", None) or getattr(row, "service", "iMessage") or "iMessage").strip() or "iMessage"
     if service not in APPLE_MESSAGES_SUPPORTED_SERVICES:
         service = "iMessage"
     return {
-        "subscription_label": str(getattr(row, "subscription_label", "") or "").strip(),
-        "recipient_handle": str(getattr(row, "recipient_handle", "") or "").strip(),
+        "subscription_label": str(
+            getattr(row, "label", None) or getattr(row, "subscription_label", "") or ""
+        ).strip(),
+        "recipient_handle": str(
+            config.get("recipient_handle", None) or getattr(row, "recipient_handle", "") or ""
+        ).strip(),
         "service": service,
     }
 

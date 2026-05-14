@@ -20,9 +20,9 @@ from run.launcher import (
 
 
 class LauncherHelpersTests(unittest.TestCase):
-    def test_detect_worker_runtime_defaults_to_hybrid_on_macos_cpu_pipeline(self):
+    def test_detect_worker_runtime_defaults_to_hybrid_on_macos_cpu_full_stack(self):
         with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
-            runtime, _ = detect_worker_runtime("pipeline", "cpu")
+            runtime, _ = detect_worker_runtime("cpu")
         self.assertEqual(runtime, "hybrid-local-cpu")
 
     def test_extract_registry_model_names_contains_known_entries(self):
@@ -106,7 +106,6 @@ class LauncherHelpersTests(unittest.TestCase):
             selection = LaunchSelection(
                 template_path=template_path,
                 source_preset_path=None,
-                run_mode="api",
                 worker_runtime="docker",
                 detector_model="yolox-s",
                 tracker_model="bytetrack",
@@ -168,7 +167,6 @@ class LauncherHelpersTests(unittest.TestCase):
             selection = LaunchSelection(
                 template_path=template_path,
                 source_preset_path=source_preset_path,
-                run_mode="pipeline",
                 worker_runtime="docker",
                 detector_model="yolox-s",
                 tracker_model="bytetrack",

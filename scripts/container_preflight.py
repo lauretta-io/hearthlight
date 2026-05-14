@@ -167,9 +167,6 @@ def main() -> int:
                 failures,
                 warnings,
             )
-        if 'profiles: ["pipeline"]' in compose_text:
-            print("INFO: AI worker services are gated behind the optional `pipeline` compose profile.")
-
     print()
     print(f"Summary: {len(failures)} blocking issue(s), {len(warnings)} warning(s)")
 

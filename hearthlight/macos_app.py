@@ -115,17 +115,15 @@ class HearthlightManagerApp:
 
         self.start_button = ttk.Button(
             actions,
-            text="Start Control Plane",
+            text="Start Full System",
             command=lambda: self._run_command(
                 [
                     "start",
                     "--workspace",
                     self.workspace_var.get().strip(),
-                    "--mode",
-                    "api",
                     "--open-dashboard",
                 ],
-                banner="Starting control plane",
+                banner="Starting full system",
             ),
         )
         self.start_button.grid(row=0, column=1, padx=(0, 8), pady=(0, 8), sticky="ew")

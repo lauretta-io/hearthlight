@@ -2,5 +2,5 @@ defaults:
   detector: builtin_yolox_s_cpu
   tracker: builtin_bytetrack
   reid: builtin_transreid_person_hybrid_bag
-  anomaly_stage_1: heuristic_presence_stage_1
-  anomaly_stage_2: prompt_rules_stage_2
+  anomaly_stage_1: siglip_stage_1_cpu
+  anomaly_stage_2: smolvlm_stage_2_cpu

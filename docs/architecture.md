@@ -47,7 +47,7 @@ flowchart LR
 
     subgraph Infra["Shared Infrastructure"]
         MQ["RabbitMQ"]
-        DB[("Postgres<br/>dicos + control")]
+        DB[("Postgres<br/>runtime + control")]
         SHARED["Shared Output / Assets"]
     end
 
@@ -87,7 +87,7 @@ flowchart LR
 - Source definitions, uploaded media, resource telemetry, model registrations, model bindings,
   anomaly prompt settings, and alert rules all persist under the Postgres `control` schema.
 - Runtime entities such as runs, incidents, entities, journey nodes, recordings, frames, and
-  anomaly events persist under `dicos`.
+  anomaly events persist under `runtime`.
 - Model registration is config-backed, then mirrored into Postgres for API/UI visibility.
 - `ingestor`, `reid`, `anomaly`, and `association` communicate primarily through RabbitMQ.
 
@@ -244,7 +244,7 @@ Notable route groups:
 
 Current schemas:
 
-- `dicos`: runs, incidents, entities, journey nodes, recordings, POI data
+- `runtime`: runs, incidents, entities, journey nodes, recordings, POI data
 - `control`: source templates, uploaded media metadata, resource snapshots, resource events, alert rules
 
 ## Shared Code

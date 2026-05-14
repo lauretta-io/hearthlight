@@ -34,10 +34,24 @@ ALERT_SIGNAL_FAMILIES = {
     "anomaly_object",
     "anomaly_activity",
 }
+TRIGGER_RULE_KEYS = {
+    "alert_rule_trigger",
+    "anomaly_event_trigger",
+    "unattended_bag_trigger",
+    "loitering_trigger",
+    "manual_trigger",
+    "system_trigger",
+}
 ALERT_LEVELS = {
     "low",
     "medium",
     "high",
+}
+CONNECTOR_KEYS = {
+    "telegram",
+    "apple_messages",
+    "webhook",
+    "slack",
 }
 
 
@@ -411,6 +425,90 @@ class AlertRule(BaseModel):
         return normalized
 
 
+class TriggerRule(BaseModel):
+    id: int | None = None
+    trigger_key: str = "alert_rule_trigger"
+    source_id: int | None = None
+    enabled: bool = True
+    rule_label: str | None = Field(default=None, max_length=255)
+    signal_family: str | None = None
+    target_key: str | None = None
+    min_confidence: float = Field(ge=0.0, le=1.0, default=0.5)
+    alert_level: str = "medium"
+    delivery_target_ids: list[int] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("trigger_key")
+    def validate_trigger_key(cls, value):
+        normalized = validate_non_empty_string(value, "trigger_key").lower()
+        if normalized not in TRIGGER_RULE_KEYS:
+            raise ValueError("unsupported trigger_key")
+        return normalized
+
+    @field_validator("source_id")
+    def validate_trigger_source_id(cls, value):
+        if value is None:
+            return value
+        if value <= 0:
+            raise ValueError("source_id must be a positive integer")
+        return value
+
+    @field_validator("rule_label")
+    def validate_trigger_rule_label(cls, value):
+        if value is None:
+            return value
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("signal_family")
+    def validate_trigger_signal_family(cls, value):
+        if value is None:
+            return value
+        normalized = validate_non_empty_string(value, "signal_family").lower()
+        if normalized not in ALERT_SIGNAL_FAMILIES:
+            raise ValueError(
+                "signal_family must be one of detector, anomaly_object, anomaly_activity"
+            )
+        return normalized
+
+    @field_validator("target_key")
+    def validate_trigger_target_key(cls, value):
+        if value is None:
+            return value
+        return validate_non_empty_string(value, "target_key")
+
+    @field_validator("alert_level")
+    def validate_trigger_alert_level(cls, value):
+        normalized = validate_non_empty_string(value, "alert_level").lower()
+        if normalized not in ALERT_LEVELS:
+            raise ValueError("alert_level must be one of low, medium, high")
+        return normalized
+
+    @field_validator("delivery_target_ids", mode="before")
+    def normalize_delivery_target_ids(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("delivery_target_ids must be a list")
+        normalized: list[int] = []
+        for item in value:
+            normalized.append(int(item))
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_trigger_shape(self):
+        if self.trigger_key == "alert_rule_trigger":
+            if self.source_id is None:
+                raise ValueError("source_id is required for alert_rule_trigger")
+            if self.signal_family is None:
+                raise ValueError("signal_family is required for alert_rule_trigger")
+            if self.target_key is None:
+                raise ValueError("target_key is required for alert_rule_trigger")
+        return self
+
+
 class AlertRuleOption(BaseModel):
     key: str
     label: str
@@ -433,6 +531,53 @@ class AlertRuleSourceOptions(BaseModel):
 
 class AlertRuleOptionCatalog(BaseModel):
     sources: list[AlertRuleSourceOptions] = Field(default_factory=list)
+
+
+class TriggerZooEntry(BaseModel):
+    key: str
+    label: str
+    description: str = ""
+    category: str = "general"
+    enabled: bool = True
+    requirements: list[str] = Field(default_factory=list)
+    fields: list[dict] = Field(default_factory=list)
+    delivery_capabilities: list[str] = Field(default_factory=list)
+
+
+class ConnectorZooEntry(BaseModel):
+    key: str
+    label: str
+    description: str = ""
+    category: str = "general"
+    enabled: bool = True
+    requirements: list[str] = Field(default_factory=list)
+    fields: list[dict] = Field(default_factory=list)
+    delivery_capabilities: list[str] = Field(default_factory=list)
+
+
+class ConnectorEndpoint(BaseModel):
+    id: int | None = None
+    connector_key: str
+    label: str | None = Field(default=None, max_length=255)
+    enabled: bool = True
+    config: dict = Field(default_factory=dict)
+    delivery_capabilities: list[str] = Field(default_factory=list)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("connector_key")
+    def validate_connector_key(cls, value):
+        normalized = validate_non_empty_string(value, "connector_key").lower()
+        if normalized not in CONNECTOR_KEYS:
+            raise ValueError("unsupported connector_key")
+        return normalized
+
+    @field_validator("label")
+    def validate_connector_label(cls, value):
+        if value is None:
+            return value
+        stripped = value.strip()
+        return stripped or None
 
 
 class TelegramTriggerSubscription(BaseModel):

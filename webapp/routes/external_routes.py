@@ -37,6 +37,8 @@ from ...shared.models.APIModels import (
     AppleMessageTriggerTestResponse,
     AlertRule,
     AlertRuleOptionCatalog,
+    ConnectorEndpoint,
+    ConnectorZooEntry,
     AlgorithmEntityFeedItem,
     AlgorithmFeed,
     AssetReference as APIAssetReference,
@@ -61,6 +63,8 @@ from ...shared.models.APIModels import (
     SOURCE_KIND_VIDEO_UPLOAD,
     SOURCE_KIND_WEBCAM,
     Status,
+    TriggerRule,
+    TriggerZooEntry,
     TelegramTriggerSubscription,
     TelegramTriggerTestResponse,
     UploadResponse,
@@ -76,6 +80,7 @@ from ...shared.rabbit_messenger import (
 from ...shared.utils.dependency_health import normalize_dependency_status
 from ...shared.utils.backpressure import summarize_queue_backpressure
 from ...shared.utils.alert_rules import (
+    TRIGGER_KEY_ALERT_RULE,
     build_alert_rule_option_catalog,
     build_alert_rule_option_lookup,
     ensure_alert_rule_tables,
@@ -84,10 +89,20 @@ from ...shared.utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     send_test_apple_message_trigger_message,
 )
+from ...shared.utils.connector_endpoints import (
+    CONNECTOR_KEY_APPLE_MESSAGES,
+    CONNECTOR_KEY_TELEGRAM,
+    ensure_connector_endpoint_tables,
+    get_connector_delivery_capabilities,
+    get_connector_endpoint_config,
+    list_connector_endpoint_rows,
+    set_connector_endpoint_payload,
+)
 from ...shared.utils.telegram_notifications import (
     ensure_telegram_subscription_tables,
     send_test_telegram_trigger_message,
 )
+from ...shared.utils.trigger_connector_registry import load_connector_zoo, load_trigger_zoo
 from ...shared.utils.image import decode_base64
 from ...shared.utils.input_sources import (
     build_runtime_camera_map,
@@ -1250,7 +1265,7 @@ def replace_sources(db: Session, sources: list[InputSource]):
             row.deleted_at = datetime.utcnow()
     ensure_alert_rule_tables()
     active_source_ids = {row.id for row in persisted_rows if row.id is not None}
-    for alert_rule_row in db.query(SQLModels.AlertRuleTemplate).filter_by(is_deleted=False).all():
+    for alert_rule_row in db.query(SQLModels.TriggerRule).filter_by(is_deleted=False).all():
         if alert_rule_row.source_template_id not in active_source_ids:
             alert_rule_row.is_deleted = True
             alert_rule_row.deleted_at = datetime.utcnow()
@@ -1484,12 +1499,15 @@ def write_anomaly_prompt_settings(payload: AnomalyPromptSettings) -> AnomalyProm
 def get_alert_rule_rows(db: Session):
     ensure_alert_rule_tables()
     return (
-        db.query(SQLModels.AlertRuleTemplate)
-        .filter_by(is_deleted=False)
+        db.query(SQLModels.TriggerRule)
+        .filter_by(
+            trigger_key=TRIGGER_KEY_ALERT_RULE,
+            is_deleted=False,
+        )
         .order_by(
-            SQLModels.AlertRuleTemplate.source_template_id.asc(),
-            SQLModels.AlertRuleTemplate.sort_order.asc(),
-            SQLModels.AlertRuleTemplate.id.asc(),
+            SQLModels.TriggerRule.source_template_id.asc(),
+            SQLModels.TriggerRule.sort_order.asc(),
+            SQLModels.TriggerRule.id.asc(),
         )
         .all()
     )
@@ -1510,6 +1528,39 @@ def build_alert_rule_responses(db: Session):
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
         for row in get_alert_rule_rows(db)
+    ]
+
+
+def build_trigger_rule_responses(db: Session):
+    ensure_alert_rule_tables()
+    rows = (
+        db.query(SQLModels.TriggerRule)
+        .filter_by(is_deleted=False)
+        .order_by(
+            SQLModels.TriggerRule.trigger_key.asc(),
+            SQLModels.TriggerRule.source_template_id.asc(),
+            SQLModels.TriggerRule.sort_order.asc(),
+            SQLModels.TriggerRule.id.asc(),
+        )
+        .all()
+    )
+    return [
+        TriggerRule(
+            id=row.id,
+            trigger_key=row.trigger_key,
+            source_id=row.source_template_id,
+            enabled=row.enabled,
+            rule_label=row.rule_label,
+            signal_family=row.signal_family,
+            target_key=row.target_key,
+            min_confidence=float(row.min_confidence),
+            alert_level=row.alert_level,
+            delivery_target_ids=parse_serialized_json(row.delivery_target_ids_json, []),
+            metadata=parse_serialized_json(row.metadata_json, {}),
+            created_at=row.created_at.isoformat() if row.created_at is not None else None,
+            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+        )
+        for row in rows
     ]
 
 
@@ -1592,10 +1643,11 @@ def replace_alert_rules(db: Session, rules: list[AlertRule]):
     for rule in rules:
         row = existing_by_id.get(rule.id) if rule.id is not None else None
         if row is None:
-            row = SQLModels.AlertRuleTemplate()
+            row = SQLModels.TriggerRule()
             db.add(row)
         source_order = source_rule_counts.get(rule.source_id, 0)
         source_rule_counts[rule.source_id] = source_order + 1
+        row.trigger_key = TRIGGER_KEY_ALERT_RULE
         row.source_template_id = rule.source_id
         row.enabled = rule.enabled
         row.sort_order = source_order
@@ -1604,6 +1656,8 @@ def replace_alert_rules(db: Session, rules: list[AlertRule]):
         row.target_key = rule.target_key
         row.min_confidence = rule.min_confidence
         row.alert_level = rule.alert_level
+        row.delivery_target_ids_json = json.dumps([])
+        row.metadata_json = json.dumps({})
         row.is_deleted = False
         row.deleted_at = None
         persisted_rows.append(row)
@@ -1620,14 +1674,121 @@ def replace_alert_rules(db: Session, rules: list[AlertRule]):
     return build_alert_rule_responses(db)
 
 
-def get_telegram_trigger_subscription_rows(db: Session):
-    ensure_telegram_subscription_tables()
-    return (
-        db.query(SQLModels.TelegramTriggerSubscription)
+def replace_trigger_rules(db: Session, rules: list[TriggerRule]):
+    ensure_alert_rule_tables()
+    existing_rows = (
+        db.query(SQLModels.TriggerRule)
         .filter_by(is_deleted=False)
-        .order_by(SQLModels.TelegramTriggerSubscription.id.asc())
+        .order_by(SQLModels.TriggerRule.id.asc())
         .all()
     )
+    existing_by_id = {row.id: row for row in existing_rows}
+    alert_rules = [
+        AlertRule(
+            id=rule.id,
+            source_id=int(rule.source_id or 0),
+            enabled=rule.enabled,
+            rule_label=rule.rule_label,
+            signal_family=str(rule.signal_family or ""),
+            target_key=str(rule.target_key or ""),
+            min_confidence=rule.min_confidence,
+            alert_level=rule.alert_level,
+        )
+        for rule in rules
+        if rule.trigger_key == TRIGGER_KEY_ALERT_RULE
+    ]
+    if alert_rules:
+        replace_alert_rules(db, alert_rules)
+
+    seen_ids = {rule.id for rule in rules if rule.id is not None}
+    grouped_sort_orders: dict[tuple[str, int | None], int] = {}
+    for rule in rules:
+        if rule.trigger_key == TRIGGER_KEY_ALERT_RULE:
+            continue
+        key = (rule.trigger_key, rule.source_id)
+        row = existing_by_id.get(rule.id) if rule.id is not None else None
+        if row is None:
+            row = SQLModels.TriggerRule()
+            db.add(row)
+        order = grouped_sort_orders.get(key, 0)
+        grouped_sort_orders[key] = order + 1
+        row.trigger_key = rule.trigger_key
+        row.source_template_id = rule.source_id
+        row.enabled = rule.enabled
+        row.sort_order = order
+        row.rule_label = rule.rule_label
+        row.signal_family = rule.signal_family
+        row.target_key = rule.target_key
+        row.min_confidence = rule.min_confidence
+        row.alert_level = rule.alert_level
+        row.delivery_target_ids_json = json.dumps(list(rule.delivery_target_ids))
+        row.metadata_json = json.dumps(dict(rule.metadata or {}))
+        row.is_deleted = False
+        row.deleted_at = None
+
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_trigger_rule_responses(db)
+
+
+def get_connector_endpoint_rows(db: Session, connector_key: str | None = None):
+    return list_connector_endpoint_rows(db, connector_key=connector_key, enabled_only=False)
+
+
+def build_connector_endpoint_responses(db: Session):
+    return [
+        ConnectorEndpoint(
+            id=row.id,
+            connector_key=row.connector_key,
+            label=row.label,
+            enabled=row.enabled,
+            config=get_connector_endpoint_config(row),
+            delivery_capabilities=get_connector_delivery_capabilities(row),
+            created_at=row.created_at.isoformat() if row.created_at is not None else None,
+            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+        )
+        for row in get_connector_endpoint_rows(db)
+    ]
+
+
+def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint]):
+    ensure_connector_endpoint_tables()
+    existing_rows = get_connector_endpoint_rows(db)
+    existing_by_id = {row.id: row for row in existing_rows}
+    seen_ids = set()
+    persisted_rows = []
+    for endpoint in endpoints:
+        row = existing_by_id.get(endpoint.id) if endpoint.id is not None else None
+        if row is None:
+            row = SQLModels.ConnectorEndpoint()
+            db.add(row)
+        set_connector_endpoint_payload(
+            row,
+            connector_key=endpoint.connector_key,
+            label=endpoint.label,
+            enabled=endpoint.enabled,
+            config=dict(endpoint.config or {}),
+            delivery_capabilities=list(endpoint.delivery_capabilities),
+        )
+        persisted_rows.append(row)
+        if row.id is not None:
+            seen_ids.add(row.id)
+    db.flush()
+    seen_ids.update(row.id for row in persisted_rows if row.id is not None)
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_connector_endpoint_responses(db)
+
+
+def get_telegram_trigger_subscription_rows(db: Session):
+    ensure_telegram_subscription_tables()
+    return get_connector_endpoint_rows(db, CONNECTOR_KEY_TELEGRAM)
 
 
 def build_telegram_trigger_subscription_responses(db: Session):
@@ -1635,9 +1796,9 @@ def build_telegram_trigger_subscription_responses(db: Session):
         TelegramTriggerSubscription(
             id=row.id,
             enabled=row.enabled,
-            subscription_label=row.subscription_label,
-            bot_token=row.bot_token,
-            chat_id=row.chat_id,
+            subscription_label=row.label,
+            bot_token=str(get_connector_endpoint_config(row).get("bot_token", "") or ""),
+            chat_id=str(get_connector_endpoint_config(row).get("chat_id", "") or ""),
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
@@ -1662,14 +1823,19 @@ def replace_telegram_trigger_subscriptions(
             else None
         )
         if row is None:
-            row = SQLModels.TelegramTriggerSubscription()
+            row = SQLModels.ConnectorEndpoint()
             db.add(row)
-        row.enabled = subscription.enabled
-        row.subscription_label = subscription.subscription_label
-        row.bot_token = subscription.bot_token
-        row.chat_id = subscription.chat_id
-        row.is_deleted = False
-        row.deleted_at = None
+        set_connector_endpoint_payload(
+            row,
+            connector_key=CONNECTOR_KEY_TELEGRAM,
+            label=subscription.subscription_label,
+            enabled=subscription.enabled,
+            config={
+                "bot_token": subscription.bot_token,
+                "chat_id": subscription.chat_id,
+            },
+            delivery_capabilities=["text"],
+        )
         persisted_rows.append(row)
         if row.id is not None:
             seen_ids.add(row.id)
@@ -1686,12 +1852,7 @@ def replace_telegram_trigger_subscriptions(
 
 def get_apple_message_trigger_subscription_rows(db: Session):
     ensure_apple_message_subscription_tables()
-    return (
-        db.query(SQLModels.AppleMessageTriggerSubscription)
-        .filter_by(is_deleted=False)
-        .order_by(SQLModels.AppleMessageTriggerSubscription.id.asc())
-        .all()
-    )
+    return get_connector_endpoint_rows(db, CONNECTOR_KEY_APPLE_MESSAGES)
 
 
 def build_apple_message_trigger_subscription_responses(db: Session):
@@ -1699,9 +1860,9 @@ def build_apple_message_trigger_subscription_responses(db: Session):
         AppleMessageTriggerSubscription(
             id=row.id,
             enabled=row.enabled,
-            subscription_label=row.subscription_label,
-            recipient_handle=row.recipient_handle,
-            service=row.service,
+            subscription_label=row.label,
+            recipient_handle=str(get_connector_endpoint_config(row).get("recipient_handle", "") or ""),
+            service=str(get_connector_endpoint_config(row).get("service", "iMessage") or "iMessage"),
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
@@ -1726,14 +1887,19 @@ def replace_apple_message_trigger_subscriptions(
             else None
         )
         if row is None:
-            row = SQLModels.AppleMessageTriggerSubscription()
+            row = SQLModels.ConnectorEndpoint()
             db.add(row)
-        row.enabled = subscription.enabled
-        row.subscription_label = subscription.subscription_label
-        row.recipient_handle = subscription.recipient_handle
-        row.service = subscription.service
-        row.is_deleted = False
-        row.deleted_at = None
+        set_connector_endpoint_payload(
+            row,
+            connector_key=CONNECTOR_KEY_APPLE_MESSAGES,
+            label=subscription.subscription_label,
+            enabled=subscription.enabled,
+            config={
+                "recipient_handle": subscription.recipient_handle,
+                "service": subscription.service,
+            },
+            delivery_capabilities=["text"],
+        )
         persisted_rows.append(row)
         if row.id is not None:
             seen_ids.add(row.id)
@@ -2498,6 +2664,42 @@ def get_standard_anomaly_prompt_settings():
 @external_router.put("/settings/anomaly-prompts", response_model=AnomalyPromptSettings)
 def update_anomaly_prompt_settings(payload: AnomalyPromptSettings):
     return write_anomaly_prompt_settings(payload)
+
+
+@external_router.get("/trigger-zoo", response_model=list[TriggerZooEntry])
+def get_trigger_zoo():
+    return [TriggerZooEntry.model_validate(entry) for entry in load_trigger_zoo()]
+
+
+@external_router.get("/connector-zoo", response_model=list[ConnectorZooEntry])
+def get_connector_zoo():
+    return [ConnectorZooEntry.model_validate(entry) for entry in load_connector_zoo()]
+
+
+@external_router.get("/settings/trigger-rules", response_model=list[TriggerRule])
+def get_settings_trigger_rules(db: Session = Depends(get_db)):
+    return build_trigger_rule_responses(db)
+
+
+@external_router.put("/settings/trigger-rules", response_model=list[TriggerRule])
+def update_settings_trigger_rules(
+    rules: list[TriggerRule],
+    db: Session = Depends(get_db),
+):
+    return replace_trigger_rules(db, rules)
+
+
+@external_router.get("/settings/connector-endpoints", response_model=list[ConnectorEndpoint])
+def get_settings_connector_endpoints(db: Session = Depends(get_db)):
+    return build_connector_endpoint_responses(db)
+
+
+@external_router.put("/settings/connector-endpoints", response_model=list[ConnectorEndpoint])
+def update_settings_connector_endpoints(
+    endpoints: list[ConnectorEndpoint],
+    db: Session = Depends(get_db),
+):
+    return replace_connector_endpoints(db, endpoints)
 
 
 @external_router.get("/settings/alert-rules", response_model=list[AlertRule])

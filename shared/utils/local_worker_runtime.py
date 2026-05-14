@@ -22,9 +22,7 @@ def is_hybrid_local_cpu_runtime() -> bool:
     return get_worker_runtime_mode() == WORKER_RUNTIME_HYBRID_LOCAL_CPU
 
 
-def detect_default_worker_runtime(*, run_mode: str, profile: str) -> str:
-    if run_mode != "pipeline":
-        return WORKER_RUNTIME_DOCKER
+def detect_default_worker_runtime(*, profile: str) -> str:
     if profile != "cpu":
         return WORKER_RUNTIME_DOCKER
     if platform.system() == "Darwin":

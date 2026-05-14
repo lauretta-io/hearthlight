@@ -36,7 +36,7 @@ There are two different startup layers on purpose:
 
 1. Repository / container startup
    - handled by `python3 -m hearthlight`, `run/launcher.py`, `docker-compose.yaml`, and `run/docker-compose.cuda.yaml`
-   - chooses API vs pipeline mode, CPU vs CUDA, config template, and source preset
+   - chooses CPU vs CUDA, config template, and source preset for one full-system startup path
 
 2. Runtime / run startup
    - handled by the web API and dashboard

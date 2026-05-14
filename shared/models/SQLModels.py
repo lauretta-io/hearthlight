@@ -19,7 +19,7 @@ metadata = Base.metadata
 
 class Run(Base):
     __tablename__ = "run"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_identifier = mapped_column(Text, primary_key=True)
@@ -34,7 +34,7 @@ class Run(Base):
 
 class Camera(Base):
     __tablename__ = "camera"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     name = mapped_column(String(255))
@@ -68,7 +68,7 @@ class Camera(Base):
 
 class CameraRecording(Base):
     __tablename__ = "camera_recording"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     cam_id = mapped_column(Integer)
@@ -91,7 +91,7 @@ class CameraRecording(Base):
 
 class CameraModel(Base):
     __tablename__ = "camera_model"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     camera_id = mapped_column(Integer)
@@ -103,7 +103,7 @@ class CameraModel(Base):
 
 class CameraZoneMapping(Base):
     __tablename__ = "camera_zone_mapping"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     cam_id = mapped_column(Integer, nullable=False)
@@ -124,7 +124,7 @@ class CameraZoneMapping(Base):
 
 class Bag(Base):
     __tablename__ = "bag"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -137,7 +137,7 @@ class Bag(Base):
 
 class BagInstance(Base):
     __tablename__ = "bag_instance"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -156,7 +156,7 @@ class BagInstance(Base):
 
 class BagJourneyMapping(Base):
     __tablename__ = "bag_journey_mapping"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     bag_id = mapped_column(Integer)
@@ -169,7 +169,7 @@ class BagJourneyMapping(Base):
 
 class Frame(Base):
     __tablename__ = "frame"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer)
@@ -186,7 +186,7 @@ class Frame(Base):
 
 class Incident(Base):
     __tablename__ = "incident"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -205,7 +205,7 @@ class Incident(Base):
 
 class IncidentBagMapping(Base):
     __tablename__ = "incident_bag_mapping"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     incident_id = mapped_column(Integer, nullable=False)
@@ -219,7 +219,7 @@ class IncidentBagMapping(Base):
 
 class IncidentPersonMapping(Base):
     __tablename__ = "incident_person_mapping"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     incident_id = mapped_column(Integer, nullable=False)
@@ -233,7 +233,7 @@ class IncidentPersonMapping(Base):
 
 class IncidentUpdate(Base):
     __tablename__ = "incident_update"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -246,7 +246,7 @@ class IncidentUpdate(Base):
 
 class JourneyNode(Base):
     __tablename__ = "journey_node"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -262,7 +262,7 @@ class JourneyNode(Base):
 
 class Person(Base):
     __tablename__ = "person"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -280,7 +280,7 @@ class EntityIdMapping(Base):
         UniqueConstraint(
             "temporary_id", "entity_type", name="uq_temp_id_per_entity_type"
         ),
-        {"schema": "dicos"},
+        {"schema": "runtime"},
     )
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -292,7 +292,7 @@ class EntityIdMapping(Base):
 
 class PersonBagMapping(Base):
     __tablename__ = "person_bag_mapping"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     person_id = mapped_column(Integer)
@@ -306,7 +306,7 @@ class PersonBagMapping(Base):
 
 class PersonInstance(Base):
     __tablename__ = "person_instance"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -327,7 +327,7 @@ class PersonInstance(Base):
 
 class PersonJourneyMapping(Base):
     __tablename__ = "person_journey_mapping"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     person_id = mapped_column(Integer)
@@ -340,7 +340,7 @@ class PersonJourneyMapping(Base):
 
 class POISearch(Base):
     __tablename__ = "poi_search"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer)
@@ -354,7 +354,7 @@ class POISearch(Base):
 
 class POIResultMapping(Base):
     __tablename__ = "poi_result_mapping"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     search_id = mapped_column(Integer)
@@ -367,7 +367,7 @@ class POIResultMapping(Base):
 
 class POISearchResult(Base):
     __tablename__ = "poi_search_result"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer)
@@ -380,7 +380,7 @@ class POISearchResult(Base):
 
 class Zone(Base):
     __tablename__ = "zone"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     name_ = mapped_column(String(255))
@@ -498,49 +498,38 @@ class ModelBindingTemplate(Base):
     deleted_at = mapped_column(DateTime)
 
 
-class AlertRuleTemplate(Base):
-    __tablename__ = "alert_rule_template"
+class TriggerRule(Base):
+    __tablename__ = "trigger_rule"
     __table_args__ = {"schema": "control"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_template_id = mapped_column(Integer, nullable=False)
+    trigger_key = mapped_column(String(128), nullable=False, default="alert_rule_trigger")
+    source_template_id = mapped_column(Integer)
     enabled = mapped_column(Boolean, default=True, nullable=False)
     sort_order = mapped_column(Integer, default=0, nullable=False)
     rule_label = mapped_column(String(255))
-    signal_family = mapped_column(String(32), nullable=False)
-    target_key = mapped_column(String(255), nullable=False)
+    signal_family = mapped_column(String(32))
+    target_key = mapped_column(String(255))
     min_confidence = mapped_column(Float, default=0.5, nullable=False)
     alert_level = mapped_column(String(16), default="medium", nullable=False)
+    delivery_target_ids_json = mapped_column(Text)
+    metadata_json = mapped_column(Text)
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)
     deleted_at = mapped_column(DateTime)
 
 
-class TelegramTriggerSubscription(Base):
-    __tablename__ = "telegram_trigger_subscription"
+class ConnectorEndpoint(Base):
+    __tablename__ = "connector_endpoint"
     __table_args__ = {"schema": "control"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    connector_key = mapped_column(String(128), nullable=False)
     enabled = mapped_column(Boolean, default=True, nullable=False)
-    subscription_label = mapped_column(String(255))
-    bot_token = mapped_column(Text, nullable=False)
-    chat_id = mapped_column(String(255), nullable=False)
-    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-    is_deleted = mapped_column(Boolean, default=False, nullable=False)
-    deleted_at = mapped_column(DateTime)
-
-
-class AppleMessageTriggerSubscription(Base):
-    __tablename__ = "apple_message_trigger_subscription"
-    __table_args__ = {"schema": "control"}
-
-    id = mapped_column(Integer, primary_key=True, autoincrement=True)
-    enabled = mapped_column(Boolean, default=True, nullable=False)
-    subscription_label = mapped_column(String(255))
-    recipient_handle = mapped_column(String(255), nullable=False)
-    service = mapped_column(String(32), nullable=False, default="iMessage")
+    label = mapped_column(String(255))
+    config_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
+    delivery_capabilities_json = mapped_column(Text, nullable=False, server_default=text("'[]'"))
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)
@@ -549,7 +538,7 @@ class AppleMessageTriggerSubscription(Base):
 
 class AnomalyEvent(Base):
     __tablename__ = "anomaly_event"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -575,7 +564,7 @@ class AnomalyEvent(Base):
 
 class AlertIncident(Base):
     __tablename__ = "alert_incident"
-    __table_args__ = {"schema": "dicos"}
+    __table_args__ = {"schema": "runtime"}
 
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     run_id = mapped_column(Integer, nullable=False)
@@ -589,10 +578,6 @@ class AlertIncident(Base):
     title = mapped_column(Text, nullable=False)
     model_keys_json = mapped_column(Text)
     dedupe_key = mapped_column(String(255), nullable=False)
-    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
-    is_deleted = mapped_column(Boolean, default=False, nullable=False)
-    deleted_at = mapped_column(DateTime)
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)

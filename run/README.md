@@ -64,7 +64,7 @@ You can choose:
 - pose enablement, pose model, and pose device
 - feature extractor model and device
 - CPU or CUDA execution profile
-- API-only or full pipeline service mode
+- one full-system startup path
 - `CUDA_VISIBLE_DEVICES`
 - whether to skip `reset-db`
 - whether to open the dashboard automatically
@@ -76,11 +76,10 @@ You can choose:
 2. Discovers detector, tracker, and feature-extractor choices from registry
    YAML files under `shared/configs/registries/`, and pose choices from config
    templates.
-3. Lets you choose API vs pipeline service mode.
-4. Lets you choose CPU or CUDA mode.
-5. Writes a generated config under `shared/configs/generated/`.
-6. Copies the generated config to `shared/configs/config.yaml`.
-7. Starts Docker Compose with:
+3. Lets you choose CPU or CUDA mode.
+4. Writes a generated config under `shared/configs/generated/`.
+5. Copies the generated config to `shared/configs/config.yaml`.
+6. Starts Docker Compose with:
    - base compose for CPU mode
    - base compose plus `run/docker-compose.cuda.yaml` for CUDA mode
 
@@ -91,7 +90,6 @@ CPU startup:
 ```bash
 python3 -m hearthlight start \
   --template active \
-  --mode api \
   --profile cpu \
   --detector yolox-s \
   --tracker bytetrack \
@@ -113,7 +111,6 @@ CUDA startup:
 
 ```bash
 python3 -m hearthlight start \
-  --mode pipeline \
   --template master_config \
   --profile cuda \
   --cuda-visible-devices 0 \
@@ -152,8 +149,8 @@ python3 -m hearthlight status
 
 - CPU mode uses the base `docker-compose.yaml`.
 - CUDA mode adds `run/docker-compose.cuda.yaml`.
-- `--mode api` starts the lighter local control stack; `--mode pipeline` starts
-  the AI workers as well.
+- `hearthlight start` always starts the full logical system; macOS CPU hosts may
+  still use hybrid local workers internally.
 - CUDA services only get NVIDIA runtime settings when you explicitly choose the
   CUDA profile.
 - Generated configs are written to `shared/configs/generated/` and then copied

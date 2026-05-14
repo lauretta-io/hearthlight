@@ -14,7 +14,6 @@ if str(ROOT_DIR) not in sys.path:
 from run.launcher import (  # noqa: E402
     build_interactive_selection,
     build_selection_from_args,
-    detect_run_mode,
     print_model_inventory,
     start_stack,
     stop_stack,
@@ -39,11 +38,6 @@ def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--source-preset",
         help="Template to use for input cameras and zone blocks without changing the base runtime template",
-    )
-    parser.add_argument(
-        "--mode",
-        choices=["api", "pipeline"],
-        help="Service startup mode. Defaults to host-aware auto-detection or HEARTHLIGHT_DOCKER_MODE.",
     )
     parser.add_argument("--profile", choices=["cpu", "cuda"], default=defaults["profile"])
     parser.add_argument(
@@ -82,12 +76,8 @@ def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    detected_run_mode, detected_reason = detect_run_mode()
     parser = argparse.ArgumentParser(
-        description=(
-            f"Hearthlight CLI for passenger detection orchestration "
-            f"({detected_reason}; default mode={detected_run_mode})"
-        ),
+        description="Hearthlight CLI for passenger detection orchestration",
     )
     subparsers = parser.add_subparsers(dest="command")
 

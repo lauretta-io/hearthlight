@@ -135,7 +135,6 @@ services:
   ingestor:
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    profiles: ["pipeline"]
     build: ./ingestor
     networks:
       - mynetwork
@@ -168,7 +167,6 @@ services:
       fi'
 
   reid:
-    profiles: ["pipeline"]
     build: ./reid
     networks:
       - mynetwork
@@ -198,7 +196,6 @@ services:
       fi'
 
   association:
-    profiles: ["pipeline"]
     build: ./association
     networks:
       - mynetwork
@@ -229,7 +226,6 @@ services:
       fi'
 
   anomaly:
-    profiles: ["pipeline"]
     build: ./anomaly
     networks:
       - mynetwork

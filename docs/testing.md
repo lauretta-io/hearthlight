@@ -40,7 +40,7 @@ python3 scripts/container_preflight.py
 docker compose up -d db rabbitmq
 hearthlight reset-db
 docker compose up webapp
-docker compose --profile pipeline up ingestor reid anomaly association
+docker compose up ingestor reid anomaly association
 ```
 
 For repeatable image-build validation, use the build test script:
@@ -57,8 +57,8 @@ It chooses a sensible default for the current host:
 You can override that explicitly:
 
 ```bash
-python3 scripts/docker_build_test.py --mode api
-python3 scripts/docker_build_test.py --mode core
+python3 scripts/docker_build_test.py
+python3 scripts/docker_build_test.py
 ```
 
 Or target a custom subset:

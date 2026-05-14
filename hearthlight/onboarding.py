@@ -459,6 +459,11 @@ def configure_notification_env_interactively(root_dir: Path, *, assume_yes: bool
 def sync_notification_subscriptions_from_env(root_dir: Path) -> list[str]:
     from shared.database.database import SessionLocal, reset_engine
     from shared.models import SQLModels
+    from shared.utils.connector_endpoints import (
+        CONNECTOR_KEY_APPLE_MESSAGES,
+        CONNECTOR_KEY_TELEGRAM,
+        set_connector_endpoint_payload,
+    )
     from shared.utils.apple_messages_notifications import ensure_apple_message_subscription_tables
     from shared.utils.telegram_notifications import ensure_telegram_subscription_tables
 
@@ -482,19 +487,24 @@ def sync_notification_subscriptions_from_env(root_dir: Path) -> list[str]:
             ensure_telegram_subscription_tables()
             label = assignments.get("TELEGRAM_TRIGGER_SUBSCRIPTION_LABEL", "Telegram Trigger Alerts").strip() or "Telegram Trigger Alerts"
             row = (
-                db.query(SQLModels.TelegramTriggerSubscription)
-                .filter_by(subscription_label=label, is_deleted=False)
+                db.query(SQLModels.ConnectorEndpoint)
+                .filter_by(connector_key=CONNECTOR_KEY_TELEGRAM, label=label, is_deleted=False)
                 .first()
             )
             if row is None:
-                row = SQLModels.TelegramTriggerSubscription()
+                row = SQLModels.ConnectorEndpoint()
                 db.add(row)
-            row.enabled = True
-            row.subscription_label = label
-            row.bot_token = telegram_bot_token
-            row.chat_id = telegram_chat_id
-            row.is_deleted = False
-            row.deleted_at = None
+            set_connector_endpoint_payload(
+                row,
+                connector_key=CONNECTOR_KEY_TELEGRAM,
+                label=label,
+                enabled=True,
+                config={
+                    "bot_token": telegram_bot_token,
+                    "chat_id": telegram_chat_id,
+                },
+                delivery_capabilities=["text"],
+            )
             messages.append(f"Telegram: {label}")
 
         apple_enabled = _parse_bool(assignments.get("APPLE_MESSAGES_TRIGGER_SUBSCRIPTION_ENABLED"), default=False)
@@ -503,20 +513,25 @@ def sync_notification_subscriptions_from_env(root_dir: Path) -> list[str]:
             ensure_apple_message_subscription_tables()
             label = assignments.get("APPLE_MESSAGES_TRIGGER_SUBSCRIPTION_LABEL", "Apple Messages Trigger Alerts").strip() or "Apple Messages Trigger Alerts"
             row = (
-                db.query(SQLModels.AppleMessageTriggerSubscription)
-                .filter_by(subscription_label=label, is_deleted=False)
+                db.query(SQLModels.ConnectorEndpoint)
+                .filter_by(connector_key=CONNECTOR_KEY_APPLE_MESSAGES, label=label, is_deleted=False)
                 .first()
             )
             if row is None:
-                row = SQLModels.AppleMessageTriggerSubscription()
+                row = SQLModels.ConnectorEndpoint()
                 db.add(row)
-            row.enabled = True
-            row.subscription_label = label
-            row.recipient_handle = apple_recipient
             service = assignments.get("APPLE_MESSAGES_SERVICE", "iMessage")
-            row.service = service if service in {"iMessage", "SMS"} else "iMessage"
-            row.is_deleted = False
-            row.deleted_at = None
+            set_connector_endpoint_payload(
+                row,
+                connector_key=CONNECTOR_KEY_APPLE_MESSAGES,
+                label=label,
+                enabled=True,
+                config={
+                    "recipient_handle": apple_recipient,
+                    "service": service if service in {"iMessage", "SMS"} else "iMessage",
+                },
+                delivery_capabilities=["text"],
+            )
             messages.append(f"Apple Messages: {label}")
 
         if messages:

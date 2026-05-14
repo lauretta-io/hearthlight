@@ -81,8 +81,8 @@ The launcher can choose:
 Useful non-interactive examples:
 
 ```bash
-hearthlight start --mode api --template active --profile cpu
-hearthlight start --mode pipeline --template master_config --profile cuda --cuda-visible-devices 0
+hearthlight start --template active --profile cpu
+hearthlight start --template master_config --profile cuda --cuda-visible-devices 0
 hearthlight start --template example --source-preset master_config --profile cpu
 hearthlight start --interactive --dry-run
 ```

@@ -6,6 +6,7 @@ from importlib.util import find_spec
 from pathlib import Path
 import importlib
 import logging
+import platform
 import re
 from typing import Any
 
@@ -292,6 +293,12 @@ def _titleize_token(token: str) -> str:
         return "TransReID"
     if lowered == "vlm":
         return "VLM"
+    if lowered == "siglip":
+        return "SigLIP"
+    if lowered == "smolvlm":
+        return "SmolVLM"
+    if lowered == "mlx":
+        return "MLX"
     if lowered == "rtmo":
         return "RTMO"
     if len(token) == 1:
@@ -343,9 +350,23 @@ def build_model_display_name(stage: str, model_key: str, registration: dict[str,
                 return "TransReID Person + Hybrid Bag"
             return "TransReID"
     elif stage == MODEL_STAGE_ANOMALY_STAGE_1:
+        if adapter == "siglip_stage_1":
+            backend = str(runtime.get("backend") or "").strip().lower()
+            if backend == "mlx":
+                return "SigLIP Stage 1 (MLX)"
+            if str(runtime.get("device") or "").strip().lower().startswith("cuda"):
+                return "SigLIP Stage 1 (CUDA)"
+            return "SigLIP Stage 1 (CPU)"
         if adapter == "heuristic_presence_stage_1":
             return "Heuristic Presence Stage 1"
     elif stage == MODEL_STAGE_ANOMALY_STAGE_2:
+        if adapter == "smolvlm_stage_2":
+            backend = str(runtime.get("backend") or "").strip().lower()
+            if backend == "mlx":
+                return "SmolVLM Stage 2 (MLX)"
+            if str(runtime.get("device") or "").strip().lower().startswith("cuda"):
+                return "SmolVLM Stage 2 (CUDA)"
+            return "SmolVLM Stage 2 (CPU)"
         if adapter == "prompt_rules_stage_2":
             return "Prompt Rules Stage 2"
         if adapter == "passthrough_stage_2":
@@ -519,6 +540,13 @@ def build_default_bindings(
     }
     defaults.update(bundle.get("bindings", {}).get("defaults", {}))
     defaults.update(extract_runtime_default_bindings(runtime_model_bindings))
+    if has_gpu is False and platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}:
+        for stage in (MODEL_STAGE_ANOMALY_STAGE_1, MODEL_STAGE_ANOMALY_STAGE_2):
+            stage_models = bundle.get("models", {}).get(stage, {})
+            for candidate_key, candidate in stage_models.items():
+                if candidate.get("default_for_backend") == "mlx":
+                    defaults[stage] = candidate_key
+                    break
     if has_gpu is False:
         for stage in MODEL_BINDING_STAGES:
             defaults[stage] = resolve_default_model_key(

@@ -1,0 +1,62 @@
+telegram:
+  label: Telegram
+  description: Deliver trigger notifications through a Telegram bot and chat ID.
+  category: messaging
+  enabled: true
+  requirements:
+    - bot-token
+    - chat-id
+  fields:
+    - key: bot_token
+      label: Bot token
+    - key: chat_id
+      label: Chat ID
+  delivery_capabilities:
+    - text
+    - async
+
+apple_messages:
+  label: Apple Messages
+  description: Deliver trigger notifications through Messages.app on macOS.
+  category: messaging
+  enabled: true
+  requirements:
+    - recipient-handle
+    - macos
+  fields:
+    - key: recipient_handle
+      label: Recipient handle
+    - key: service
+      label: Service
+  delivery_capabilities:
+    - text
+    - async
+
+webhook:
+  label: Webhook
+  description: Post trigger payloads to an HTTP endpoint.
+  category: integrations
+  enabled: true
+  requirements:
+    - url
+  fields:
+    - key: url
+      label: Target URL
+    - key: bearer_token
+      label: Bearer token
+  delivery_capabilities:
+    - json
+    - sync
+
+slack:
+  label: Slack
+  description: Placeholder catalog entry for a future Slack connector.
+  category: integrations
+  enabled: false
+  requirements:
+    - webhook-url
+  fields:
+    - key: webhook_url
+      label: Webhook URL
+  delivery_capabilities:
+    - text

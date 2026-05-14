@@ -14,6 +14,7 @@ from ..utils.alert_rules import (
     ALERT_SIGNAL_FAMILY_ANOMALY_ACTIVITY,
     ALERT_SIGNAL_FAMILY_ANOMALY_OBJECT,
     ALERT_SIGNAL_FAMILY_DETECTOR,
+    TRIGGER_KEY_ALERT_RULE,
     build_alert_incident_title,
     ensure_alert_rule_tables,
     resolve_alert_level_label,
@@ -29,6 +30,11 @@ from ..utils.model_registry import (
 from ..utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     queue_apple_message_trigger_notifications,
+)
+from ..utils.connector_endpoints import (
+    CONNECTOR_KEY_APPLE_MESSAGES,
+    CONNECTOR_KEY_TELEGRAM,
+    list_connector_endpoint_rows,
 )
 from ..utils.telegram_notifications import (
     build_trigger_notification_text,
@@ -175,21 +181,22 @@ class DatabaseWorker:
         *,
         source_id: int | None,
         signal_family: str,
-    ) -> list[SQLModels.AlertRuleTemplate]:
+    ) -> list[SQLModels.TriggerRule]:
         if source_id is None:
             return []
         ensure_alert_rule_tables()
         return (
-            self.db.query(SQLModels.AlertRuleTemplate)
+            self.db.query(SQLModels.TriggerRule)
             .filter_by(
+                trigger_key=TRIGGER_KEY_ALERT_RULE,
                 source_template_id=source_id,
                 signal_family=signal_family,
                 enabled=True,
                 is_deleted=False,
             )
             .order_by(
-                SQLModels.AlertRuleTemplate.sort_order.asc(),
-                SQLModels.AlertRuleTemplate.id.asc(),
+                SQLModels.TriggerRule.sort_order.asc(),
+                SQLModels.TriggerRule.id.asc(),
             )
             .all()
         )
@@ -269,26 +276,18 @@ class DatabaseWorker:
 
     def get_enabled_telegram_subscriptions(self):
         ensure_telegram_subscription_tables()
-        return (
-            self.db.query(SQLModels.TelegramTriggerSubscription)
-            .filter_by(
-                enabled=True,
-                is_deleted=False,
-            )
-            .order_by(SQLModels.TelegramTriggerSubscription.id.asc())
-            .all()
+        return list_connector_endpoint_rows(
+            self.db,
+            connector_key=CONNECTOR_KEY_TELEGRAM,
+            enabled_only=True,
         )
 
     def get_enabled_apple_message_subscriptions(self):
         ensure_apple_message_subscription_tables()
-        return (
-            self.db.query(SQLModels.AppleMessageTriggerSubscription)
-            .filter_by(
-                enabled=True,
-                is_deleted=False,
-            )
-            .order_by(SQLModels.AppleMessageTriggerSubscription.id.asc())
-            .all()
+        return list_connector_endpoint_rows(
+            self.db,
+            connector_key=CONNECTOR_KEY_APPLE_MESSAGES,
+            enabled_only=True,
         )
 
     def queue_trigger_notifications(

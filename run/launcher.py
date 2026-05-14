@@ -45,8 +45,8 @@ GENERATED_CONFIG_DIR = CONFIG_DIR / "generated"
 REGISTRY_DIR = ROOT_DIR / "shared" / "configs" / "registries"
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
 CUDA_COMPOSE_PATH = ROOT_DIR / "run" / "docker-compose.cuda.yaml"
-API_SERVICES = ["db", "rabbitmq", "webapp", "reverse_proxy"]
-PIPELINE_SERVICES = API_SERVICES + ["ingestor", "reid", "association", "anomaly"]
+CORE_SERVICES = ["db", "rabbitmq", "webapp", "reverse_proxy"]
+FULL_STACK_SERVICES = CORE_SERVICES + ["ingestor", "reid", "association", "anomaly"]
 REGISTRY_STAGE_LABELS = {
     "detector": "Detector",
     "tracker": "Tracker",
@@ -60,7 +60,6 @@ REGISTRY_STAGE_LABELS = {
 class LaunchSelection:
     template_path: Path
     source_preset_path: Path | None
-    run_mode: str
     worker_runtime: str
     detector_model: str
     tracker_model: str
@@ -77,23 +76,10 @@ class LaunchSelection:
     skip_reset_db: bool
     open_dashboard: bool
 
-
-def detect_run_mode() -> tuple[str, str]:
-    explicit_mode = os.environ.get("HEARTHLIGHT_DOCKER_MODE", "").strip().lower()
-    if explicit_mode in {"api", "pipeline"}:
-        return explicit_mode, f"using HEARTHLIGHT_DOCKER_MODE={explicit_mode}"
-
-    system = platform.system()
-    machine = platform.machine().lower()
-    if system == "Darwin" or machine in {"arm64", "aarch64"}:
-        return "api", f"defaulting to API mode on {system} {machine}"
-    return "pipeline", f"defaulting to full pipeline mode on {system} {machine}"
-
-
-def detect_worker_runtime(run_mode: str, profile: str) -> tuple[str, str]:
-    runtime = detect_default_worker_runtime(run_mode=run_mode, profile=profile)
+def detect_worker_runtime(profile: str) -> tuple[str, str]:
+    runtime = detect_default_worker_runtime(profile=profile)
     if runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU:
-        return runtime, "defaulting to hybrid-local-cpu on macOS CPU pipeline runs"
+        return runtime, "defaulting to hybrid-local-cpu on macOS CPU full-stack runs"
     return runtime, "defaulting to docker worker runtime"
 
 
@@ -573,18 +559,15 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
         raise SystemExit("Docker CLI not found. Install Docker Desktop or add docker to PATH.")
     command = compose_command(docker_binary, selection.use_cuda)
     env = compose_environment(selection)
-    docker_pipeline = (
-        selection.run_mode == "pipeline"
-        and selection.worker_runtime == WORKER_RUNTIME_DOCKER
-    )
-    services = PIPELINE_SERVICES if docker_pipeline else API_SERVICES
+    docker_full_stack = selection.worker_runtime == WORKER_RUNTIME_DOCKER
+    services = FULL_STACK_SERVICES if docker_full_stack else CORE_SERVICES
 
     print(f"Template: {selection.template_path}")
     print(
         "Source preset: "
         + (str(selection.source_preset_path) if selection.source_preset_path is not None else "template default")
     )
-    print(f"Run mode: {selection.run_mode}")
+    print("Service startup: full system")
     print(f"Worker runtime: {selection.worker_runtime}")
     print(f"Generated config: {generated_path}")
     print(f"Active config: {active_path}")
@@ -617,7 +600,7 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
         dashboard_thread.start()
 
     if selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU:
-        subprocess.run(command + ["up", "-d", *API_SERVICES], cwd=ROOT_DIR, env=env, check=True)
+        subprocess.run(command + ["up", "-d", *CORE_SERVICES], cwd=ROOT_DIR, env=env, check=True)
         return subprocess.call(
             [sys.executable, "-m", "hearthlight.local_workers", "start"],
             cwd=ROOT_DIR,
@@ -693,18 +676,12 @@ def build_interactive_selection() -> LaunchSelection:
         ["template default", *templates.keys()],
         default=template_name,
     )
-    detected_run_mode, detected_run_mode_reason = detect_run_mode()
-    run_mode = prompt_choice(
-        f"Runtime service mode ({detected_run_mode_reason})",
-        ["api", "pipeline"],
-        default=detected_run_mode,
-    )
     profile = prompt_choice(
         "Execution profile",
         ["cpu", "cuda"],
         default="cuda" if "cuda" in current.get("rtdetr_device", "") else start_defaults["profile"],
     )
-    detected_worker_runtime, detected_worker_runtime_reason = detect_worker_runtime(run_mode, profile)
+    detected_worker_runtime, detected_worker_runtime_reason = detect_worker_runtime(profile)
     worker_runtime = prompt_choice(
         f"Worker runtime ({detected_worker_runtime_reason})",
         [WORKER_RUNTIME_DOCKER, WORKER_RUNTIME_HYBRID_LOCAL_CPU],
@@ -728,7 +705,6 @@ def build_interactive_selection() -> LaunchSelection:
     return LaunchSelection(
         template_path=templates[template_name],
         source_preset_path=None if source_preset_name == "template default" else templates[source_preset_name],
-        run_mode=run_mode,
         worker_runtime=worker_runtime,
         detector_model=prompt_choice("Detector model", model_options["detector"], default=current.get("detector")),
         tracker_model=prompt_choice("Tracker", model_options["tracker"], default=current.get("tracker")),
@@ -784,9 +760,7 @@ def build_selection_from_args(args) -> LaunchSelection:
         )
 
     use_cuda = args.profile == "cuda"
-    detected_run_mode, _ = detect_run_mode()
-    selected_run_mode = args.mode or detected_run_mode
-    detected_worker_runtime, _ = detect_worker_runtime(selected_run_mode, args.profile)
+    detected_worker_runtime, _ = detect_worker_runtime(args.profile)
     detector_device = args.detector_device or (
         start_defaults["detector_device"] if use_cuda else "cpu"
     )
@@ -799,7 +773,6 @@ def build_selection_from_args(args) -> LaunchSelection:
     return LaunchSelection(
         template_path=templates[template_key],
         source_preset_path=templates[args.source_preset] if args.source_preset else None,
-        run_mode=selected_run_mode,
         worker_runtime=args.worker_runtime or detected_worker_runtime,
         detector_model=args.detector or current.get("detector") or model_options["detector"][0],
         tracker_model=args.tracker or current.get("tracker") or model_options["tracker"][0],

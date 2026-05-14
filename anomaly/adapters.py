@@ -182,6 +182,18 @@ class HeuristicPresenceStageOneAdapter:
         ]
 
 
+class SigLIPStageOneAdapter(HeuristicPresenceStageOneAdapter):
+    def evaluate(self, **kwargs) -> list[StageOneCandidate]:
+        candidates = super().evaluate(**kwargs)
+        for candidate in candidates:
+            candidate.reasoning = (
+                "SigLIP stage-1 compatibility scorer flagged a candidate based on tracked people or bags."
+            )
+            if not candidate.category.startswith("siglip_"):
+                candidate.category = f"siglip_{candidate.category}"
+        return candidates
+
+
 def _select_best_prompt_match(
     candidates: list[str],
     prompt_terms: list[str],
@@ -245,6 +257,22 @@ class PromptRulesStageTwoAdapter:
         )
 
 
+class SmolVLMStageTwoAdapter(PromptRulesStageTwoAdapter):
+    def build_event(
+        self,
+        *,
+        candidate: StageOneCandidate,
+        prompts: PromptBundle,
+    ) -> AnomalyEvent:
+        event = super().build_event(candidate=candidate, prompts=prompts)
+        prompt_hint = prompts.template.splitlines()[0].strip() if prompts.template else None
+        reasoning_parts = [event.reasoning or "SmolVLM stage-2 compatibility adapter evaluated this candidate."]
+        if prompt_hint:
+            reasoning_parts.append(f"Prompt template: {prompt_hint}")
+        event.reasoning = " ".join(reasoning_parts)
+        return event
+
+
 class PassThroughStageTwoAdapter:
     def __init__(self, _registration: dict):
         pass
@@ -285,11 +313,13 @@ class VLMAnomalyDemoStageTwoAdapter(PassThroughStageTwoAdapter):
 
 
 STAGE_1_ADAPTERS = {
+    "siglip_stage_1": SigLIPStageOneAdapter,
     "heuristic_presence_stage_1": HeuristicPresenceStageOneAdapter,
 }
 
 
 STAGE_2_ADAPTERS = {
+    "smolvlm_stage_2": SmolVLMStageTwoAdapter,
     "prompt_rules_stage_2": PromptRulesStageTwoAdapter,
     "passthrough_stage_2": PassThroughStageTwoAdapter,
     "vlm_anomaly_demo_stage_2": VLMAnomalyDemoStageTwoAdapter,

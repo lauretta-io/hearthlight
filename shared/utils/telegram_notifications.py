@@ -7,8 +7,11 @@ from threading import Thread
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
-from ..database.database import get_engine
-from ..models import SQLModels
+from .connector_endpoints import (
+    CONNECTOR_KEY_TELEGRAM,
+    ensure_connector_endpoint_tables,
+    get_connector_endpoint_config,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -16,19 +19,17 @@ TELEGRAM_SEND_TIMEOUT_SECONDS = 10.0
 
 
 def ensure_telegram_subscription_tables() -> None:
-    engine = get_engine()
-    SQLModels.Base.metadata.create_all(
-        bind=engine,
-        tables=[SQLModels.TelegramTriggerSubscription.__table__],
-        checkfirst=True,
-    )
+    ensure_connector_endpoint_tables()
 
 
 def _normalize_subscription_row(row) -> dict[str, str]:
+    config = get_connector_endpoint_config(row)
     return {
-        "subscription_label": str(getattr(row, "subscription_label", "") or "").strip(),
-        "bot_token": str(getattr(row, "bot_token", "") or "").strip(),
-        "chat_id": str(getattr(row, "chat_id", "") or "").strip(),
+        "subscription_label": str(
+            getattr(row, "label", None) or getattr(row, "subscription_label", "") or ""
+        ).strip(),
+        "bot_token": str(config.get("bot_token", None) or getattr(row, "bot_token", "") or "").strip(),
+        "chat_id": str(config.get("chat_id", None) or getattr(row, "chat_id", "") or "").strip(),
     }
 
 

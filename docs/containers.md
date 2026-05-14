@@ -28,7 +28,7 @@ Main database expectation:
 
 - one Postgres container exposed on the internal service name `db`
 - service port `5432`
-- runtime schema `dicos`
+- runtime schema `runtime`
 - control-plane schema `control`
 
 Bootstrap the runtime config from the checked-in example:
@@ -67,8 +67,8 @@ docker compose up webapp
 Enable the full AI pipeline explicitly:
 
 ```bash
-docker compose --profile pipeline build ingestor reid anomaly association
-docker compose --profile pipeline up ingestor reid anomaly association
+docker compose build ingestor reid anomaly association
+docker compose up ingestor reid anomaly association
 ```
 
 The compose file also now uses health checks for Postgres and RabbitMQ, and core services wait on
@@ -277,7 +277,7 @@ Bootstrap-time ingest logs are now written separately from run logs. Use
 stay out of the eventual per-run log directory.
 
 If you recreated your database from an older checkout, rerun `reset-db` so long generated-media
-paths are stored in text columns for `dicos.frame.path` and `dicos.poi_search.crop_dir`.
+paths are stored in text columns for `runtime.frame.path` and `runtime.poi_search.crop_dir`.
 
 Poll status:
 
@@ -391,5 +391,5 @@ enable pipeline workers explicitly when the host supports them:
 
 ```bash
 docker compose up -d db rabbitmq webapp
-docker compose --profile pipeline up ingestor reid anomaly association
+docker compose up ingestor reid anomaly association
 ```

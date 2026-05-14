@@ -31,6 +31,7 @@ ALERT_LEVELS = {
     ALERT_LEVEL_MEDIUM,
     ALERT_LEVEL_HIGH,
 }
+TRIGGER_KEY_ALERT_RULE = "alert_rule_trigger"
 
 DETECTOR_CLASS_ALIAS_MAP = {
     "person": "PERSON",
@@ -49,7 +50,7 @@ def ensure_alert_rule_tables() -> None:
     SQLModels.Base.metadata.create_all(
         bind=engine,
         tables=[
-            SQLModels.AlertRuleTemplate.__table__,
+            SQLModels.TriggerRule.__table__,
             SQLModels.AlertIncident.__table__,
         ],
         checkfirst=True,

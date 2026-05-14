@@ -19,7 +19,7 @@ Shared infrastructure and contracts live under `shared/`.
 
 Persistence now uses a single Postgres server on `db:5432` with two active schemas:
 
-- `dicos`: runtime entities such as runs, incidents, entities, and recordings
+- `runtime`: runtime entities such as runs, incidents, entities, and recordings
 - `control`: operator-managed sources, staged uploads, and resource telemetry
 
 Operational telemetry also includes resource-drift summaries so the control plane can surface CPU,
@@ -229,7 +229,7 @@ hearthlight start --template example --source-preset master_config --profile cpu
 Start in CUDA mode:
 
 ```bash
-hearthlight start --mode pipeline --template master_config --profile cuda --cuda-visible-devices 0
+hearthlight start --template master_config --profile cuda --cuda-visible-devices 0
 ```
 
 Preview a launch without changing the active config or starting Docker:
@@ -264,7 +264,7 @@ hearthlight status
 
 The launcher will:
 
-- detect API-only vs full pipeline startup based on host defaults, with `--mode` or `HEARTHLIGHT_DOCKER_MODE` as overrides
+- detect API-only vs full pipeline startup based on host defaults, with one full-system startup path
 - discover config templates from `shared/configs/`
 - discover detector, tracker, ReID, and anomaly model inventory from the registry-backed control-plane catalog
 - write the generated startup config to `shared/configs/generated/`
@@ -290,7 +290,7 @@ docker compose up webapp
 Enable the full AI pipeline explicitly:
 
 ```bash
-docker compose --profile pipeline up ingestor reid anomaly association
+docker compose up ingestor reid anomaly association
 ```
 
 `docker-compose.yaml` gates AI worker services behind the optional `pipeline` profile, so a plain

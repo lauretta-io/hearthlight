@@ -294,7 +294,7 @@ test('renders initialization tab content when selected', async () => {
 
   expect(await screen.findByText('Repository Initialization')).toBeTruthy();
   expect(screen.getByText(/Recommended Launch Command/)).toBeTruthy();
-  expect(screen.getByText(/python3 run\/run\.py start --mode api --template active --profile cpu --open-dashboard/)).toBeTruthy();
+  expect(screen.getByText(/python3 run\/run\.py start --template active --profile cpu --open-dashboard/)).toBeTruthy();
 });
 
 test('renders stage 2 anomaly config and saves structured anomaly settings', async () => {

@@ -6,11 +6,34 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Mapping, Iterator
 
+from sqlalchemy import text
 from sqlalchemy.schema import CreateSchema
 
 from .database import get_engine, reset_engine
 from ..models.SQLModels import Base
 from ..utils.backoff import with_exponential_backoff
+
+RUNTIME_SCHEMA = "runtime"
+LEGACY_RUNTIME_SCHEMA = "dicos"
+
+
+def _migrate_legacy_runtime_schema(connection) -> None:
+    schema_rows = connection.execute(
+        text(
+            """
+            SELECT schema_name
+            FROM information_schema.schemata
+            WHERE schema_name IN (:runtime_schema, :legacy_schema)
+            """
+        ),
+        {
+            "runtime_schema": RUNTIME_SCHEMA,
+            "legacy_schema": LEGACY_RUNTIME_SCHEMA,
+        },
+    ).fetchall()
+    existing_schemas = {str(row[0]) for row in schema_rows}
+    if LEGACY_RUNTIME_SCHEMA in existing_schemas and RUNTIME_SCHEMA not in existing_schemas:
+        connection.execute(text(f'ALTER SCHEMA "{LEGACY_RUNTIME_SCHEMA}" RENAME TO "{RUNTIME_SCHEMA}"'))
 
 
 @contextmanager
@@ -41,7 +64,8 @@ def reset_db(
         reset_engine()
         engine = get_engine()
         with engine.connect() as connection:
-            connection.execute(CreateSchema("dicos", if_not_exists=True))
+            _migrate_legacy_runtime_schema(connection)
+            connection.execute(CreateSchema(RUNTIME_SCHEMA, if_not_exists=True))
             connection.execute(CreateSchema("control", if_not_exists=True))
             connection.commit()
 

@@ -284,8 +284,8 @@ Benefits:
 Path-bearing columns that store generated media locations now use unbounded text fields instead of
 fixed-length varchar fields. That avoids truncation of long local or container paths for:
 
-- `dicos.frame.path`
-- `dicos.poi_search.crop_dir`
+- `runtime.frame.path`
+- `runtime.poi_search.crop_dir`
 
 If your local Postgres instance was created before this change and you rely on `reset-db`, rerun
 schema recreation so those column definitions match the current models.

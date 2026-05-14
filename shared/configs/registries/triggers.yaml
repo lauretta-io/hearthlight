@@ -1,0 +1,89 @@
+alert_rule_trigger:
+  label: Alert Rule Trigger
+  description: Source-scoped detector or anomaly match with confidence and alert level thresholds.
+  category: rule
+  enabled: true
+  requirements:
+    - source
+    - matching-target
+    - threshold
+    - delivery-targets
+  fields:
+    - key: signal_family
+      label: Signal family
+    - key: target_key
+      label: Match target
+    - key: min_confidence
+      label: Minimum confidence
+    - key: alert_level
+      label: Alert level
+  delivery_capabilities:
+    - notifications
+    - connectors
+
+anomaly_event_trigger:
+  label: Anomaly Event Trigger
+  description: Fires when an anomaly event is promoted by the anomaly stack.
+  category: anomaly
+  enabled: true
+  requirements:
+    - source
+    - delivery-targets
+  fields:
+    - key: category
+      label: Event category
+    - key: alert_level
+      label: Alert level
+  delivery_capabilities:
+    - notifications
+    - connectors
+
+unattended_bag_trigger:
+  label: Unattended Bag Trigger
+  description: Compatibility trigger for unattended bag detections from the core pipeline.
+  category: compatibility
+  enabled: true
+  requirements:
+    - source
+    - delivery-targets
+  fields:
+    - key: alert_level
+      label: Alert level
+  delivery_capabilities:
+    - notifications
+
+loitering_trigger:
+  label: Loitering Trigger
+  description: Compatibility trigger for loitering detections from the core pipeline.
+  category: compatibility
+  enabled: true
+  requirements:
+    - source
+    - delivery-targets
+  fields:
+    - key: alert_level
+      label: Alert level
+  delivery_capabilities:
+    - notifications
+
+manual_trigger:
+  label: Manual Trigger
+  description: Reserved for operator-initiated triggers and future workflows.
+  category: future
+  enabled: false
+  requirements:
+    - delivery-targets
+  fields: []
+  delivery_capabilities:
+    - notifications
+
+system_trigger:
+  label: System Trigger
+  description: Reserved for system-generated automation triggers.
+  category: future
+  enabled: false
+  requirements:
+    - delivery-targets
+  fields: []
+  delivery_capabilities:
+    - notifications

@@ -63,13 +63,13 @@ const MODEL_STAGE_COPY = {
   },
   anomaly_stage_1: {
     title: 'Anomaly Stage 1 Models',
-    description: 'These models run an early pass that watches for simple presence and timing patterns before deeper anomaly reasoning.',
-    usedFor: 'Lightweight anomaly screening and event prefiltering.',
+    description: 'These models run the first AI anomaly pass and decide which moments are worth escalating for deeper reasoning.',
+    usedFor: 'AI-backed anomaly screening and event prefiltering.',
   },
   anomaly_stage_2: {
     title: 'Anomaly Stage 2 Models',
-    description: 'These models interpret Stage 1 events using saved prompts and anomaly lists, or pass events through unchanged.',
-    usedFor: 'Prompt-based anomaly labeling and final anomaly interpretation.',
+    description: 'These models interpret Stage 1 events using the saved anomaly prompt configuration and final anomaly labels.',
+    usedFor: 'Prompt-driven anomaly interpretation and event labeling.',
   },
 };
 
@@ -260,7 +260,6 @@ const sourcePlaceholder = (kind) => {
 };
 
 const createLaunchPlan = () => ({
-  mode: 'api',
   profile: 'cpu',
   template: 'active',
   sourcePreset: 'template default',
@@ -269,7 +268,7 @@ const createLaunchPlan = () => ({
 });
 
 const buildLaunchCommand = (plan) => {
-  const command = ['python3', 'run/run.py', 'start', '--mode', plan.mode, '--template', plan.template, '--profile', plan.profile];
+  const command = ['python3', 'run/run.py', 'start', '--template', plan.template, '--profile', plan.profile];
   if (plan.sourcePreset && plan.sourcePreset !== 'template default') {
     command.push('--source-preset', plan.sourcePreset);
   }
@@ -320,6 +319,14 @@ const getModelClasses = (option) => {
     return [];
   }
   return rawClasses.map(normalizeDetectorClassLabel).filter(Boolean);
+};
+const getRuntimeTargets = (option) => {
+  const capabilities = option.capabilities || {};
+  const runtimeTargets = capabilities.runtime_targets || option.runtime?.runtime_targets || [];
+  if (!Array.isArray(runtimeTargets)) {
+    return [];
+  }
+  return runtimeTargets.map((value) => `${value || ''}`.trim().toUpperCase()).filter(Boolean);
 };
 const hasExpandedDetectorClasses = (classes) =>
   classes.some((item) => !['person', 'bag'].includes(`${item}`.toLowerCase()));
@@ -410,6 +417,8 @@ const SettingsPage = ({
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
+  const [triggerZoo, setTriggerZoo] = useState([]);
+  const [connectorZoo, setConnectorZoo] = useState([]);
   const [anomalyItems, setAnomalyItems] = useState([]);
   const [anomalyBehaviors, setAnomalyBehaviors] = useState([]);
   const [standardPromptSettings, setStandardPromptSettings] = useState(EMPTY_PROMPT_SETTINGS);
@@ -588,7 +597,25 @@ const SettingsPage = ({
       }
     };
 
+    const loadZoos = async () => {
+      try {
+        const [triggerResponse, connectorResponse] = await Promise.all([
+          fetch(`${BaseURL}/trigger-zoo`),
+          fetch(`${BaseURL}/connector-zoo`),
+        ]);
+        if (triggerResponse.ok) {
+          setTriggerZoo(await triggerResponse.json());
+        }
+        if (connectorResponse.ok) {
+          setConnectorZoo(await connectorResponse.json());
+        }
+      } catch {
+        // Keep the page usable if the zoo catalogs are temporarily unavailable.
+      }
+    };
+
     loadSources();
+    loadZoos();
   }, []);
 
   const setSourceField = (clientKey, field, value) => {
@@ -1675,6 +1702,7 @@ const SettingsPage = ({
                             <div className="model-library-grid">
                               {stage.options.map((option) => {
                                 const detectorClasses = getModelClasses(option);
+                                const runtimeTargets = getRuntimeTargets(option);
                                 const sourceKinds = formatListLabel((option.capabilities?.source_kinds || []).map(normalizeSourceKindLabel));
                                 const backend = option.runtime?.backend || option.runtime?.tracker_name || option.runtime?.person_strategy || option.runtime?.package || null;
                                 return (
@@ -1713,7 +1741,7 @@ const SettingsPage = ({
                                       </div>
                                       <div className="model-library-fact">
                                         <span className="model-library-fact-label">Runs On</span>
-                                        <span>{option.requires_gpu ? 'GPU' : 'CPU or GPU'}</span>
+                                        <span>{runtimeTargets.length > 0 ? runtimeTargets.join(', ') : (option.requires_gpu ? 'CUDA' : 'CPU or CUDA')}</span>
                                       </div>
                                       <div className="model-library-fact">
                                         <span className="model-library-fact-label">Backend</span>
@@ -1785,6 +1813,29 @@ const SettingsPage = ({
 
               <section className="control-grid">
                 <div className="control-column">
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <h3>Trigger Zoo</h3>
+                        <p>Catalog of supported trigger types and what each one needs.</p>
+                      </div>
+                    </div>
+                    {triggerZoo.length === 0 ? (
+                      <div className="empty-state">Trigger catalog is currently unavailable.</div>
+                    ) : (
+                      <div className="source-list">
+                        {(Array.isArray(triggerZoo) ? triggerZoo : []).map((entry) => (
+                          <div key={entry.key} className="empty-state">
+                            <strong>{entry.label}</strong>
+                            <div className="muted-text">{entry.description}</div>
+                            <div className="muted-text">Key: <code>{entry.key}</code></div>
+                            <div className="muted-text">Needs: {(entry.requirements || []).join(', ') || 'n/a'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="card">
                     <div className="card-header">
                       <div>
@@ -1956,6 +2007,29 @@ const SettingsPage = ({
                 </div>
 
                 <div className="control-column">
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <h3>Connector Zoo</h3>
+                        <p>Catalog of delivery connectors that can subscribe to triggers.</p>
+                      </div>
+                    </div>
+                    {connectorZoo.length === 0 ? (
+                      <div className="empty-state">Connector catalog is currently unavailable.</div>
+                    ) : (
+                      <div className="source-list">
+                        {(Array.isArray(connectorZoo) ? connectorZoo : []).map((entry) => (
+                          <div key={entry.key} className="empty-state">
+                            <strong>{entry.label}</strong>
+                            <div className="muted-text">{entry.description}</div>
+                            <div className="muted-text">Key: <code>{entry.key}</code></div>
+                            <div className="muted-text">Needs: {(entry.requirements || []).join(', ') || 'n/a'}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
                   <div className="card">
                     <div className="card-header">
                       <div>
@@ -2226,20 +2300,10 @@ const SettingsPage = ({
                 <div className="card-header">
                   <div>
                     <h3>Repository Initialization</h3>
-                    <p>Prepare the command-line launch plan for this host and deployment profile.</p>
+                    <p>Prepare the command-line launch plan for the full Hearthlight system on this host.</p>
                   </div>
                 </div>
                 <div className="model-binding-grid">
-                  <label>
-                    <span>Service Mode</span>
-                    <select
-                      value={launchPlan.mode}
-                      onChange={(event) => setLaunchPlan((previous) => ({ ...previous, mode: event.target.value }))}
-                    >
-                      <option value="api">api</option>
-                      <option value="pipeline">pipeline</option>
-                    </select>
-                  </label>
                   <label>
                     <span>Execution Profile</span>
                     <select

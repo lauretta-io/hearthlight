@@ -71,6 +71,8 @@ except ModuleNotFoundError:
 
 try:
     from shared.utils.model_registry import (
+        MODEL_STAGE_ANOMALY_STAGE_1,
+        MODEL_STAGE_ANOMALY_STAGE_2,
         MODEL_STAGE_DETECTOR,
         MODEL_STAGE_TRACKER,
         build_model_option_catalog,
@@ -82,6 +84,8 @@ try:
         validate_source_bindings,
     )
 except ModuleNotFoundError:
+    MODEL_STAGE_ANOMALY_STAGE_1 = None
+    MODEL_STAGE_ANOMALY_STAGE_2 = None
     MODEL_STAGE_DETECTOR = None
     MODEL_STAGE_TRACKER = None
     build_model_option_catalog = None
@@ -203,14 +207,14 @@ class ConfigTests(unittest.TestCase):
 
 
 class LocalWorkerRuntimeTests(unittest.TestCase):
-    def test_detect_default_worker_runtime_prefers_hybrid_on_macos_cpu_pipeline(self):
+    def test_detect_default_worker_runtime_prefers_hybrid_on_macos_cpu_full_stack(self):
         with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
-            runtime = detect_default_worker_runtime(run_mode="pipeline", profile="cpu")
+            runtime = detect_default_worker_runtime(profile="cpu")
         self.assertEqual(runtime, WORKER_RUNTIME_HYBRID_LOCAL_CPU)
 
-    def test_detect_default_worker_runtime_keeps_docker_for_api_mode(self):
+    def test_detect_default_worker_runtime_keeps_docker_for_cuda(self):
         with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
-            runtime = detect_default_worker_runtime(run_mode="api", profile="cpu")
+            runtime = detect_default_worker_runtime(profile="cuda")
         self.assertEqual(runtime, WORKER_RUNTIME_DOCKER)
 
     def test_map_container_path_to_host_uses_host_project_root(self):
@@ -820,6 +824,8 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertIn(MODEL_STAGE_DETECTOR, defaults)
         self.assertIn(MODEL_STAGE_TRACKER, defaults)
         self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_cpu")
+        self.assertEqual(defaults[MODEL_STAGE_ANOMALY_STAGE_1], "siglip_stage_1_cpu")
+        self.assertEqual(defaults[MODEL_STAGE_ANOMALY_STAGE_2], "smolvlm_stage_2_cpu")
         self.assertEqual(
             bundle["models"]["anomaly_stage_1"]["heuristic_presence_stage_1"]["healthcheck"]["import_path"],
             "hearthlight_model_zoo.anomaly_detectors",
@@ -832,6 +838,16 @@ class ModelRegistryTests(unittest.TestCase):
         defaults = build_default_bindings(bundle, has_gpu=False)
 
         self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_cpu")
+
+    @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
+    def test_registry_bundle_prefers_mlx_anomaly_defaults_on_apple_silicon(self):
+        bundle = load_registry_bundle()
+        with patch("shared.utils.model_registry.platform.system", return_value="Darwin"), patch(
+            "shared.utils.model_registry.platform.machine", return_value="arm64"
+        ):
+            defaults = build_default_bindings(bundle, has_gpu=False)
+        self.assertEqual(defaults[MODEL_STAGE_ANOMALY_STAGE_1], "siglip_stage_1_mlx")
+        self.assertEqual(defaults[MODEL_STAGE_ANOMALY_STAGE_2], "smolvlm_stage_2_mlx")
 
     @unittest.skipIf(build_model_display_name is None, "omegaconf is not installed")
     def test_build_model_display_name_humanizes_common_models(self):
@@ -906,6 +922,22 @@ class ModelRegistryTests(unittest.TestCase):
                 },
             ),
             "Prompt Rules Stage 2",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_1",
+                "siglip_stage_1_cpu",
+                {"artifact_ref": "siglip-stage-1-cpu", "adapter": "siglip_stage_1", "runtime": {"backend": "torch", "device": "cpu"}},
+            ),
+            "SigLIP Stage 1 (CPU)",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "smolvlm_stage_2_mlx",
+                {"artifact_ref": "smolvlm-stage-2-mlx", "adapter": "smolvlm_stage_2", "runtime": {"backend": "mlx", "device": "mlx"}},
+            ),
+            "SmolVLM Stage 2 (MLX)",
         )
 
     @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")

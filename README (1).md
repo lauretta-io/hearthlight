@@ -23,7 +23,7 @@ Shared infrastructure and contracts live under `shared/`.
 
 Persistence now uses a single Postgres server on `db:5432` with two active schemas:
 
-- `dicos`: runtime entities such as runs, incidents, entities, and recordings
+- `runtime`: runtime entities such as runs, incidents, entities, and recordings
 - `control`: operator-managed sources, staged uploads, and resource telemetry
 
 Operational telemetry also includes resource-drift summaries so the control plane can surface CPU,
@@ -190,7 +190,7 @@ python3 run/run.py start --template example --source-preset master_config --prof
 Start in CUDA mode:
 
 ```bash
-python3 run/run.py start --mode pipeline --template master_config --profile cuda --cuda-visible-devices 0
+python3 run/run.py start --template master_config --profile cuda --cuda-visible-devices 0
 ```
 
 Preview a launch without changing the active config or starting Docker:
@@ -213,7 +213,7 @@ python3 run/run.py dashboard
 
 The launcher will:
 
-- detect API-only vs full pipeline startup based on host defaults, with `--mode` or `DELOS_DOCKER_MODE` as overrides
+- detect API-only vs full pipeline startup based on host defaults, with one full-system startup path
 - discover config templates from `shared/configs/`
 - discover detector, tracker, pose, and feature-extractor choices from repo configs and `shared/utils/download_weights.py`
 - write the generated startup config to `shared/configs/generated/`
@@ -237,7 +237,7 @@ docker compose up db rabbitmq reset_db webapp
 Enable the full AI pipeline explicitly:
 
 ```bash
-docker compose --profile pipeline up ingestor reid anomaly association exporter
+docker compose up ingestor reid anomaly association exporter
 ```
 
 `docker-compose.yaml` now gates AI worker services behind the optional `pipeline` profile and FOIA
