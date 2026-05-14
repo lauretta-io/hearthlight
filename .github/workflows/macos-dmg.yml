@@ -30,7 +30,8 @@ jobs:
           echo "$(brew --prefix python-tk@3.11)/bin" >> "$GITHUB_PATH"
 
       - name: Install packaging dependencies
-        run: "$PYTHON_BIN" -m pip install --upgrade pip
+        run: |
+          "${PYTHON_BIN}" -m pip install --upgrade pip
 
       - name: Build macOS app bundle
         run: bash scripts/build_macos_app.sh
