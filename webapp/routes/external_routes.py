@@ -95,7 +95,10 @@ from ...shared.utils.connector_endpoints import (
     ensure_connector_endpoint_tables,
     get_connector_delivery_capabilities,
     get_connector_endpoint_config,
+    MASKED_SECRET_VALUE,
+    merge_connector_endpoint_secret_config,
     list_connector_endpoint_rows,
+    redact_connector_endpoint_config,
     set_connector_endpoint_payload,
 )
 from ...shared.utils.telegram_notifications import (
@@ -1745,7 +1748,7 @@ def build_connector_endpoint_responses(db: Session):
             connector_key=row.connector_key,
             label=row.label,
             enabled=row.enabled,
-            config=get_connector_endpoint_config(row),
+            config=redact_connector_endpoint_config(get_connector_endpoint_config(row)),
             delivery_capabilities=get_connector_delivery_capabilities(row),
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
@@ -1765,12 +1768,16 @@ def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint])
         if row is None:
             row = SQLModels.ConnectorEndpoint()
             db.add(row)
+        existing_config = get_connector_endpoint_config(row)
         set_connector_endpoint_payload(
             row,
             connector_key=endpoint.connector_key,
             label=endpoint.label,
             enabled=endpoint.enabled,
-            config=dict(endpoint.config or {}),
+            config=merge_connector_endpoint_secret_config(
+                existing_config,
+                dict(endpoint.config or {}),
+            ),
             delivery_capabilities=list(endpoint.delivery_capabilities),
         )
         persisted_rows.append(row)
@@ -1797,7 +1804,11 @@ def build_telegram_trigger_subscription_responses(db: Session):
             id=row.id,
             enabled=row.enabled,
             subscription_label=row.label,
-            bot_token=str(get_connector_endpoint_config(row).get("bot_token", "") or ""),
+            bot_token=(
+                MASKED_SECRET_VALUE
+                if str(get_connector_endpoint_config(row).get("bot_token", "") or "").strip()
+                else ""
+            ),
             chat_id=str(get_connector_endpoint_config(row).get("chat_id", "") or ""),
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
@@ -1825,15 +1836,19 @@ def replace_telegram_trigger_subscriptions(
         if row is None:
             row = SQLModels.ConnectorEndpoint()
             db.add(row)
+        existing_config = get_connector_endpoint_config(row)
         set_connector_endpoint_payload(
             row,
             connector_key=CONNECTOR_KEY_TELEGRAM,
             label=subscription.subscription_label,
             enabled=subscription.enabled,
-            config={
-                "bot_token": subscription.bot_token,
-                "chat_id": subscription.chat_id,
-            },
+            config=merge_connector_endpoint_secret_config(
+                existing_config,
+                {
+                    "bot_token": subscription.bot_token,
+                    "chat_id": subscription.chat_id,
+                },
+            ),
             delivery_capabilities=["text"],
         )
         persisted_rows.append(row)

@@ -9,6 +9,7 @@ telegram:
   fields:
     - key: bot_token
       label: Bot token
+      secret: true
     - key: chat_id
       label: Chat ID
   delivery_capabilities:
@@ -44,6 +45,7 @@ webhook:
       label: Target URL
     - key: bearer_token
       label: Bearer token
+      secret: true
   delivery_capabilities:
     - json
     - sync

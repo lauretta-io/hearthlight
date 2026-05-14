@@ -197,7 +197,7 @@ const sanitizeSourcesForApi = (sources) =>
   sources.map((source, index) => ({
     id: source.id ?? undefined,
     kind: source.kind,
-    label: source.label.trim() || `Source ${index + 1}`,
+    label: source.label.trim() || defaultSourceLabel(source, index, sources),
     tasks: [...TASK_OPTIONS],
     enabled: source.enabled,
     order: index,
@@ -251,6 +251,27 @@ const buildAlertRuleSetupHint = (sources, errorDetail = null) => {
 };
 
 const DEFAULT_SOURCE_ENABLE_LABEL = 'Enable Video AI';
+
+const stripFileExtension = (filename = '') => filename.replace(/\.[^/.]+$/, '');
+
+const countMatchingSources = (sources, index, predicate) =>
+  sources.slice(0, index + 1).filter(predicate).length;
+
+const defaultSourceLabel = (source, index, sources) => {
+  if (source.kind === 'webcam') {
+    return `Webcam ${countMatchingSources(sources, index, (candidate) => candidate.kind === 'webcam')}`;
+  }
+  if (source.kind === 'video_upload' && source.upload?.original_filename) {
+    return stripFileExtension(source.upload.original_filename) || source.upload.original_filename;
+  }
+  return `Camera ${countMatchingSources(
+    sources,
+    index,
+    (candidate) =>
+      candidate.kind !== 'webcam'
+      && !(candidate.kind === 'video_upload' && candidate.upload?.original_filename),
+  )}`;
+};
 
 const sourcePlaceholder = (kind) => {
   if (kind === 'webcam') {
@@ -799,9 +820,7 @@ const SettingsPage = ({
   const validateSources = () => {
     const nextErrors = {};
     sources.forEach((source) => {
-      if (!source.label.trim()) {
-        nextErrors[source.clientKey] = 'Label is required.';
-      } else if (source.kind === 'video_upload' && !source.upload_id) {
+      if (source.kind === 'video_upload' && !source.upload_id) {
         nextErrors[source.clientKey] = 'Upload a video file before saving.';
       } else if (source.kind !== 'video_upload' && `${source.source_value ?? ''}`.trim() === '') {
         nextErrors[source.clientKey] = 'Source value is required.';
@@ -1020,7 +1039,7 @@ const SettingsPage = ({
       const hydratedSources = data.map((source, index) => hydrateSource(source, index));
       setSources(hydratedSources);
       await reloadAlertRuleState({ sourcesSnapshot: data });
-      setBanner({ kind: 'success', text: 'Source settings saved.' });
+      setBanner({ kind: 'success', text: 'Source settings updated.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
@@ -1064,7 +1083,7 @@ const SettingsPage = ({
                 ...source,
                 upload_id: data.upload.id,
                 upload: data.upload,
-                label: source.label || data.upload.original_filename,
+                label: source.label || stripFileExtension(data.upload.original_filename),
               }
             : source
         )
@@ -1273,6 +1292,15 @@ const SettingsPage = ({
   const modelZooSummary = modelZooSource.commit_short
     ? `Options prepared from model-zoo commit ${modelZooSource.commit_short}${modelZooSource.resolved_from ? ` via ${modelZooSource.resolved_from.replace('_', ' ')}` : ''}.`
     : 'Options prepared from the installed model-zoo catalog.';
+  const isTelegramConnectorConfigured = telegramSubscriptions.some(
+    (subscription) => subscription.enabled && subscription.bot_token.trim() && subscription.chat_id.trim(),
+  );
+  const isAppleMessagesConnectorConfigured = appleMessageSubscriptions.some(
+    (subscription) =>
+      subscription.enabled
+      && subscription.recipient_handle.trim()
+      && ['iMessage', 'SMS'].includes(subscription.service),
+  );
   const stageLibraryEntries = MODEL_STAGE_OPTIONS.map((option) => {
     const stageOptions = modelOptionsByStage[option.stage] || [];
     return {
@@ -1337,7 +1365,7 @@ const SettingsPage = ({
                       {sources.map((source, index) => (
                         <div key={source.clientKey} className="source-row">
                           <div className="source-row-header">
-                            <strong>Source {index + 1}</strong>
+                            <strong>{source.label.trim() || defaultSourceLabel(source, index, sources)}</strong>
                             <button
                               type="button"
                               onClick={() => removeSource(source.clientKey)}
@@ -1368,7 +1396,7 @@ const SettingsPage = ({
                                 type="text"
                                 value={source.label}
                                 onChange={(event) => setSourceField(source.clientKey, 'label', event.target.value)}
-                                placeholder="Checkpoint A"
+                                placeholder={defaultSourceLabel(source, index, sources)}
                               />
                             </label>
 
@@ -1421,26 +1449,32 @@ const SettingsPage = ({
                             </label>
                           </div>
 
-                          <div className="model-binding-grid">
-                            {MODEL_STAGE_OPTIONS.map((option) => (
-                              <label key={`${source.clientKey}-${option.stage}`}>
-                                <span>{option.label} Override</span>
-                                <select
-                                  value={source[option.field] || ''}
-                                  onChange={(event) => setSourceField(source.clientKey, option.field, event.target.value || null)}
-                                >
-                                  <option value="">
-                                    Use default ({getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'None')})
-                                  </option>
-                                  {(modelOptionsByStage[option.stage] || []).map((registration) => (
-                                    <option key={registration.model_key} value={registration.model_key}>
-                                      {registration.display_name || registration.model_key}
+                          {source.enabled ? (
+                            <div className="model-binding-grid">
+                              {MODEL_STAGE_OPTIONS.map((option) => (
+                                <label key={`${source.clientKey}-${option.stage}`}>
+                                  <span>{option.label} Override</span>
+                                  <select
+                                    value={source[option.field] || ''}
+                                    onChange={(event) => setSourceField(source.clientKey, option.field, event.target.value || null)}
+                                  >
+                                    <option value="">
+                                      Use default ({getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'None')})
                                     </option>
-                                  ))}
-                                </select>
-                              </label>
-                            ))}
-                          </div>
+                                    {(modelOptionsByStage[option.stage] || []).map((registration) => (
+                                      <option key={registration.model_key} value={registration.model_key}>
+                                        {registration.display_name || registration.model_key}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="source-disabled-note">
+                              Video AI is disabled for this source. Detector, tracker, and anomaly overrides will stay hidden until you enable it again.
+                            </div>
+                          )}
 
                           {rowErrors[source.clientKey] && (
                             <div className="row-error">{rowErrors[source.clientKey]}</div>
@@ -1451,7 +1485,12 @@ const SettingsPage = ({
 
                     <div className="control-actions">
                       <button type="button" onClick={saveSources} className="secondary-button" disabled={isSaving}>
-                        {isSaving ? 'Saving...' : 'Save Source Settings'}
+                        {isSaving ? (
+                          <>
+                            <span className="button-spinner" aria-hidden="true" />
+                            Updating Source Settings...
+                          </>
+                        ) : 'Update Source Settings'}
                       </button>
                     </div>
                   </div>
@@ -1857,7 +1896,7 @@ const SettingsPage = ({
                           <div key={source.clientKey} className="source-row">
                             <div className="source-row-header">
                               <div>
-                                <strong>{source.label || `Source ${index + 1}`}</strong>
+                                <strong>{source.label?.trim() || defaultSourceLabel(source, index, sources)}</strong>
                                 <div className="muted-text">
                                   {getDisplayNameForStage('detector', source.detector_model_key || defaultBindings.detector, 'No Detector')} · {getDisplayNameForStage('anomaly_stage_1', source.anomaly_stage_1_model_key || defaultBindings.anomaly_stage_1, 'No Anomaly Stage 1')} · {getDisplayNameForStage('anomaly_stage_2', source.anomaly_stage_2_model_key || defaultBindings.anomaly_stage_2, 'No Anomaly Stage 2')}
                                 </div>
@@ -2057,12 +2096,16 @@ const SettingsPage = ({
                 </div>
               )}
 
-              <section className="control-grid">
-                <div className="control-column">
+              <section className="control-grid connectors-grid">
                   <div className="card">
                     <div className="card-header">
                       <div>
-                        <h3>Telegram Trigger Subscriptions</h3>
+                        <div className="connector-header-line">
+                          <h3>Telegram</h3>
+                          <span className={`connector-status-badge ${isTelegramConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                            {isTelegramConnectorConfigured ? 'Configured' : 'Needs setup'}
+                          </span>
+                        </div>
                         <p>Send each new trigger to one or more Telegram chats using a bot token and chat ID.</p>
                       </div>
                       <button
@@ -2167,13 +2210,15 @@ const SettingsPage = ({
                       <div className="muted-text">Each enabled subscriber receives a Telegram message whenever a new trigger row is created.</div>
                     </div>
                   </div>
-                </div>
-
-                <div className="control-column">
                   <div className="card">
                     <div className="card-header">
                       <div>
-                        <h3>Apple Messages Trigger Subscriptions</h3>
+                        <div className="connector-header-line">
+                          <h3>Apple Messages</h3>
+                          <span className={`connector-status-badge ${isAppleMessagesConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                            {isAppleMessagesConnectorConfigured ? 'Configured' : 'Needs setup'}
+                          </span>
+                        </div>
                         <p>Send each new trigger to one or more Apple Messages recipients from the macOS host running Hearthlight.</p>
                       </div>
                       <button
@@ -2286,7 +2331,6 @@ const SettingsPage = ({
                       <div className="muted-text">Apple Messages is host-local and depends on the macOS Messages app.</div>
                     </div>
                   </div>
-                </div>
               </section>
             </>
           )}

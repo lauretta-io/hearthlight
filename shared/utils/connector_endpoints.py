@@ -8,6 +8,11 @@ from ..models import SQLModels
 
 CONNECTOR_KEY_TELEGRAM = "telegram"
 CONNECTOR_KEY_APPLE_MESSAGES = "apple_messages"
+MASKED_SECRET_VALUE = "********"
+SECRET_CONFIG_KEYS = {
+    "bot_token",
+    "bearer_token",
+}
 
 
 def ensure_connector_endpoint_tables() -> None:
@@ -45,6 +50,28 @@ def get_connector_endpoint_config(row) -> dict[str, Any]:
     return loaded if isinstance(loaded, dict) else {}
 
 
+def redact_connector_endpoint_config(config: dict[str, Any]) -> dict[str, Any]:
+    redacted: dict[str, Any] = {}
+    for key, value in dict(config or {}).items():
+        if key in SECRET_CONFIG_KEYS:
+            redacted[key] = MASKED_SECRET_VALUE if str(value or "").strip() else ""
+        else:
+            redacted[key] = value
+    return redacted
+
+
+def merge_connector_endpoint_secret_config(
+    existing_config: dict[str, Any],
+    incoming_config: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(existing_config or {})
+    for key, value in dict(incoming_config or {}).items():
+        if key in SECRET_CONFIG_KEYS and str(value or "").strip() in {"", MASKED_SECRET_VALUE}:
+            continue
+        merged[key] = value
+    return merged
+
+
 def get_connector_delivery_capabilities(row) -> list[str]:
     loaded = parse_json_text(getattr(row, "delivery_capabilities_json", None), default=[])
     if not isinstance(loaded, list):
@@ -68,4 +95,3 @@ def set_connector_endpoint_payload(
     row.delivery_capabilities_json = json.dumps(delivery_capabilities or [])
     row.is_deleted = False
     row.deleted_at = None
-

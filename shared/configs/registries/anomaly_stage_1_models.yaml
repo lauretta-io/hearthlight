@@ -1,3 +1,101 @@
+siglip_stage_1_cpu:
+  stage: anomaly_stage_1
+  adapter: siglip_stage_1
+  artifact_ref: siglip-stage-1-cpu
+  default_for_backend: cpu
+  runtime:
+    backend: torch
+    device: cpu
+    model_size_tier: small
+    precision: fp32
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    classes:
+      - person
+      - backpack
+      - handbag
+      - suitcase
+    prompt_support: true
+    runtime_targets:
+      - cpu
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: hearthlight_model_zoo.anomaly_detectors
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 2
+
+siglip_stage_1_cuda:
+  stage: anomaly_stage_1
+  adapter: siglip_stage_1
+  artifact_ref: siglip-stage-1-cuda
+  default_for_backend: cuda
+  runtime:
+    backend: torch
+    device: cuda:0
+    model_size_tier: small
+    precision: fp16
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    classes:
+      - person
+      - backpack
+      - handbag
+      - suitcase
+    prompt_support: true
+    runtime_targets:
+      - cuda
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  fallback_model_key: siglip_stage_1_cpu
+  healthcheck:
+    import_path: hearthlight_model_zoo.anomaly_detectors
+  requires_gpu: true
+  resource_profile:
+    gpu_memory_mb: 1024
+
+siglip_stage_1_mlx:
+  stage: anomaly_stage_1
+  adapter: siglip_stage_1
+  artifact_ref: siglip-stage-1-mlx
+  default_for_backend: mlx
+  runtime:
+    backend: mlx
+    device: mlx
+    model_size_tier: small
+    precision: fp16
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    classes:
+      - person
+      - backpack
+      - handbag
+      - suitcase
+    prompt_support: true
+    runtime_targets:
+      - mlx
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  fallback_model_key: siglip_stage_1_cpu
+  healthcheck:
+    import_path: hearthlight_model_zoo.anomaly_detectors
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 2
+
 heuristic_presence_stage_1:
   stage: anomaly_stage_1
   adapter: heuristic_presence_stage_1

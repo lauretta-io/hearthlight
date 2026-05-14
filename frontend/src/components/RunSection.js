@@ -16,6 +16,27 @@ const SOURCE_KIND_OPTIONS = [
   { value: 'webcam', label: 'Webcam' },
 ];
 
+const stripFileExtension = (filename = '') => filename.replace(/\.[^/.]+$/, '');
+
+const countMatchingSources = (sources, index, predicate) =>
+  sources.slice(0, index + 1).filter(predicate).length;
+
+const defaultSourceLabel = (source, index, sources) => {
+  if (source.kind === 'webcam') {
+    return `Webcam ${countMatchingSources(sources, index, (candidate) => candidate.kind === 'webcam')}`;
+  }
+  if (source.kind === 'video_upload' && source.upload?.original_filename) {
+    return stripFileExtension(source.upload.original_filename) || source.upload.original_filename;
+  }
+  return `Camera ${countMatchingSources(
+    sources,
+    index,
+    (candidate) =>
+      candidate.kind !== 'webcam'
+      && !(candidate.kind === 'video_upload' && candidate.upload?.original_filename),
+  )}`;
+};
+
 const createSourceDraft = (kind = 'camera_url') => ({
   clientKey: `source-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   id: null,
@@ -54,7 +75,7 @@ const sanitizeSourcesForApi = (sources) =>
   sources.map((source, index) => ({
     id: source.id ?? undefined,
     kind: source.kind,
-    label: source.label.trim() || `Source ${index + 1}`,
+    label: source.label.trim() || defaultSourceLabel(source, index, sources),
     tasks: source.tasks,
     enabled: source.enabled,
     order: index,
@@ -253,9 +274,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
   const validateSources = () => {
     const nextErrors = {};
     sources.forEach((source) => {
-      if (!source.label.trim()) {
-        nextErrors[source.clientKey] = 'Label is required.';
-      } else if (source.tasks.length === 0) {
+      if (source.tasks.length === 0) {
         nextErrors[source.clientKey] = 'Select at least one task.';
       } else if (source.kind === 'video_upload' && !source.upload_id) {
         nextErrors[source.clientKey] = 'Upload a video file before saving.';
@@ -331,7 +350,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
                 ...source,
                 upload_id: data.upload.id,
                 upload: data.upload,
-                label: source.label || data.upload.original_filename,
+                label: source.label || stripFileExtension(data.upload.original_filename),
               }
             : source
         )
@@ -460,7 +479,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
               {sources.map((source, index) => (
                 <div key={source.clientKey} className="source-row">
                   <div className="source-row-header">
-                    <strong>Source {index + 1}</strong>
+                    <strong>{source.label.trim() || defaultSourceLabel(source, index, sources)}</strong>
                     <button
                       type="button"
                       onClick={() => removeSource(source.clientKey)}
@@ -491,7 +510,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
                         type="text"
                         value={source.label}
                         onChange={(event) => setSourceField(source.clientKey, 'label', event.target.value)}
-                        placeholder="Checkpoint A"
+                        placeholder={defaultSourceLabel(source, index, sources)}
                       />
                     </label>
 

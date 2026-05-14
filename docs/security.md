@@ -68,7 +68,14 @@ When this variable is set, requests must include:
 X-API-Key: your-secret
 ```
 
-If `WEBAPP_API_KEY` is not set, the API remains open for local development.
+If `WEBAPP_API_KEY` is not set, the API remains open for local loopback development only.
+Requests addressed to non-local hosts now return `401` by default unless you explicitly opt out:
+
+```bash
+export WEBAPP_ALLOW_REMOTE_WITHOUT_API_KEY=true
+```
+
+That keeps accidental LAN or internet exposure from becoming an unauthenticated control-plane API.
 
 CORS preflight `OPTIONS` requests remain allowed when API-key protection is enabled, so browser
 clients can still negotiate authenticated cross-origin requests.
@@ -93,6 +100,13 @@ The API now adds:
 - `X-Content-Type-Options: nosniff`
 - `X-Frame-Options: DENY`
 - `Referrer-Policy: no-referrer`
+
+### Connector secret handling
+
+Connector settings responses now redact stored secret fields such as Telegram bot tokens and
+webhook bearer tokens instead of echoing them back to the browser. Updates preserve the existing
+secret when the masked placeholder is submitted unchanged, so operators can edit labels or toggles
+without retyping credentials.
 
 ### Request size ceiling
 

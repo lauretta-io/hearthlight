@@ -1,6 +1,8 @@
+import ipaddress
 import os
 import secrets
 import shutil
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, Request
 from starlette.middleware.cors import CORSMiddleware
@@ -9,7 +11,11 @@ from starlette.responses import JSONResponse
 from .routes.external_routes import MAX_UPLOAD_BYTES, external_router
 from .routes.operations_routes import operations_router
 
-app = FastAPI()
+app = FastAPI(
+    title="Hearthlight API",
+    version="0.8.0",
+    description="Hearthlight control-plane and runtime management API.",
+)
 MAX_REQUEST_BYTES = int(os.environ.get("WEBAPP_MAX_REQUEST_BYTES", str(5 * 1024 * 1024)))
 UPLOAD_REQUEST_PATHS = {
     "/sources/uploads",
@@ -48,6 +54,12 @@ def get_allowed_origin_regex():
 
 
 API_KEY = os.environ.get("WEBAPP_API_KEY")
+ALLOW_REMOTE_WITHOUT_API_KEY = os.environ.get("WEBAPP_ALLOW_REMOTE_WITHOUT_API_KEY", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 PUBLIC_PATHS = {
     "/healthz",
     "/readyz",
@@ -65,6 +77,40 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _is_loopback_host(value: str | None) -> bool:
+    host = str(value or "").strip().strip("[]")
+    if not host:
+        return False
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return host.lower() == "localhost"
+
+
+def _extract_hostname(header_value: str | None) -> str | None:
+    raw_value = str(header_value or "").strip()
+    if not raw_value:
+        return None
+    if "://" in raw_value:
+        return urlparse(raw_value).hostname
+    if raw_value.startswith("[") and "]" in raw_value:
+        return raw_value[1 : raw_value.index("]")]
+    return raw_value.split(":", 1)[0]
+
+
+def request_is_local_only(request: Request) -> bool:
+    origin_host = _extract_hostname(request.headers.get("origin"))
+    host_header = request.headers.get("host")
+    host_name = _extract_hostname(host_header)
+
+    explicit_hosts = [host for host in (origin_host, host_name) if host]
+    if explicit_hosts:
+        return all(_is_loopback_host(host) for host in explicit_hosts)
+
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return _is_loopback_host(client_host)
 
 
 @app.middleware("http")
@@ -85,6 +131,11 @@ async def require_api_key(request: Request, call_next):
     provided_key = request.headers.get("x-api-key")
     if API_KEY and not (provided_key and secrets.compare_digest(provided_key, API_KEY)):
         return JSONResponse(status_code=401, content={"detail": "invalid api key"})
+    if not API_KEY and not ALLOW_REMOTE_WITHOUT_API_KEY and not request_is_local_only(request):
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "remote API access requires WEBAPP_API_KEY"},
+        )
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "DENY"

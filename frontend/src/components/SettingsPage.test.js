@@ -147,7 +147,7 @@ beforeEach(() => {
           id: 41,
           enabled: true,
           subscription_label: 'Ops Chat',
-          bot_token: '123456:ABCDEF',
+          bot_token: '********',
           chat_id: '-1001234567890',
         },
       ]);
@@ -209,7 +209,7 @@ beforeEach(() => {
           id: 41,
           enabled: true,
           subscription_label: 'Ops Chat',
-          bot_token: '123456:ABCDEF',
+          bot_token: '********',
           chat_id: '-1001234567890',
         },
       ]);
@@ -270,9 +270,10 @@ test('renders source settings and saves to settings endpoint', async () => {
   expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
   expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
   expect(screen.getByText('Enable Video AI')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Update Source Settings' })).toBeTruthy();
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Save Source Settings'));
+    fireEvent.click(screen.getByRole('button', { name: 'Update Source Settings' }));
   });
 
   await waitFor(() => {
@@ -281,6 +282,26 @@ test('renders source settings and saves to settings endpoint', async () => {
       expect.objectContaining({ method: 'PUT' }),
     );
   });
+});
+
+test('hides source model overrides when video AI is disabled', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
+  expect(screen.getByText('Detector Override')).toBeTruthy();
+
+  fireEvent.click(screen.getByLabelText('Enable Video AI'));
+
+  await waitFor(() => {
+    expect(screen.queryByText('Detector Override')).toBeNull();
+  });
+  expect(screen.getByText(/video ai is disabled for this source/i)).toBeTruthy();
 });
 
 test('renders initialization tab content when selected', async () => {
@@ -359,9 +380,11 @@ test('renders connectors tab and saves both connector subscription types', async
     );
   });
 
-  expect(await screen.findByText('Telegram Trigger Subscriptions')).toBeTruthy();
+  expect(await screen.findByText('Telegram')).toBeTruthy();
+  expect(screen.getAllByText('Configured').length).toBeGreaterThan(0);
   expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
   expect(screen.getByDisplayValue('Ops Chat')).toBeTruthy();
+  expect(screen.getByDisplayValue('********')).toBeTruthy();
   expect(screen.getByDisplayValue('-1001234567890')).toBeTruthy();
   expect(screen.getByDisplayValue('Ops iMessage')).toBeTruthy();
   expect(screen.getByDisplayValue('+15551234567')).toBeTruthy();
