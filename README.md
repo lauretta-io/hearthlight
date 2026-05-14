@@ -314,6 +314,8 @@ macOS packaged app documentation:
 docs/macos_dmg.md
 ```
 
+**Releases:** align versions in `pyproject.toml` and `frontend/package.json`, then push a **`v*`** tag (details in `docs/macos_dmg.md`).
+
 After startup, open the frontend in your browser at `http://localhost:3000`,
 configure sources, save default model bindings, save anomaly prompts, define any triggered alerts,
 and then use the dashboard start/stop controls to run the pipeline.

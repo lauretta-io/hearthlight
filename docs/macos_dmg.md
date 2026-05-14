@@ -73,6 +73,13 @@ GitHub Actions workflow:
 
 - `.github/workflows/macos-dmg.yml`
 
+**Release DMG:** push a **`v*`** tag so CI attaches `dist/Hearthlight.dmg` to that GitHub Release (match `pyproject.toml` / `frontend/package.json` to the version). Manual “Run workflow” only uploads Actions artifacts.
+
+```bash
+git tag -a v0.9.0 -m "v0.9.0"
+git push origin v0.9.0
+```
+
 Expected secrets for signed/notarized releases:
 
 - `APPLE_CERTIFICATE_P12_BASE64`
