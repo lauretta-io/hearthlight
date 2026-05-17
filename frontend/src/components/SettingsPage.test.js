@@ -48,7 +48,17 @@ beforeEach(() => {
                 adapter: 'yolox_detector',
                 capabilities: {
                   tasks: ['PERSON', 'BAG'],
-                  classes: ['person', 'backpack', 'handbag', 'suitcase'],
+                  classes: ['person', 'bicycle', 'car', 'backpack', 'handbag', 'suitcase'],
+                },
+              },
+              {
+                model_key: 'builtin_yolox_tiny_cpu',
+                display_name: 'YOLOX Tiny (CPU)',
+                stage: 'detector',
+                adapter: 'yolox_detector',
+                capabilities: {
+                  tasks: ['PERSON', 'BAG'],
+                  classes: ['person', 'bicycle', 'car', 'backpack', 'handbag', 'suitcase'],
                 },
               },
             ],
@@ -117,8 +127,8 @@ beforeEach(() => {
               {
                 signal_family: 'detector',
                 options: [
-                  { key: 'PERSON', label: 'PERSON' },
-                  { key: 'BAG', label: 'BAG' },
+                  { key: 'PERSON', label: 'PERSON', description: 'Matches detector class: person' },
+                  { key: 'BAG', label: 'BAG', description: 'Matches detector classes: backpack, handbag, suitcase' },
                 ],
                 unavailable_reason: null,
               },
@@ -357,6 +367,7 @@ test('renders alert rules and saves through the alert settings endpoint', async 
   expect(screen.queryByRole('tab', { name: 'Rules' })).toBeNull();
   expect(screen.getByDisplayValue('Bag Watch')).toBeTruthy();
   expect(screen.getByDisplayValue('BAG')).toBeTruthy();
+  expect(screen.getByText('Matches detector classes: backpack, handbag, suitcase')).toBeTruthy();
 
   await act(async () => {
     fireEvent.click(screen.getByText('Save Alert Rules'));
@@ -425,8 +436,10 @@ test('renders model library with readable stage and model descriptions', async (
   expect(screen.getByText('Detector Models')).toBeTruthy();
   expect(screen.getByText('YOLOX Small (GPU)')).toBeTruthy();
   expect(screen.getAllByText('Default').length).toBeGreaterThan(0);
-  expect(screen.getByText(/find people and bags in each frame/i)).toBeTruthy();
-  expect(screen.getByText(/Available detector classes include person, backpack, handbag, suitcase/i)).toBeTruthy();
+  expect(screen.getAllByText(/find people and bags in each frame/i).length).toBeGreaterThan(0);
+  expect(
+    screen.getAllByText(/Available detector classes include person, bicycle, car, backpack, handbag, suitcase/i).length
+  ).toBeGreaterThan(0);
   expect(screen.getAllByText(/Prompt Rules Stage 2/).length).toBeGreaterThan(0);
   expect(screen.queryByText('Person ReID Models')).toBeNull();
   expect(screen.getByText(/GET .*\/model-options/)).toBeTruthy();

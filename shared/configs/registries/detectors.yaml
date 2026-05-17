@@ -1,3 +1,70 @@
+builtin_yolox_nano_cpu:
+  stage: detector
+  adapter: yolox_detector
+  artifact_ref: yolox-nano
+  runtime:
+    backend: torch
+    precision: fp32
+    device: cpu
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: hearthlight_model_zoo.detectors
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 1
+
+builtin_yolox_tiny_gpu:
+  stage: detector
+  adapter: yolox_detector
+  artifact_ref: yolox-tiny
+  fallback_model_key: builtin_yolox_tiny_cpu
+  runtime:
+    backend: torch
+    precision: fp16
+    device: cuda:0
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: hearthlight_model_zoo.detectors
+  requires_gpu: true
+  resource_profile:
+    gpu_memory_mb: 1536
+
+builtin_yolox_tiny_cpu:
+  stage: detector
+  adapter: yolox_detector
+  artifact_ref: yolox-tiny
+  runtime:
+    backend: torch
+    precision: fp32
+    device: cpu
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: hearthlight_model_zoo.detectors
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 2
+
 builtin_yolox_s_gpu:
   stage: detector
   adapter: yolox_detector
@@ -42,3 +109,25 @@ builtin_yolox_s_cpu:
   requires_gpu: false
   resource_profile:
     cpu_cores: 2
+
+builtin_yolox_m_gpu:
+  stage: detector
+  adapter: yolox_detector
+  artifact_ref: yolox-m
+  runtime:
+    backend: torch
+    precision: fp16
+    device: cuda:0
+  capabilities:
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck:
+    import_path: hearthlight_model_zoo.detectors
+  requires_gpu: true
+  resource_profile:
+    gpu_memory_mb: 3072

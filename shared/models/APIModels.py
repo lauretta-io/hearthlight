@@ -512,6 +512,7 @@ class TriggerRule(BaseModel):
 class AlertRuleOption(BaseModel):
     key: str
     label: str
+    description: str | None = None
 
 
 class AlertRuleSignalOptions(BaseModel):

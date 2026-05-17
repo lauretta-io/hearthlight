@@ -44,6 +44,8 @@ DETECTOR_CLASS_ALIAS_MAP = {
     "luggage": "BAG",
 }
 
+DETECTOR_TRIGGER_FAMILY_ORDER = ("PERSON", "BAG")
+
 
 def ensure_alert_rule_tables() -> None:
     engine = get_engine()
@@ -89,13 +91,34 @@ def get_detector_rule_targets(registration: dict[str, Any] | None) -> list[dict[
             raw_targets.extend(values)
     if not raw_targets:
         raw_targets.extend(_load_artifact_classes(registration.get("artifact_ref")))
-    normalized_targets: OrderedDict[str, str] = OrderedDict()
+    normalized_targets: OrderedDict[str, list[str]] = OrderedDict()
     for raw_target in raw_targets:
-        normalized = _normalize_detector_target(str(raw_target))
-        if normalized is None or normalized in normalized_targets:
+        cleaned_target = str(raw_target).strip()
+        normalized = _normalize_detector_target(cleaned_target)
+        if normalized is None:
             continue
-        normalized_targets[normalized] = normalized
-    return [{"key": key, "label": label} for key, label in normalized_targets.items()]
+        if normalized not in normalized_targets:
+            normalized_targets[normalized] = []
+        lowered_target = cleaned_target.lower()
+        if lowered_target and lowered_target not in normalized_targets[normalized]:
+            normalized_targets[normalized].append(lowered_target)
+    options = []
+    for key in DETECTOR_TRIGGER_FAMILY_ORDER:
+        if key not in normalized_targets:
+            continue
+        raw_matches = normalized_targets[key]
+        description = None
+        if raw_matches:
+            qualifier = "class" if len(raw_matches) == 1 else "classes"
+            description = f"Matches detector {qualifier}: {', '.join(raw_matches)}"
+        options.append(
+            {
+                "key": key,
+                "label": key,
+                "description": description,
+            }
+        )
+    return options
 
 
 def parse_anomaly_type_prompt_yaml(raw_yaml: str | None) -> dict[str, list[str]]:

@@ -27,7 +27,21 @@ class AlertRuleUtilityTests(unittest.TestCase):
         ):
             targets = get_detector_rule_targets(registration)
 
-        self.assertEqual(targets, [{"key": "PERSON", "label": "PERSON"}, {"key": "BAG", "label": "BAG"}])
+        self.assertEqual(
+            targets,
+            [
+                {
+                    "key": "PERSON",
+                    "label": "PERSON",
+                    "description": "Matches detector class: person",
+                },
+                {
+                    "key": "BAG",
+                    "label": "BAG",
+                    "description": "Matches detector classes: backpack, handbag, suitcase",
+                },
+            ],
+        )
 
     def test_build_alert_rule_option_catalog_marks_detector_unavailable_without_classes(self):
         bundle = {

@@ -3,6 +3,11 @@
 Real-time anomaly-detection backend for analyzing CCTV feeds, identifying unusual activity, and
 supporting incident workflows.
 
+Current release: `0.8.0`
+
+- release notes: [CHANGELOG.md](/Users/galvinwidjaja/code/cursor/hearthlight/CHANGELOG.md:1)
+- API, CLI, frontend package metadata, and macOS bundle metadata are aligned to `0.8.0`
+
 ## Repository Overview
 
 Main runtime services:
@@ -36,6 +41,7 @@ More detail:
 - Architecture notes: `docs/architecture.md`
 - Repository guide: `docs/repository.md`
 - Initialization guide: `docs/initialization.md`
+- Changelog: `CHANGELOG.md`
 - Container runbook: `docs/containers.md`
 - Security notes: `docs/security.md`
 - Testing guide: `docs/testing.md`
@@ -72,10 +78,30 @@ Triggered alerts follow the same control-plane model:
 - anomaly object and anomaly activity targets come only from the saved anomaly prompt settings
 - the browser does not parse YAML or registry files directly; the backend prepares those option lists
 
+Validated detector class surface for the current default COCO-trained YOLOX detector family:
+
+- raw detector classes exposed by the model metadata: the full COCO 80-class surface
+- example classes: `person`, `bicycle`, `car`, `backpack`, `handbag`, `suitcase`, `truck`, `cell phone`
+- live Hearthlight detector trigger IDs: `PERSON`, `BAG`
+- current runtime mapping:
+  - `person` -> `PERSON`
+  - `backpack`, `handbag`, `suitcase` -> `BAG`
+
+This means the model library shows the full raw detector class surface, while trigger rules currently
+match against the normalized live detector IDs that the pipeline emits.
+
 ## Current State of the Docs
 
 Use this README plus `docs/architecture.md`, `docs/repository.md`, and
 `docs/initialization.md` as the source of truth for the current repository.
+
+## 0.8.0 Highlights
+
+- source labels now default intelligently to `Camera N`, `Webcam N`, or the uploaded video filename without its extension
+- source-level AI overrides hide automatically when `Enable Video AI` is turned off
+- the frontend now runs on Vite instead of `react-scripts`
+- anomaly Stage 1 and Stage 2 defaults now have local CPU/CUDA/MLX-safe registry fallbacks
+- connectors are presented as a cleaner single-column list with configured-state badges
 
 ## Prerequisites
 
@@ -193,7 +219,6 @@ python3 scripts/docker_build_test.py
 
 The recommended startup path is the Hearthlight CLI launcher. It adds startup-time choice over:
 
-- service mode (`api` or `pipeline`)
 - config template
 - camera/source preset
 - detector model inventory

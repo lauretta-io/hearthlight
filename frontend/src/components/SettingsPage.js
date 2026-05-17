@@ -320,6 +320,14 @@ const normalizeSourceKindLabel = (kind) => {
 const formatLibraryModelId = (modelKey) => `${modelKey || ''}`.replace(/^builtin_/, '') || 'n/a';
 
 const formatListLabel = (items = []) => items.filter(Boolean).join(', ');
+const formatDetectorClassSummary = (items = []) => {
+  const normalized = items.filter(Boolean);
+  if (normalized.length <= 8) {
+    return formatListLabel(normalized);
+  }
+  const visible = normalized.slice(0, 8);
+  return `${formatListLabel(visible)}, and ${normalized.length - visible.length} more`;
+};
 const normalizeDetectorClassLabel = (value) => {
   const normalized = `${value || ''}`.trim();
   if (!normalized) {
@@ -1764,7 +1772,7 @@ const SettingsPage = ({
                                       <div className="muted-text">{describeModelFit(option)}</div>
                                       {option.stage === 'detector' && hasExpandedDetectorClasses(detectorClasses) && (
                                         <div className="muted-text">
-                                          Available detector classes include {formatListLabel(detectorClasses)}.
+                                          Available detector classes include {formatDetectorClassSummary(detectorClasses)}.
                                         </div>
                                       )}
                                     </div>
@@ -1937,6 +1945,7 @@ const SettingsPage = ({
                                 {sourceRules.map((rule, ruleIndex) => {
                                   const selectedSignalOptions = getSignalOptionsForSource(rule.source_id, rule.signal_family);
                                   const targetOptions = selectedSignalOptions?.options || [];
+                                  const selectedTargetOption = targetOptions.find((option) => option.key === rule.target_key);
                                   return (
                                     <div key={rule.clientKey} className="source-row">
                                       <div className="source-row-header">
@@ -1989,6 +1998,9 @@ const SettingsPage = ({
                                               </option>
                                             ))}
                                           </select>
+                                          {selectedTargetOption?.description && (
+                                            <small className="muted-text">{selectedTargetOption.description}</small>
+                                          )}
                                         </label>
                                         <label>
                                           <span>Min Confidence</span>

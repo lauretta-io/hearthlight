@@ -944,7 +944,7 @@ class ModelRegistryTests(unittest.TestCase):
     def test_build_model_option_catalog_enriches_detector_classes_from_model_zoo_artifacts(self):
         with patch(
             "shared.utils.model_registry._load_artifact_classes",
-            return_value=["person", "backpack", "handbag", "suitcase"],
+            return_value=["person", "bicycle", "car", "backpack", "handbag", "suitcase"],
         ):
             catalog = build_model_option_catalog(load_registry_bundle())
         detector_stage = next(entry for entry in catalog["stages"] if entry["stage"] == "detector")
@@ -953,7 +953,10 @@ class ModelRegistryTests(unittest.TestCase):
         )
         self.assertEqual(
             yolox_option["capabilities"].get("classes"),
-            ["person", "backpack", "handbag", "suitcase"],
+            ["person", "bicycle", "car", "backpack", "handbag", "suitcase"],
+        )
+        self.assertTrue(
+            any(option["model_key"] == "builtin_yolox_tiny_cpu" for option in detector_stage["options"])
         )
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")

@@ -1,0 +1,22 @@
+# Changelog
+
+## 0.8.0 - 2026-05-15
+
+- bumped the project version to `0.8.0` across the Python package, frontend package metadata, macOS bundle metadata, and FastAPI OpenAPI metadata
+- widened the default YOLOX detector surface to COCO-trained classes and added extra YOLOX size options in the model zoo
+- migrated the frontend from `react-scripts` to Vite and rebuilt the frontend package lockfile
+- simplified source configuration defaults:
+  - blank labels now resolve to `Camera N` for standard camera sources
+  - webcam sources default to `Webcam N`
+  - uploaded videos default to the uploaded filename without its extension
+- hid source-level detector, tracker, and anomaly override selectors whenever `Enable Video AI` is turned off while preserving the saved disabled state
+- renamed the source save action to `Update Source Settings` and added a visible loading spinner while source settings save
+- expanded local anomaly registry compatibility so `siglip_stage_1_*` and `smolvlm_stage_2_*` defaults resolve even when the external model-zoo catalog is unavailable
+- simplified the Connectors page into a single-column connector list with configured-state badges
+- removed stale frontend pages and assets from the retired Control, Entity, and POI flows
+- cleaned up duplicate backup files such as `README (1).md` and `.gitignore (1)`
+- documented the validated detector class surface and clarified that live detector trigger IDs remain normalized to `PERSON` and `BAG`
+
+## Earlier History
+
+- changes before `0.8.0` were made directly in the repository without a maintained release changelog

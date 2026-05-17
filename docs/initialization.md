@@ -56,7 +56,7 @@ python3 scripts/container_preflight.py
 This catches missing Docker, env files, config files, and optional profile gaps before a full
 startup attempt.
 
-## 4. Choose startup mode
+## 4. Start the system
 
 Use the launcher for host-aware startup:
 
@@ -72,7 +72,6 @@ hearthlight list-models
 
 The launcher can choose:
 
-- service mode: `api` or `pipeline`
 - execution profile: `cpu` or `cuda`
 - config template
 - source preset
@@ -106,6 +105,24 @@ Alert-rule options are prepared by the backend:
 - detector class choices come from the effective detector model for that source
 - anomaly object and anomaly activity choices come only from the saved anomaly prompt settings
 
+For the current default COCO-trained YOLOX detector family, the validated raw detector classes are
+the full COCO 80-class surface. Representative examples include:
+
+- `person`
+- `bicycle`
+- `car`
+- `backpack`
+- `handbag`
+- `suitcase`
+
+The live trigger IDs are still normalized by the runtime to:
+
+- `PERSON`
+- `BAG`
+
+So a detector trigger rule should use `PERSON` for person detections and `BAG` for any of
+`backpack`, `handbag`, or `suitcase`.
+
 ## 6. Understand the split between startup and run control
 
 Repository initialization happens on the host:
@@ -134,7 +151,7 @@ The effective runtime model set is always resolved as:
 - `missing tracker registration builtin_bytetrack`
   - runtime now falls back to the legacy `bytetrack` name if the registration is missing
 - `gpu is required but unavailable`
-  - use `--profile cpu`, switch to CPU-safe model bindings, or start only in `api` mode
+  - use `--profile cpu` or switch to CPU-safe model bindings
 - missing uploads or dead camera URLs
   - fix the source rows in Settings or Run before retrying `/start`
 - detector alert options unavailable
