@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
+from pathlib import Path
 import json
 from typing import TypeVar
 import logging
@@ -475,15 +476,58 @@ class DatabaseWorker:
             metadata=metadata,
         )
         if telegram_subscriptions:
+            media = self.resolve_telegram_media(
+                run_identifier=run_row.run_identifier if run_row is not None else None,
+                camera_id=incident_row.camera_id,
+                source_id=source_id,
+            )
             queue_telegram_trigger_notifications(
                 telegram_subscriptions,
                 trigger_text=trigger_text,
+                media=media,
             )
         if apple_message_subscriptions:
             queue_apple_message_trigger_notifications(
                 apple_message_subscriptions,
                 trigger_text=trigger_text,
             )
+
+    def resolve_telegram_media(
+        self,
+        *,
+        run_identifier: str | None,
+        camera_id: int | None,
+        source_id: int | None,
+    ) -> dict:
+        if not run_identifier:
+            return {}
+        camera_key = camera_id
+        if camera_key is None and source_id is not None:
+            source_row = self.get_source_row_by_id(source_id)
+            if source_row is not None and source_row.kind == "webcam":
+                try:
+                    camera_key = int(source_row.source_value)
+                except (TypeError, ValueError):
+                    camera_key = None
+        if camera_key is None:
+            camera_key = 0
+        frame_row = (
+            self.db.query(SQLModels.Frame)
+            .filter_by(run_id=DatabaseWorker.run_id, cam_id=camera_key, is_deleted=False)
+            .order_by(SQLModels.Frame.id.desc())
+            .first()
+        )
+        if frame_row is None:
+            return {}
+        candidate_path = str(getattr(frame_row, "path", "") or "").strip()
+        if not candidate_path:
+            return {}
+        resolved = Path(candidate_path).expanduser()
+        if not resolved.is_absolute():
+            resolved = (Path.cwd() / resolved).resolve()
+        if not resolved.exists():
+            return {}
+        return {"frame_snapshot_path": str(resolved)}
 
     def maybe_create_detector_alerts(self, track: DataModels.TrackInstance):
         source_id = self.get_source_template_id_for_camera(track.cam_id)

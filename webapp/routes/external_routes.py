@@ -175,6 +175,7 @@ from ...shared.utils.system_state import (
     SystemStatus,
     derive_system_status,
     get_error_modules,
+    normalize_module_status,
 )
 from .operations_routes import create_entity_id, create_incident_id, get_last_journey_node
 
@@ -2039,6 +2040,8 @@ def build_telegram_trigger_subscription_responses(db: Session):
                 else ""
             ),
             chat_id=str(get_connector_endpoint_config(row).get("chat_id", "") or ""),
+            send_media=bool(get_connector_endpoint_config(row).get("send_media", False)),
+            media_source=str(get_connector_endpoint_config(row).get("media_source", "none") or "none"),
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
@@ -2076,9 +2079,11 @@ def replace_telegram_trigger_subscriptions(
                 {
                     "bot_token": subscription.bot_token,
                     "chat_id": subscription.chat_id,
+                    "send_media": bool(subscription.send_media),
+                    "media_source": str(subscription.media_source or "none"),
                 },
             ),
-            delivery_capabilities=["text"],
+            delivery_capabilities=["text", "photo"],
         )
         persisted_rows.append(row)
         if row.id is not None:
@@ -2373,7 +2378,10 @@ def refresh_runtime_status():
     global status
 
     process_messages()
-    relevant_statuses = [module_status.get(module_name, DataModels.Status.IDLE) for module_name in get_expected_module_names()]
+    relevant_statuses = [
+        normalize_module_status(module_status.get(module_name, DataModels.Status.IDLE))
+        for module_name in get_expected_module_names()
+    ]
     next_status, reset_frames = derive_system_status(status, relevant_statuses)
     with state_lock:
         status = next_status
@@ -2851,9 +2859,9 @@ async def start(db: Session = Depends(get_db)):
     global status
     global run_id
 
-    process_messages()
+    current_status = refresh_runtime_status()
     with state_lock:
-        if status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}:
+        if current_status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}:
             raise HTTPException(
                 status_code=409, detail="system is already starting or running"
             )
@@ -2927,8 +2935,9 @@ async def start(db: Session = Depends(get_db)):
 async def stop(db: Session = Depends(get_db)):
     global status
 
+    current_status = refresh_runtime_status()
     with state_lock:
-        if status == SystemStatus.IDLE:
+        if current_status == SystemStatus.IDLE:
             return {"status": "idle"}
         status = SystemStatus.STOPPING
     try:

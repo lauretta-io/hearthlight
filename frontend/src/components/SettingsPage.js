@@ -189,7 +189,10 @@ const createTelegramSubscriptionDraft = () => ({
   subscription_label: '',
   bot_token: '',
   chat_id: '',
+  send_media: false,
+  media_source: 'none',
 });
+const MASKED_SECRET_VALUE = '********';
 
 const hydrateTelegramSubscription = (subscription, fallbackIndex = 0) => ({
   clientKey: subscription.id
@@ -200,6 +203,8 @@ const hydrateTelegramSubscription = (subscription, fallbackIndex = 0) => ({
   subscription_label: subscription.subscription_label ?? '',
   bot_token: subscription.bot_token ?? '',
   chat_id: subscription.chat_id ?? '',
+  send_media: subscription.send_media ?? false,
+  media_source: subscription.media_source ?? 'none',
 });
 
 const createAppleMessageSubscriptionDraft = () => ({
@@ -263,6 +268,8 @@ const sanitizeTelegramSubscriptionsForApi = (subscriptions) =>
     subscription_label: subscription.subscription_label?.trim() || null,
     bot_token: subscription.bot_token.trim(),
     chat_id: subscription.chat_id.trim(),
+    send_media: Boolean(subscription.send_media),
+    media_source: subscription.media_source || 'none',
   }));
 
 const sanitizeAppleMessageSubscriptionsForApi = (subscriptions) =>
@@ -993,6 +1000,8 @@ const SettingsPage = ({
     telegramSubscriptions.forEach((subscription) => {
       if (!subscription.bot_token.trim()) {
         nextErrors[subscription.clientKey] = 'Bot token is required.';
+      } else if (subscription.bot_token.trim() === MASKED_SECRET_VALUE) {
+        nextErrors[subscription.clientKey] = 'Paste the new bot token value before saving.';
       } else if (!subscription.chat_id.trim()) {
         nextErrors[subscription.clientKey] = 'Chat ID is required.';
       }
@@ -1396,6 +1405,10 @@ const SettingsPage = ({
   };
 
   const sendTelegramTestMessage = async (subscription) => {
+    if (subscription.bot_token.trim() === MASKED_SECRET_VALUE) {
+      setBanner({ kind: 'error', text: 'Bot token is masked. Paste your new token, save, then send test.' });
+      return;
+    }
     if (!subscription.bot_token.trim() || !subscription.chat_id.trim()) {
       setTelegramSubscriptionErrors((previous) => ({
         ...previous,
@@ -1418,6 +1431,8 @@ const SettingsPage = ({
           subscription_label: subscription.subscription_label?.trim() || null,
           bot_token: subscription.bot_token.trim(),
           chat_id: subscription.chat_id.trim(),
+          send_media: Boolean(subscription.send_media),
+          media_source: subscription.media_source || 'none',
         }),
       });
       const data = await response.json();
@@ -2520,6 +2535,25 @@ const SettingsPage = ({
                                   checked={subscription.enabled}
                                   onChange={(event) => setTelegramSubscriptionField(subscription.clientKey, 'enabled', event.target.checked)}
                                 />
+                              </label>
+                              <label className="toggle-field">
+                                <span>Send Media</span>
+                                <input
+                                  type="checkbox"
+                                  checked={Boolean(subscription.send_media)}
+                                  onChange={(event) => setTelegramSubscriptionField(subscription.clientKey, 'send_media', event.target.checked)}
+                                />
+                              </label>
+                              <label>
+                                <span>Media Source</span>
+                                <select
+                                  value={subscription.media_source || 'none'}
+                                  onChange={(event) => setTelegramSubscriptionField(subscription.clientKey, 'media_source', event.target.value)}
+                                  disabled={!subscription.send_media}
+                                >
+                                  <option value="none">None (Text only)</option>
+                                  <option value="frame_snapshot">Frame Snapshot (Telegram photo: thumbnail + tap to expand)</option>
+                                </select>
                               </label>
                             </div>
 

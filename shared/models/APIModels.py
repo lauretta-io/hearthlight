@@ -712,6 +712,8 @@ class TelegramTriggerSubscription(BaseModel):
     subscription_label: str | None = Field(default=None, max_length=255)
     bot_token: str
     chat_id: str
+    send_media: bool = False
+    media_source: str = "none"
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -729,6 +731,13 @@ class TelegramTriggerSubscription(BaseModel):
     @field_validator("chat_id")
     def validate_chat_id(cls, value):
         return validate_non_empty_string(value, "chat_id")
+
+    @field_validator("media_source")
+    def validate_media_source(cls, value):
+        normalized = validate_non_empty_string(value, "media_source").lower()
+        if normalized not in {"none", "frame_snapshot"}:
+            raise ValueError("media_source must be none or frame_snapshot")
+        return normalized
 
 
 class TelegramTriggerTestResponse(BaseModel):
