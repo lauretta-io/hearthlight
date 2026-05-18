@@ -16,6 +16,7 @@ frontend/web control plane.
 - `shared/models`: SQLAlchemy and API data contracts
 - `shared/utils`: runtime helpers, security utilities, model registry, launcher support
 - `shared/configs`: runtime config, model registry files, binding defaults, saved templates
+- `shared/plugins`: restart-loaded plugin manifests and bundled plugin component payloads
 
 ## Frontend and API
 
@@ -58,8 +59,9 @@ The system now uses multiple config sources together:
 
 - `shared/configs/config.yaml`: active runtime config used by the workers
 - `shared/configs/saved_configs/*.yaml`: reusable template and camera-preset files
-- `shared/configs/registries/*.yaml`: model registrations
-- `shared/configs/model_bindings.yaml`: default registry-backed stage bindings
+- `shared/plugins/*/plugin.yaml`: plugin bundle manifests loaded on server restart
+- plugin-referenced YAML payloads: model registrations, trigger zoo entries, connector zoo entries, and rule-set templates
+- `shared/configs/model_bindings.yaml`: default stage bindings for the active plugin-backed model catalog
 - Postgres `control` schema: persisted input sources, uploads, alert rules, and control-plane state
 
 Alert-rule option catalogs intentionally come from the backend instead of the browser:

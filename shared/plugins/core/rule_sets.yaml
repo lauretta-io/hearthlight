@@ -1,0 +1,31 @@
+starter_detection_rules:
+  label: Starter Detection Rules
+  description: Baseline detection-oriented rule templates for people and bag events.
+  enabled: true
+  category: starter
+  templates:
+    - rule_kind: detector
+      signal_family: detector
+      target_key: PERSON
+      alert_level: medium
+      min_confidence: 0.5
+    - rule_kind: detector
+      signal_family: detector
+      target_key: BAG
+      alert_level: medium
+      min_confidence: 0.5
+
+starter_anomaly_rules:
+  label: Starter Anomaly Rules
+  description: Baseline anomaly rule templates for object and behavior detection.
+  enabled: true
+  category: starter
+  templates:
+    - rule_kind: anomaly
+      anomaly_target_kind: object
+      alert_level: medium
+      anomaly_cutoff: 6
+    - rule_kind: anomaly
+      anomaly_target_kind: behavior
+      alert_level: medium
+      anomaly_cutoff: 6

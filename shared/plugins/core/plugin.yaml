@@ -1,0 +1,17 @@
+key: core_builtin
+label: Hearthlight Core
+version: "0.8.0"
+provider: Lauretta
+description: Built-in Hearthlight models, triggers, connectors, and starter rule sets.
+enabled_by_default: true
+components:
+  include_model_zoo: true
+  model_files:
+    detector: ../../configs/registries/detectors.yaml
+    tracker: ../../configs/registries/trackers.yaml
+    reid: ../../configs/registries/reid_models.yaml
+    anomaly_stage_1: ../../configs/registries/anomaly_stage_1_models.yaml
+    anomaly_stage_2: ../../configs/registries/anomaly_stage_2_models.yaml
+  trigger_file: ../../configs/registries/triggers.yaml
+  connector_file: ../../configs/registries/connectors.yaml
+  rule_set_file: rule_sets.yaml

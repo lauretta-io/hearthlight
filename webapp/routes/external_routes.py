@@ -9,6 +9,7 @@ from datetime import datetime
 from importlib import import_module
 from pathlib import Path
 from threading import Lock
+from typing import Any
 from urllib.parse import urlparse
 from urllib import error as urllib_error
 from urllib import parse as urllib_parse
@@ -29,7 +30,7 @@ from ...shared.constants import (
     SHORT_SLEEP,
     VIDEO_EXTENSIONS,
 )
-from ...shared.database.database import SessionLocal, get_db
+from ...shared.database.database import SessionLocal, get_db, get_engine
 from ...shared.models import DataModels, SQLModels
 from ...shared.models.APIModels import (
     AdmissionStatus,
@@ -55,6 +56,8 @@ from ...shared.models.APIModels import (
     ModelOptionCatalog,
     ModelResultLogPage,
     ModelRegistration,
+    PluginBundleRecord,
+    PluginComponentRecord,
     MountedModelStage,
     MODEL_BINDING_STAGES,
     MonitoringOverview,
@@ -68,6 +71,7 @@ from ...shared.models.APIModels import (
     Status,
     TriggerRule,
     TriggerZooEntry,
+    RuleSetZooEntry,
     TelegramTriggerSubscription,
     TelegramTriggerTestResponse,
     UploadResponse,
@@ -108,7 +112,7 @@ from ...shared.utils.telegram_notifications import (
     ensure_telegram_subscription_tables,
     send_test_telegram_trigger_message,
 )
-from ...shared.utils.trigger_connector_registry import load_connector_zoo, load_trigger_zoo
+from ...shared.utils.trigger_connector_registry import load_connector_zoo, load_rule_set_zoo, load_trigger_zoo
 from ...shared.utils.image import decode_base64
 from ...shared.utils.input_sources import (
     build_runtime_camera_map,
@@ -149,6 +153,12 @@ from ...shared.utils.model_registry import (
     resolve_bindings_for_source,
     sync_registry_bundle_to_db,
     validate_source_bindings,
+)
+from ...shared.utils.plugin_loader import (
+    COMPONENT_TYPE_CONNECTOR,
+    COMPONENT_TYPE_TRIGGER,
+    load_plugin_catalog,
+    sync_plugin_catalog_to_db,
 )
 from ...shared.utils.resource_monitor import (
     PersistedEvent,
@@ -897,6 +907,12 @@ def get_registry_bundle(
     if db is None:
         return bundle
     try:
+        ensure_plugin_tables()
+        sync_plugin_catalog_to_db(
+            db,
+            bundle.get("plugin_catalog") or load_plugin_catalog(),
+            SQLModels,
+        )
         synced_source_rows = source_rows if source_rows is not None else get_active_source_rows(db)
         sync_registry_bundle_to_db(
             db,
@@ -912,6 +928,79 @@ def get_registry_bundle(
         db.rollback()
         logger.exception("Failed to mirror model registry metadata into control schema")
     return bundle
+
+
+def ensure_plugin_tables() -> None:
+    SQLModels.Base.metadata.create_all(
+        bind=get_engine(),
+        tables=[
+            SQLModels.PluginBundle.__table__,
+            SQLModels.PluginComponent.__table__,
+        ],
+        checkfirst=True,
+    )
+
+
+def _build_plugin_component_lookup_from_bundle(bundle: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
+    plugin_catalog = bundle.get("plugin_catalog") or load_plugin_catalog()
+    lookup: dict[str, dict[str, dict[str, Any]]] = {}
+    for component in plugin_catalog.get("components", []):
+        component_type = str(component.get("component_type") or "").strip()
+        component_key = str(component.get("component_key") or "").strip()
+        if not component_type or not component_key:
+            continue
+        lookup.setdefault(component_type, {})[component_key] = component
+    return lookup
+
+
+def build_plugin_bundle_responses(db: Session) -> list[PluginBundleRecord]:
+    ensure_plugin_tables()
+    rows = (
+        db.query(SQLModels.PluginBundle)
+        .filter_by(is_deleted=False)
+        .order_by(SQLModels.PluginBundle.plugin_key.asc())
+        .all()
+    )
+    return [
+        PluginBundleRecord(
+            plugin_key=row.plugin_key,
+            label=row.label,
+            version=row.version,
+            provider=row.provider,
+            description=row.description or "",
+            enabled_by_default=bool(row.enabled_by_default),
+            manifest_path=row.manifest_path,
+            manifest_fingerprint=row.manifest_fingerprint,
+            load_status=row.load_status,
+            load_error=row.load_error,
+        )
+        for row in rows
+    ]
+
+
+def build_plugin_component_responses(db: Session, *, plugin_key: str | None = None) -> list[PluginComponentRecord]:
+    ensure_plugin_tables()
+    query = db.query(SQLModels.PluginComponent).filter_by(is_deleted=False)
+    if plugin_key:
+        query = query.filter_by(plugin_key=plugin_key)
+    rows = query.order_by(
+        SQLModels.PluginComponent.component_type.asc(),
+        SQLModels.PluginComponent.component_key.asc(),
+    ).all()
+    return [
+        PluginComponentRecord(
+            plugin_key=row.plugin_key,
+            component_key=row.component_key,
+            component_type=row.component_type,
+            stage=row.stage,
+            category=row.category,
+            source_path=row.source_path,
+            metadata=parse_serialized_json(row.metadata_json) or {},
+            availability_status=row.availability_status,
+            load_error=row.load_error,
+        )
+        for row in rows
+    ]
 
 
 def get_upload_rows_by_id(db: Session, upload_ids: list[int]):
@@ -1291,6 +1380,7 @@ def build_model_registration_responses(bundle: dict):
                 ModelRegistration(
                     model_key=model_key,
                     display_name=build_model_display_name(stage, model_key, registration),
+                    plugin_key=registration.get("plugin_key"),
                     stage=stage,
                     adapter=registration.get("adapter"),
                     artifact_ref=registration.get("artifact_ref"),
@@ -1313,8 +1403,23 @@ def build_model_binding_responses(
     has_gpu: bool | None = None,
 ):
     defaults = build_default_bindings(bundle, has_gpu=has_gpu)
+    component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
     bindings = [
-        ModelBinding(stage=stage, model_key=defaults.get(stage), binding_scope="default")
+        ModelBinding(
+            stage=stage,
+            model_key=defaults.get(stage),
+            binding_scope="default",
+            resolved=(
+                defaults.get(stage) in component_lookup.get("model", {})
+                if defaults.get(stage)
+                else True
+            ),
+            unavailable_reason=(
+                None
+                if not defaults.get(stage) or defaults.get(stage) in component_lookup.get("model", {})
+                else f"model plugin component {defaults.get(stage)} is unavailable"
+            ),
+        )
         for stage in sorted(OPERATOR_MODEL_STAGES)
     ]
     for source_row in source_rows:
@@ -1327,6 +1432,12 @@ def build_model_binding_responses(
                         model_key=model_key,
                         source_id=source_row.id,
                         binding_scope="source",
+                        resolved=model_key in component_lookup.get("model", {}),
+                        unavailable_reason=(
+                            None
+                            if model_key in component_lookup.get("model", {})
+                            else f"model plugin component {model_key} is unavailable"
+                        ),
                     )
                 )
     return bindings
@@ -1679,6 +1790,11 @@ def build_alert_rule_responses(db: Session):
 
 def build_trigger_rule_responses(db: Session):
     ensure_alert_rule_tables()
+    ensure_plugin_tables()
+    source_rows = get_active_source_rows(db)
+    bundle = get_registry_bundle(db, source_rows=source_rows)
+    plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
+    trigger_components = plugin_component_lookup.get(COMPONENT_TYPE_TRIGGER, {})
     rows = (
         db.query(SQLModels.TriggerRule)
         .filter_by(is_deleted=False)
@@ -1705,8 +1821,16 @@ def build_trigger_rule_responses(db: Session):
             min_confidence=float(row.min_confidence),
             anomaly_cutoff=_deserialize_trigger_rule_anomaly_cutoff(row),
             alert_level=row.alert_level,
-            delivery_target_ids=parse_serialized_json(row.delivery_target_ids_json, []),
-            metadata=parse_serialized_json(row.metadata_json, {}),
+            delivery_target_ids=parse_serialized_json(row.delivery_target_ids_json) or [],
+            metadata=parse_serialized_json(row.metadata_json) or {},
+            resolved=(
+                _deserialize_trigger_rule_key(row) in trigger_components
+            ),
+            unavailable_reason=(
+                None
+                if _deserialize_trigger_rule_key(row) in trigger_components
+                else f"trigger plugin component {_deserialize_trigger_rule_key(row)} is unavailable"
+            ),
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
@@ -1715,7 +1839,7 @@ def build_trigger_rule_responses(db: Session):
 
 
 def _deserialize_trigger_rule_source_ids(row: SQLModels.TriggerRule) -> list[int]:
-    source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
+    source_ids = parse_serialized_json(getattr(row, "source_ids_json", None)) or []
     if isinstance(source_ids, list):
         normalized: list[int] = []
         for item in source_ids:
@@ -1730,6 +1854,10 @@ def _deserialize_trigger_rule_source_ids(row: SQLModels.TriggerRule) -> list[int
     if row.source_template_id:
         return [int(row.source_template_id)]
     return []
+
+
+def _deserialize_trigger_rule_key(row: SQLModels.TriggerRule) -> str:
+    return str(getattr(row, "trigger_key", "") or "").strip().lower()
 
 
 def _deserialize_trigger_rule_kind(row: SQLModels.TriggerRule) -> str:
@@ -1756,7 +1884,7 @@ def _deserialize_trigger_rule_anomaly_target_kind(row: SQLModels.TriggerRule) ->
 def _deserialize_trigger_rule_anomaly_cutoff(row: SQLModels.TriggerRule) -> int | None:
     value = getattr(row, "anomaly_cutoff", None)
     if value is None:
-        metadata = parse_serialized_json(row.metadata_json, {})
+        metadata = parse_serialized_json(row.metadata_json) or {}
         if isinstance(metadata, dict):
             value = metadata.get("anomaly_cutoff")
     if value is None:
@@ -1880,6 +2008,8 @@ def replace_alert_rules(db: Session, rules: list[AlertRule]):
 
 def replace_trigger_rules(db: Session, rules: list[TriggerRule]):
     ensure_alert_rule_tables()
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
     existing_rows = (
         db.query(SQLModels.TriggerRule)
         .filter_by(is_deleted=False)
@@ -1894,6 +2024,11 @@ def replace_trigger_rules(db: Session, rules: list[TriggerRule]):
     )
 
     for rule in rules:
+        if rule.trigger_key not in plugin_component_lookup.get(COMPONENT_TYPE_TRIGGER, {}):
+            raise HTTPException(
+                status_code=400,
+                detail=f"trigger plugin component {rule.trigger_key} is unavailable",
+            )
         if rule.trigger_key != TRIGGER_KEY_ALERT_RULE:
             continue
         if not rule.source_ids:
@@ -1972,6 +2107,9 @@ def get_connector_endpoint_rows(db: Session, connector_key: str | None = None):
 
 
 def build_connector_endpoint_responses(db: Session):
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
+    connector_components = plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {})
     return [
         ConnectorEndpoint(
             id=row.id,
@@ -1980,6 +2118,12 @@ def build_connector_endpoint_responses(db: Session):
             enabled=row.enabled,
             config=redact_connector_endpoint_config(get_connector_endpoint_config(row)),
             delivery_capabilities=get_connector_delivery_capabilities(row),
+            resolved=row.connector_key in connector_components,
+            unavailable_reason=(
+                None
+                if row.connector_key in connector_components
+                else f"connector plugin component {row.connector_key} is unavailable"
+            ),
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
@@ -1989,11 +2133,18 @@ def build_connector_endpoint_responses(db: Session):
 
 def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint]):
     ensure_connector_endpoint_tables()
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
     existing_rows = get_connector_endpoint_rows(db)
     existing_by_id = {row.id: row for row in existing_rows}
     seen_ids = set()
     persisted_rows = []
     for endpoint in endpoints:
+        if endpoint.connector_key not in plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {}):
+            raise HTTPException(
+                status_code=400,
+                detail=f"connector plugin component {endpoint.connector_key} is unavailable",
+            )
         row = existing_by_id.get(endpoint.id) if endpoint.id is not None else None
         if row is None:
             row = SQLModels.ConnectorEndpoint()
@@ -3043,13 +3194,45 @@ def update_anomaly_prompt_settings(payload: AnomalyPromptSettings):
 
 
 @external_router.get("/trigger-zoo", response_model=list[TriggerZooEntry])
-def get_trigger_zoo():
-    return [TriggerZooEntry.model_validate(entry) for entry in load_trigger_zoo()]
+def get_trigger_zoo(db: Session = Depends(get_db)):
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    trigger_entries = bundle.get("plugin_catalog", {}).get("triggers") or load_trigger_zoo()
+    return [TriggerZooEntry.model_validate(entry) for entry in trigger_entries]
 
 
 @external_router.get("/connector-zoo", response_model=list[ConnectorZooEntry])
-def get_connector_zoo():
-    return [ConnectorZooEntry.model_validate(entry) for entry in load_connector_zoo()]
+def get_connector_zoo(db: Session = Depends(get_db)):
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    connector_entries = bundle.get("plugin_catalog", {}).get("connectors") or load_connector_zoo()
+    return [ConnectorZooEntry.model_validate(entry) for entry in connector_entries]
+
+
+@external_router.get("/rule-set-zoo", response_model=list[RuleSetZooEntry])
+def get_rule_set_zoo(db: Session = Depends(get_db)):
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    rule_set_entries = bundle.get("plugin_catalog", {}).get("rule_sets") or load_rule_set_zoo()
+    return [RuleSetZooEntry.model_validate(entry) for entry in rule_set_entries]
+
+
+@external_router.get("/plugins", response_model=list[PluginBundleRecord])
+def get_plugins(db: Session = Depends(get_db)):
+    get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    return build_plugin_bundle_responses(db)
+
+
+@external_router.get("/plugins/components", response_model=list[PluginComponentRecord])
+def get_plugin_components(plugin_key: str | None = None, db: Session = Depends(get_db)):
+    get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    return build_plugin_component_responses(db, plugin_key=plugin_key)
+
+
+@external_router.get("/plugins/{plugin_key}", response_model=PluginBundleRecord)
+def get_plugin(plugin_key: str, db: Session = Depends(get_db)):
+    get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    for plugin in build_plugin_bundle_responses(db):
+        if plugin.plugin_key == plugin_key:
+            return plugin
+    raise HTTPException(status_code=404, detail="plugin not found")
 
 
 @external_router.get("/settings/trigger-rules", response_model=list[TriggerRule])

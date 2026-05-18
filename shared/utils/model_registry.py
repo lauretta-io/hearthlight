@@ -171,27 +171,51 @@ def _normalize_registrations(
 
 
 def load_model_registries(registry_dir: Path | None = None) -> dict[str, dict[str, dict[str, Any]]]:
-    registry_root = registry_dir or REGISTRY_DIR
-    upstream_catalog = _load_upstream_master_catalog()
-    upstream_models = upstream_catalog.get("models") if isinstance(upstream_catalog, dict) else {}
-    registries: dict[str, dict[str, dict[str, Any]]] = {}
-    for stage, filename in REGISTRY_FILE_MAP.items():
-        normalized = {}
-        if isinstance(upstream_models, dict):
-            normalized.update(
-                _normalize_registrations(
-                    dict(upstream_models.get(stage) or {}),
-                    stage=stage,
-                    source_path=MODEL_ZOO_MASTER_CATALOG_SOURCE,
+    from .plugin_loader import load_plugin_catalog
+
+    if registry_dir is not None:
+        plugin_root = registry_dir.parent.parent / "plugins"
+        if not plugin_root.exists():
+            upstream_catalog = _load_upstream_master_catalog()
+            upstream_models = upstream_catalog.get("models") if isinstance(upstream_catalog, dict) else {}
+            registries: dict[str, dict[str, dict[str, Any]]] = {}
+            for stage, filename in REGISTRY_FILE_MAP.items():
+                normalized = {}
+                if isinstance(upstream_models, dict):
+                    normalized.update(
+                        _normalize_registrations(
+                            dict(upstream_models.get(stage) or {}),
+                            stage=stage,
+                            source_path=MODEL_ZOO_MASTER_CATALOG_SOURCE,
+                        )
+                    )
+                normalized.update(
+                    _normalize_registrations(
+                        _load_yaml(registry_dir / filename),
+                        stage=stage,
+                        source_path=str(registry_dir / filename),
+                    )
                 )
-            )
-        normalized.update(
-            _normalize_registrations(
-                _load_yaml(registry_root / filename),
-                stage=stage,
-                source_path=str(registry_root / filename),
-            )
-        )
+                registries[stage] = normalized
+            return registries
+
+    upstream_catalog = _load_upstream_master_catalog()
+    plugin_catalog = load_plugin_catalog(
+        plugin_root=(registry_dir.parent.parent / "plugins") if registry_dir is not None else None,
+        upstream_model_catalog=upstream_catalog,
+    )
+    registries: dict[str, dict[str, dict[str, Any]]] = {}
+    for stage in REGISTRY_FILE_MAP:
+        normalized = {}
+        for model_key, registration in dict(plugin_catalog.get("models", {}).get(stage) or {}).items():
+            entry = dict(registration or {})
+            entry["capabilities"] = get_registration_capabilities(entry)
+            entry.setdefault("runtime", {})
+            entry.setdefault("healthcheck", {})
+            entry.setdefault("resource_profile", {})
+            entry.setdefault("requires_gpu", False)
+            entry.setdefault("fallback_model_key", None)
+            normalized[model_key] = entry
         registries[stage] = normalized
     return registries
 
@@ -295,6 +319,11 @@ def load_registry_bundle() -> dict[str, Any]:
         "bindings": load_model_bindings(),
     }
     bundle["mounted_models"] = build_effective_mounted_models(bundle, load_mounted_models())
+    from .plugin_loader import load_plugin_catalog
+
+    bundle["plugin_catalog"] = load_plugin_catalog(
+        upstream_model_catalog=_load_upstream_master_catalog(),
+    )
     return bundle
 
 
@@ -826,11 +855,14 @@ def build_runtime_binding_block(
 
 
 def sync_registry_bundle_to_db(db, bundle: dict[str, Any], sql_models, source_rows: list | None = None):
+    active_model_keys: set[str] = set()
     for stage, registrations in bundle.get("models", {}).items():
         for model_key, registration in registrations.items():
+            active_model_keys.add(model_key)
             row = (
                 db.query(sql_models.ModelRegistration)
-                .filter_by(model_key=model_key, is_deleted=False)
+                .filter(sql_models.ModelRegistration.model_key == model_key)
+                .order_by(sql_models.ModelRegistration.id.asc())
                 .first()
             )
             if row is None:
@@ -844,7 +876,7 @@ def sync_registry_bundle_to_db(db, bundle: dict[str, Any], sql_models, source_ro
             row.healthcheck_json = OmegaConf.to_yaml(OmegaConf.create(registration.get("healthcheck") or {}))
             row.requires_gpu = bool(registration.get("requires_gpu"))
             row.resource_profile_json = OmegaConf.to_yaml(OmegaConf.create(registration.get("resource_profile") or {}))
-            row.source_path = str(REGISTRY_DIR / REGISTRY_FILE_MAP[stage])
+            row.source_path = str(registration.get("source_path") or (REGISTRY_DIR / REGISTRY_FILE_MAP[stage]))
             row.is_deleted = False
             row.deleted_at = None
 
@@ -885,6 +917,11 @@ def sync_registry_bundle_to_db(db, bundle: dict[str, Any], sql_models, source_ro
     for row in db.query(sql_models.ModelBindingTemplate).filter_by(binding_scope="source").all():
         if row.source_template_id not in active_source_ids:
             row.is_deleted = True
+
+    for row in db.query(sql_models.ModelRegistration).all():
+        if row.model_key in active_model_keys:
+            continue
+        row.is_deleted = True
 
 def parse_yaml_text(raw_yaml: str | None) -> dict[str, Any]:
     if not raw_yaml:
