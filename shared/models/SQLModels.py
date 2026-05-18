@@ -406,6 +406,7 @@ class InputSourceTemplate(Base):
     tasks = mapped_column(ARRAY(String), nullable=False)
     enabled = mapped_column(Boolean, default=True, nullable=False)
     sort_order = mapped_column(Integer, default=0, nullable=False)
+    process_every_n_frames = mapped_column(Integer, default=1, nullable=False, server_default=text("1"))
     last_error = mapped_column(Text)
     detector_model_key = mapped_column(String(128))
     tracker_model_key = mapped_column(String(128))
@@ -505,12 +506,16 @@ class TriggerRule(Base):
     id = mapped_column(Integer, primary_key=True, autoincrement=True)
     trigger_key = mapped_column(String(128), nullable=False, default="alert_rule_trigger")
     source_template_id = mapped_column(Integer)
+    source_ids_json = mapped_column(Text)
     enabled = mapped_column(Boolean, default=True, nullable=False)
     sort_order = mapped_column(Integer, default=0, nullable=False)
     rule_label = mapped_column(String(255))
+    rule_kind = mapped_column(String(32), default="detector", nullable=False, server_default=text("'detector'"))
     signal_family = mapped_column(String(32))
+    anomaly_target_kind = mapped_column(String(32))
     target_key = mapped_column(String(255))
     min_confidence = mapped_column(Float, default=0.5, nullable=False)
+    anomaly_cutoff = mapped_column(Integer)
     alert_level = mapped_column(String(16), default="medium", nullable=False)
     delivery_target_ids_json = mapped_column(Text)
     metadata_json = mapped_column(Text)
@@ -530,6 +535,22 @@ class ConnectorEndpoint(Base):
     label = mapped_column(String(255))
     config_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
     delivery_capabilities_json = mapped_column(Text, nullable=False, server_default=text("'[]'"))
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class WorkspaceSetting(Base):
+    __tablename__ = "workspace_setting"
+    __table_args__ = (
+        UniqueConstraint("setting_key", name="uq_workspace_setting_key"),
+        {"schema": "control"},
+    )
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    setting_key = mapped_column(String(128), nullable=False)
+    setting_value_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)
@@ -556,6 +577,27 @@ class AnomalyEvent(Base):
     visible_items_json = mapped_column(Text)
     visible_activities_json = mapped_column(Text)
     asset_refs_json = mapped_column(Text)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class ModelResultLog(Base):
+    __tablename__ = "model_result_log"
+    __table_args__ = {"schema": "runtime"}
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id = mapped_column(Integer, nullable=False)
+    source_template_id = mapped_column(Integer)
+    source_label = mapped_column(String(255))
+    camera_id = mapped_column(Integer)
+    stage = mapped_column(String(64), nullable=False)
+    model_key = mapped_column(String(128), nullable=False)
+    model_display_name = mapped_column(String(255))
+    frame_id = mapped_column(Integer)
+    result_summary = mapped_column(Text, nullable=False)
+    result_payload_json = mapped_column(Text)
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)

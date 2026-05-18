@@ -9,7 +9,7 @@ import {
 import '../styles/CameraConfig.css';
 
 const TASK_OPTIONS = ['PERSON', 'BAG'];
-const MODULES = ['INGESTOR', 'REID', 'ASSOCIATION'];
+const MODULES = ['INGESTOR', 'ANOMALY'];
 const SOURCE_KIND_OPTIONS = [
   { value: 'camera_url', label: 'Camera URL' },
   { value: 'video_upload', label: 'Uploaded Video' },

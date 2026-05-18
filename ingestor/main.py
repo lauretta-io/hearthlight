@@ -23,7 +23,7 @@ from ..shared.utils.runtime_guard import (
     should_fail_for_missing_frames,
 )
 from ..shared.utils.timer import LoopTimer
-from ..shared.models.DataModels import Run, StatusMessage, Status
+from ..shared.models.DataModels import Frames, Run, StatusMessage, Status
 from ..shared.database.database_worker import DatabaseWorker
 from ..shared.rabbit_messenger import StatusPublisher
 from ..shared.constants import (
@@ -68,6 +68,11 @@ class Ingestor(Thread):
 
             self.frames_thread = FramesThread(self.capture, max_fps=cfg.input.max_fps)
             self.output_thread = OutputThread(cfg, self.capture.cameras)
+            self.process_every_n_frames = {
+                cam_id: max(1, int(camera.get("process_every_n_frames", 1) or 1))
+                for cam_id, camera in cfg.input.cameras.items()
+            }
+            self.processed_frame_counts = {cam_id: 0 for cam_id in cfg.input.cameras}
             self.run_info = Run(
                 run_identifier=cfg.run_id,
                 output_dir=cfg.output.output_dir,
@@ -204,12 +209,34 @@ class Ingestor(Thread):
                 last_metrics_update = current_time
 
             timer.mark()
-            tracker_inputs, detections = self.detector(frames)
+            frame_subset = []
+            subset_indexes = []
+            for index, frame in enumerate(frames.frames):
+                skip_value = self.process_every_n_frames.get(frame.cam_id, 1)
+                self.processed_frame_counts[frame.cam_id] = self.processed_frame_counts.get(frame.cam_id, 0) + 1
+                if ((self.processed_frame_counts[frame.cam_id] - 1) % skip_value) == 0:
+                    frame_subset.append(frame)
+                    subset_indexes.append(index)
+                else:
+                    frame.tracker_inputs = None
+                    frame.detections = []
+            if frame_subset:
+                subset_frames = Frames(frame_id=frames.frame_id, frames=frame_subset)
+                subset_tracker_inputs, subset_detections = self.detector(subset_frames)
+            else:
+                subset_tracker_inputs, subset_detections = [], []
             timer.time("detect")
 
-            for frame, cam_tracker_inputs, cam_dets in zip(frames.frames, tracker_inputs, detections):
-                frame.tracker_inputs = cam_tracker_inputs
-                frame.detections = cam_dets
+            subset_index_lookup = {
+                frame_index: subset_index
+                for subset_index, frame_index in enumerate(subset_indexes)
+            }
+            for index, frame in enumerate(frames.frames):
+                subset_index = subset_index_lookup.get(index)
+                if subset_index is None:
+                    continue
+                frame.tracker_inputs = subset_tracker_inputs[subset_index]
+                frame.detections = subset_detections[subset_index]
 
             self.output_thread.queue.put(frames)
 

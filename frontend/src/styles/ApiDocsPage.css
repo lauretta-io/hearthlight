@@ -5,12 +5,16 @@
 .api-docs-shell {
   width: 100%;
   padding: clamp(18px, 2.4vw, 30px);
-  border-radius: 24px;
-  border: 1px solid #d7e0ea;
+  border-radius: var(--surface-radius-lg);
+  border: var(--surface-border-width) solid var(--color-border);
   background:
-    radial-gradient(circle at top right, rgba(226, 236, 249, 0.95), transparent 28%),
-    linear-gradient(180deg, rgba(250, 252, 255, 0.97), rgba(255, 255, 255, 0.99));
-  box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+    radial-gradient(circle at top right, color-mix(in srgb, var(--color-primary) 18%, transparent), transparent 28%),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--color-bg-elevated) 92%, transparent),
+      color-mix(in srgb, var(--color-bg-card-strong) 98%, transparent)
+    );
+  box-shadow: 0 20px 40px var(--color-shadow-soft);
 }
 
 .api-docs-header {
@@ -27,7 +31,7 @@
 
 .api-docs-subtitle {
   margin: 6px 0 0;
-  color: #5f6b7a;
+  color: var(--color-text-muted);
 }
 
 .api-docs-link {
@@ -36,19 +40,20 @@
   justify-content: center;
   padding: 12px 16px;
   border-radius: 999px;
-  background: #e8f1fb;
-  color: #17436e;
+  background: var(--color-bg-accent);
+  color: var(--color-info-text);
   text-decoration: none;
   font-weight: 600;
+  border: var(--surface-border-width) solid color-mix(in srgb, var(--color-border) 78%, var(--color-primary) 22%);
 }
 
 .api-docs-error {
   margin-top: 16px;
   border-radius: 14px;
   padding: 14px 16px;
-  background: #fff1f1;
-  border: 1px solid #f0c4c4;
-  color: #8d1d1d;
+  background: var(--color-danger-bg);
+  border: 1px solid color-mix(in srgb, var(--color-danger-text) 20%, var(--color-danger-bg) 80%);
+  color: var(--color-danger-text);
 }
 
 .api-docs-viewer {
@@ -56,11 +61,12 @@
   min-height: 70vh;
   border-radius: 18px;
   overflow: hidden;
-  background: white;
+  background: var(--color-bg-card-strong);
+  border: var(--surface-border-width) solid var(--color-border);
 }
 
 .api-docs-viewer .swagger-ui {
-  font-family: 'Roboto', sans-serif;
+  font-family: var(--font-ui);
 }
 
 @media (max-width: 720px) {

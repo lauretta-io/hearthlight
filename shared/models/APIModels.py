@@ -53,6 +53,13 @@ CONNECTOR_KEYS = {
     "webhook",
     "slack",
 }
+APPEARANCE_THEME_KEYS = {
+    "fidelity-light",
+    "fidelity-dark",
+    "accessible",
+    "maple-oak",
+    "industrial-slate",
+}
 
 
 def normalize_source_kind(value: str) -> str:
@@ -101,6 +108,17 @@ class UploadedMedia(BaseModel):
     lifecycle_state: str
 
 
+class AppearanceSettings(BaseModel):
+    theme_key: str = "fidelity-light"
+
+    @field_validator("theme_key")
+    def validate_theme_key(cls, value):
+        normalized = validate_non_empty_string(value, "theme_key").lower()
+        if normalized not in APPEARANCE_THEME_KEYS:
+            raise ValueError("unsupported theme_key")
+        return normalized
+
+
 class InputSource(BaseModel):
     id: int | None = None
     kind: str
@@ -111,6 +129,7 @@ class InputSource(BaseModel):
     source_value: str | int | None = None
     upload_id: int | None = None
     upload: UploadedMedia | None = None
+    process_every_n_frames: int = Field(default=1, ge=1)
     detector_model_key: str | None = None
     tracker_model_key: str | None = None
     reid_model_key: str | None = None
@@ -218,6 +237,7 @@ class ModelOption(BaseModel):
     option_origin: str
     comes_from_model_zoo: bool = False
     overrides_model_zoo: bool = False
+    is_mounted: bool = False
 
 
 class ModelOptionStage(BaseModel):
@@ -226,6 +246,33 @@ class ModelOptionStage(BaseModel):
     model_zoo_option_count: int = 0
     local_option_count: int = 0
     local_override_count: int = 0
+    mounted_option_count: int = 0
+
+
+class MountedModelStage(BaseModel):
+    stage: str
+    mounted_model_keys: list[str] = Field(default_factory=list)
+
+    @field_validator("stage")
+    def validate_stage(cls, value):
+        normalized = validate_non_empty_string(value, "stage").lower()
+        if normalized not in MODEL_BINDING_STAGES:
+            raise ValueError(
+                "stage must be one of detector, tracker, reid, anomaly_stage_1, anomaly_stage_2"
+            )
+        return normalized
+
+    @field_validator("mounted_model_keys", mode="before")
+    def normalize_keys(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("mounted_model_keys must be a list")
+        return [
+            validate_non_empty_string(str(item), "mounted_model_key")
+            for item in value
+            if str(item).strip()
+        ]
 
 
 class ModelZooSource(BaseModel):
@@ -240,6 +287,7 @@ class ModelZooSource(BaseModel):
 
 class ModelOptionCatalog(BaseModel):
     model_zoo: ModelZooSource
+    mounted_models: dict[str, list[str]] = Field(default_factory=dict)
     stages: list[ModelOptionStage] = Field(default_factory=list)
 
 
@@ -296,6 +344,30 @@ class AnomalyEvent(BaseModel):
     asset_references: list[AssetReference] = Field(default_factory=list)
 
 
+class ModelResultLogRecord(BaseModel):
+    id: int
+    created_at: str | None = None
+    run_id: str | None = None
+    source_id: int | None = None
+    source_label: str | None = None
+    camera_id: int | None = None
+    stage: str
+    model_key: str
+    model_display_name: str | None = None
+    frame_id: int | None = None
+    result_summary: str
+    result_payload: dict = Field(default_factory=dict)
+
+
+class ModelResultLogPage(BaseModel):
+    page: int
+    page_size: int
+    total: int
+    has_more: bool
+    rate_summary: dict = Field(default_factory=dict)
+    records: list[ModelResultLogRecord] = Field(default_factory=list)
+
+
 class MicroBatchEnvelope(BaseModel):
     generated_at: str
     run_identifier: str | None = None
@@ -350,7 +422,6 @@ class UploadResponse(BaseModel):
 
 class AnomalyItemSetting(BaseModel):
     item: str
-    trigger_score: int = Field(ge=1, le=10)
 
     @field_validator("item")
     def validate_item(cls, value):
@@ -429,11 +500,15 @@ class TriggerRule(BaseModel):
     id: int | None = None
     trigger_key: str = "alert_rule_trigger"
     source_id: int | None = None
+    source_ids: list[int] = Field(default_factory=list)
     enabled: bool = True
     rule_label: str | None = Field(default=None, max_length=255)
+    rule_kind: str = "detector"
     signal_family: str | None = None
+    anomaly_target_kind: str | None = None
     target_key: str | None = None
     min_confidence: float = Field(ge=0.0, le=1.0, default=0.5)
+    anomaly_cutoff: int | None = Field(default=None, ge=1, le=10)
     alert_level: str = "medium"
     delivery_target_ids: list[int] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
@@ -454,6 +529,24 @@ class TriggerRule(BaseModel):
         if value <= 0:
             raise ValueError("source_id must be a positive integer")
         return value
+
+    @field_validator("source_ids", mode="before")
+    def normalize_trigger_source_ids(cls, value):
+        if value is None:
+            return []
+        if not isinstance(value, list):
+            raise ValueError("source_ids must be a list")
+        normalized: list[int] = []
+        seen: set[int] = set()
+        for item in value:
+            item_int = int(item)
+            if item_int <= 0:
+                raise ValueError("source_ids must only contain positive integers")
+            if item_int in seen:
+                continue
+            seen.add(item_int)
+            normalized.append(item_int)
+        return normalized
 
     @field_validator("rule_label")
     def validate_trigger_rule_label(cls, value):
@@ -486,6 +579,22 @@ class TriggerRule(BaseModel):
             raise ValueError("alert_level must be one of low, medium, high")
         return normalized
 
+    @field_validator("rule_kind")
+    def validate_rule_kind(cls, value):
+        normalized = validate_non_empty_string(value, "rule_kind").lower()
+        if normalized not in {"detector", "anomaly"}:
+            raise ValueError("rule_kind must be one of detector, anomaly")
+        return normalized
+
+    @field_validator("anomaly_target_kind")
+    def validate_anomaly_target_kind(cls, value):
+        if value is None:
+            return value
+        normalized = validate_non_empty_string(value, "anomaly_target_kind").lower()
+        if normalized not in {"object", "behavior"}:
+            raise ValueError("anomaly_target_kind must be one of object, behavior")
+        return normalized
+
     @field_validator("delivery_target_ids", mode="before")
     def normalize_delivery_target_ids(cls, value):
         if value is None:
@@ -499,13 +608,29 @@ class TriggerRule(BaseModel):
 
     @model_validator(mode="after")
     def validate_trigger_shape(self):
+        if self.source_id is not None and not self.source_ids:
+            self.source_ids = [int(self.source_id)]
         if self.trigger_key == "alert_rule_trigger":
-            if self.source_id is None:
-                raise ValueError("source_id is required for alert_rule_trigger")
-            if self.signal_family is None:
-                raise ValueError("signal_family is required for alert_rule_trigger")
+            if not self.source_ids:
+                raise ValueError("source_ids is required for alert_rule_trigger")
             if self.target_key is None:
                 raise ValueError("target_key is required for alert_rule_trigger")
+            if self.rule_kind == "detector":
+                self.signal_family = "detector"
+                self.anomaly_target_kind = None
+                self.anomaly_cutoff = None
+            else:
+                if self.anomaly_target_kind is None:
+                    raise ValueError("anomaly_target_kind is required for anomaly rules")
+                self.signal_family = (
+                    "anomaly_object"
+                    if self.anomaly_target_kind == "object"
+                    else "anomaly_activity"
+                )
+                if self.anomaly_cutoff is None:
+                    raise ValueError("anomaly_cutoff is required for anomaly rules")
+        if self.signal_family is None:
+            raise ValueError("signal_family is required")
         return self
 
 

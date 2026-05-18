@@ -64,8 +64,7 @@ The current model stages are:
 
 - detector
 - tracker
-- person ReID
-- anomaly Stage 1
+- Heuristic Filter
 - anomaly Stage 2
 
 Operator-facing surfaces use readable names such as `YOLOX Small` and `TransReID Person + Hybrid Bag`.
@@ -76,6 +75,7 @@ Triggered alerts follow the same control-plane model:
 
 - detector alert targets come from the effective detector model metadata for that source
 - anomaly object and anomaly activity targets come only from the saved anomaly prompt settings
+- anomaly `1-10` trigger cutoffs now live on the anomaly rule itself, not in the saved prompt config
 - the browser does not parse YAML or registry files directly; the backend prepares those option lists
 
 Validated detector class surface for the current default COCO-trained YOLOX detector family:
@@ -98,7 +98,11 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
 ## 0.8.0 Highlights
 
 - source labels now default intelligently to `Camera N`, `Webcam N`, or the uploaded video filename without its extension
+- source settings now include `Process every Nth frame` so each camera can lower detector and anomaly load before inference
 - source-level AI overrides hide automatically when `Enable Video AI` is turned off
+- the Rules page is now split into `Detection Rules` and `Anomaly Detection Rules`, with multi-camera targeting and per-rule anomaly cutoff values
+- the model library now shows qualitative processing-rate guidance, and Model Logs surfaces recent measured cadence by model stage
+- theme selection now lives in `Settings > Appearance`, with a workspace-wide backend setting plus browser startup cache
 - the frontend now runs on Vite instead of `react-scripts`
 - anomaly Stage 1 and Stage 2 defaults now have local CPU/CUDA/MLX-safe registry fallbacks
 - connectors are presented as a cleaner single-column list with configured-state badges
@@ -416,6 +420,8 @@ Important routes exposed by the FastAPI service:
 - `GET /model-options`
 - `GET /model-bindings`
 - `PUT /model-bindings`
+- `GET /settings/appearance`
+- `PUT /settings/appearance`
 - `GET /settings/anomaly-prompts`
 - `PUT /settings/anomaly-prompts`
 - `GET /settings/alert-rules`

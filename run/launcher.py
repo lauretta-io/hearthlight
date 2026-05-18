@@ -51,7 +51,7 @@ REGISTRY_STAGE_LABELS = {
     "detector": "Detector",
     "tracker": "Tracker",
     "reid": "Person ReID",
-    "anomaly_stage_1": "Anomaly Stage 1",
+    "anomaly_stage_1": "Heuristic Filter",
     "anomaly_stage_2": "Anomaly Stage 2",
 }
 

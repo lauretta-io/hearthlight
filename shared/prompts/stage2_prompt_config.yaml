@@ -57,78 +57,42 @@ template: 'You are a security surveillance analyst reviewing {frames_count} fram
   - anomaly_category: If anomaly_detected is true, name the anomaly category based
   on the highest-scored items or activities.'
 anomaly_items:
-- item: weapon
-  trigger_score: 6
-- item: knife
-  trigger_score: 6
-- item: gun
-  trigger_score: 6
-- item: firearm
-  trigger_score: 6
-- item: rifle
-  trigger_score: 6
-- item: handgun
-  trigger_score: 6
-- item: machete
-  trigger_score: 6
-- item: baseball bat
-  trigger_score: 6
-- item: crowbar
-  trigger_score: 6
-- item: club
-  trigger_score: 6
-- item: fire
-  trigger_score: 6
-- item: flames
-  trigger_score: 6
-- item: smoke
-  trigger_score: 6
-- item: explosion
-  trigger_score: 6
-- item: debris
-  trigger_score: 6
-- item: burning object
-  trigger_score: 6
-- item: blood
-  trigger_score: 6
-- item: body on ground
-  trigger_score: 6
-- item: broken glass
-  trigger_score: 6
-- item: shattered window
-  trigger_score: 6
-- item: overturned furniture
-  trigger_score: 6
-- item: broken door
-  trigger_score: 6
-- item: protest banner
-  trigger_score: 6
-- item: protest sign
-  trigger_score: 6
-- item: flag being waved
-  trigger_score: 6
-- item: banner
-  trigger_score: 6
-- item: car
-  trigger_score: 6
-- item: truck
-  trigger_score: 6
-- item: bus
-  trigger_score: 6
-- item: van
-  trigger_score: 6
-- item: vehicle
-  trigger_score: 6
-- item: motorcycle
-  trigger_score: 6
-- item: scooter
-  trigger_score: 6
-- item: bike
-  trigger_score: 6
-- item: tram
-  trigger_score: 6
-- item: trolley
-  trigger_score: 6
+- weapon
+- knife
+- gun
+- firearm
+- rifle
+- handgun
+- machete
+- baseball bat
+- crowbar
+- club
+- fire
+- flames
+- smoke
+- explosion
+- debris
+- burning object
+- blood
+- body on ground
+- broken glass
+- shattered window
+- overturned furniture
+- broken door
+- protest banner
+- protest sign
+- flag being waved
+- banner
+- car
+- truck
+- bus
+- van
+- vehicle
+- motorcycle
+- scooter
+- bike
+- tram
+- trolley
 anomaly_behaviors:
 - fighting
 - assault

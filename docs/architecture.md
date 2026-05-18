@@ -218,6 +218,7 @@ Notable route groups:
 - `/start`, `/stop`, `/status`
 - `/sources`, `/sources/uploads`, `/system/resources`
 - `/model-options`, `/model-bindings`
+- `/settings/appearance`
 - `/settings/anomaly-prompts`
 - `/settings/alert-rules`, `/settings/alert-rule-options`
 - `/system/modules/{module_name}/restart`

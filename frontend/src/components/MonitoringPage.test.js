@@ -25,7 +25,7 @@ beforeEach(() => {
           disk_percent: 33,
           gpus: [],
           module_metrics: {
-            REID: {
+            ANOMALY: {
               state: 'warning',
               max_queue_depth: 12,
               hottest_queue: 'database_thread',
@@ -104,7 +104,7 @@ beforeEach(() => {
             model_key: 'heuristic_presence_stage_1',
             stage: 'anomaly_stage_1',
             adapter: 'heuristic_presence_stage_1',
-            display_name: 'Heuristic Presence Stage 1',
+            display_name: 'Heuristic Filter Stage 1',
           },
           {
             model_key: 'prompt_rules_stage_2',

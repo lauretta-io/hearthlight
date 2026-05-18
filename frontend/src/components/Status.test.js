@@ -16,8 +16,7 @@ beforeEach(() => {
       run_id: '2026-03-13_12-00-00',
       module_status: {
         INGESTOR: 'running',
-        REID: 'running',
-        ASSOCIATION: 'idle',
+        ANOMALY: 'idle',
       },
       admission: {
         allowed: true,
@@ -27,7 +26,7 @@ beforeEach(() => {
         cpu_percent: 15,
         memory_percent: 25,
         module_metrics: {
-          ASSOCIATION: {
+          ANOMALY: {
             state: 'warning',
             max_queue_depth: 11,
             hottest_queue: 'output_thread',
@@ -63,7 +62,8 @@ test('renders status summary from the expanded status payload', async () => {
   expect(await screen.findByText('System: running')).toBeTruthy();
   expect(screen.getByText('Run 2026-03-13_12-00-00')).toBeTruthy();
   expect(screen.getByText('INGESTOR: running')).toBeTruthy();
+  expect(screen.getByText('ANOMALY: idle')).toBeTruthy();
   expect(screen.getByText('rabbitmq: error')).toBeTruthy();
-  expect(screen.getByText('ASSOCIATION: warning')).toBeTruthy();
+  expect(screen.getByText('ANOMALY: warning')).toBeTruthy();
   expect(screen.getByText('Frame: 25 / 100')).toBeTruthy();
 });

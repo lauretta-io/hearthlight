@@ -4,6 +4,7 @@ import { BaseURL } from '../config';
 const formatPercent = (value) => (
   value === null || value === undefined ? 'n/a' : `${value.toFixed(1)}%`
 );
+const OPERATOR_MODULES = ['INGESTOR', 'ANOMALY'];
 
 const getIngestorExplanation = ({ moduleStatus, systemStatus, admission }) => {
   const ingestorState = moduleStatus?.INGESTOR;
@@ -63,7 +64,9 @@ const Status = () => {
       ? Math.min((statusData.frame_id / statusData.total_frames) * 100, 100)
       : 0;
   const dependencyStatus = Object.entries(statusData.resources?.dependency_status || {});
-  const moduleMetrics = Object.entries(statusData.resources?.module_metrics || {});
+  const moduleMetrics = Object.entries(statusData.resources?.module_metrics || {}).filter(
+    ([name]) => OPERATOR_MODULES.includes(name),
+  );
   const ingestorExplanation = getIngestorExplanation({
     moduleStatus: statusData.module_status,
     systemStatus: statusData.status,
@@ -89,7 +92,9 @@ const Status = () => {
       </div>
 
       <div className="module-summary">
-        {Object.entries(statusData.module_status || {}).map(([moduleName, moduleState]) => (
+        {Object.entries(statusData.module_status || {})
+          .filter(([moduleName]) => OPERATOR_MODULES.includes(moduleName))
+          .map(([moduleName, moduleState]) => (
           <span key={moduleName} className={`module-pill module-${moduleState}`}>
             {moduleName}: {moduleState}
           </span>

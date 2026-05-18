@@ -75,6 +75,7 @@ try:
         MODEL_STAGE_ANOMALY_STAGE_2,
         MODEL_STAGE_DETECTOR,
         MODEL_STAGE_TRACKER,
+        build_effective_mounted_models,
         build_model_option_catalog,
         build_model_display_name,
         build_default_bindings,
@@ -88,6 +89,7 @@ except ModuleNotFoundError:
     MODEL_STAGE_ANOMALY_STAGE_2 = None
     MODEL_STAGE_DETECTOR = None
     MODEL_STAGE_TRACKER = None
+    build_effective_mounted_models = None
     build_model_option_catalog = None
     build_model_display_name = None
     build_default_bindings = None
@@ -948,6 +950,7 @@ class ModelRegistryTests(unittest.TestCase):
         ):
             catalog = build_model_option_catalog(load_registry_bundle())
         detector_stage = next(entry for entry in catalog["stages"] if entry["stage"] == "detector")
+        self.assertFalse(any(entry["stage"] == "reid" for entry in catalog["stages"]))
         yolox_option = next(
             option for option in detector_stage["options"] if option["model_key"] == "builtin_yolox_s_cpu"
         )
@@ -958,6 +961,24 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertTrue(
             any(option["model_key"] == "builtin_yolox_tiny_cpu" for option in detector_stage["options"])
         )
+        self.assertIn("mounted_models", catalog)
+        self.assertTrue(yolox_option["is_mounted"])
+
+    @unittest.skipIf(build_effective_mounted_models is None, "omegaconf is not installed")
+    def test_build_effective_mounted_models_keeps_defaults_mounted(self):
+        bundle = load_registry_bundle()
+        mounted = build_effective_mounted_models(
+            bundle,
+            {
+                "detector": [],
+                "tracker": [],
+                "anomaly_stage_1": [],
+                "anomaly_stage_2": [],
+            },
+        )
+        self.assertIn("builtin_yolox_s_cpu", mounted["detector"])
+        self.assertIn("builtin_bytetrack", mounted["tracker"])
+        self.assertNotIn("reid", mounted)
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_load_model_registries_merges_upstream_master_with_local_entries(self):
