@@ -83,7 +83,7 @@ STAGE_LABELS = {
     MODEL_STAGE_TRACKER: "Tracker",
     MODEL_STAGE_REID: "Person ReID",
     MODEL_STAGE_ANOMALY_STAGE_1: "Heuristic Filter",
-    MODEL_STAGE_ANOMALY_STAGE_2: "Anomaly Stage 2",
+    MODEL_STAGE_ANOMALY_STAGE_2: "Anomaly Detection",
 }
 
 

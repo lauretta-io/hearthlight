@@ -97,7 +97,7 @@ const formatPercent = (value) => (
 const dependencyEntries = (dependencyStatus) => Object.entries(dependencyStatus || {});
 const moduleMetricEntries = (moduleMetrics) => Object.entries(moduleMetrics || {});
 
-const RunSection = ({ embedded = false, pollingEnabled = true }) => {
+const RunSection = ({ embedded = false, pollingEnabled = true, showHeader = true }) => {
   const [sources, setSources] = useState(() => {
     const saved = localStorage.getItem('controlSourcesDraft');
     if (!saved) {
@@ -308,7 +308,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
 
       const data = await response.json();
       setSources(data.map((source, index) => hydrateSource(source, index)));
-      setBanner({ kind: 'success', text: 'Source queue saved.' });
+      setBanner({ kind: 'success', text: 'Source settings updated.' });
     } finally {
       setIsSaving(false);
     }
@@ -439,22 +439,24 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
 
   const content = (
     <>
-      <div className="panel-header">
-        <div>
-          <h2>Run Control</h2>
-          <p className="panel-subtitle">
-            Combine live cameras, uploaded video, and webcams in a single run.
-          </p>
+      {showHeader && (
+        <div className="panel-header">
+          <div>
+            <h2>Run Monitoring</h2>
+            <p className="panel-subtitle">
+              Combine live cameras, uploaded video, and webcams in a single run.
+            </p>
+          </div>
+          <div className="run-meta">
+            <span className={`status-pill status-${statusData.status}`}>
+              {statusData.status}
+            </span>
+            <span className="run-id">
+              {statusData.run_id ? `Run ${statusData.run_id}` : 'No active run'}
+            </span>
+          </div>
         </div>
-        <div className="run-meta">
-          <span className={`status-pill status-${statusData.status}`}>
-            {statusData.status}
-          </span>
-          <span className="run-id">
-            {statusData.run_id ? `Run ${statusData.run_id}` : 'No active run'}
-          </span>
-        </div>
-      </div>
+      )}
 
       {banner && (
         <div className={`banner banner-${banner.kind}`}>
@@ -462,13 +464,13 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
         </div>
       )}
 
-      <section className="control-grid">
-        <div className="control-column">
+      <section className="control-column">
+        <div>
           <div className="card">
             <div className="card-header">
               <div>
-                <h3>Source Queue</h3>
-                <p>Persisted to Postgres and merged into the runtime config at start.</p>
+                <h3>Source Settings</h3>
+                <p>Manage the saved camera, upload, and webcam sources used for each run.</p>
               </div>
               <button type="button" onClick={addSource} className="secondary-button">
                 Add Source
@@ -585,7 +587,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
 
             <div className="control-actions">
               <button type="button" onClick={saveSources} className="secondary-button" disabled={isSaving}>
-                {isSaving ? 'Saving...' : 'Save Sources'}
+                {isSaving ? 'Saving...' : 'Update Source Settings'}
               </button>
               <button type="button" onClick={handleStart} className="start-button" disabled={isSaving}>
                 Start
@@ -597,12 +599,12 @@ const RunSection = ({ embedded = false, pollingEnabled = true }) => {
           </div>
         </div>
 
-        <div className="control-column">
+        <div>
           <div className="card">
             <div className="card-header">
               <div>
                 <h3>Processing State</h3>
-                <p>Per-source view of the active queue.</p>
+                <p>Per-source view of the active run.</p>
               </div>
             </div>
             <div className="status-list">

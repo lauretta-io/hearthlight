@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe('App routing shell', () => {
-  test('redirects root to settings run tab and renders updated nav order', async () => {
+  test('redirects root to settings monitoring tab and renders updated nav order', async () => {
     window.history.pushState({}, '', '/');
 
     await act(async () => {
@@ -33,7 +33,7 @@ describe('App routing shell', () => {
 
     expect(await screen.findByText('Settings Page Mock')).toBeTruthy();
     expect(window.location.pathname).toBe('/settings');
-    expect(window.location.search).toBe('?tab=run');
+    expect(window.location.search).toBe('?tab=monitoring');
 
     const navLinks = screen.getAllByRole('link').map((link) => link.textContent);
     expect(navLinks).toEqual([

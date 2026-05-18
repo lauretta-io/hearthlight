@@ -393,7 +393,7 @@ test('renders stage 2 anomaly config and saves structured anomaly settings', asy
   expect(screen.getByDisplayValue('running')).toBeTruthy();
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Save Stage 2 Anomaly Config'));
+    fireEvent.click(screen.getByText('Save Anomaly Detection Config'));
   });
 
   await waitFor(() => {

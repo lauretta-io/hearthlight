@@ -1,9 +1,9 @@
 mounted:
   detector:
-    - builtin_yolox_s_cpu
+  - builtin_yolox_s_cpu
   tracker:
-    - builtin_bytetrack
+  - builtin_bytetrack
   anomaly_stage_1:
-    - siglip_stage_1_cpu
+  - siglip_stage_1_cpu
   anomaly_stage_2:
-    - smolvlm_stage_2_cpu
+  - smolvlm_stage_2_cpu

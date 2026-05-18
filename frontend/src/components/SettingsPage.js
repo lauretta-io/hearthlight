@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BaseURL } from '../config';
-import RunSection from './RunSection';
-import MonitoringSection from './MonitoringSection';
+import MonitoringPage from './MonitoringPage';
 import {
   formatUploadedVideoSummary,
   SUPPORTED_VIDEO_LABEL,
@@ -22,7 +21,7 @@ const MODEL_STAGE_OPTIONS = [
   { stage: 'detector', label: 'Detector', field: 'detector_model_key' },
   { stage: 'tracker', label: 'Tracker', field: 'tracker_model_key' },
   { stage: 'anomaly_stage_1', label: 'Heuristic Filter', field: 'anomaly_stage_1_model_key' },
-  { stage: 'anomaly_stage_2', label: 'Anomaly Stage 2', field: 'anomaly_stage_2_model_key' },
+  { stage: 'anomaly_stage_2', label: 'Anomaly Detection', field: 'anomaly_stage_2_model_key' },
 ];
 const TEMPLATE_OPTIONS = ['active', 'example', 'master_config', 'office_config'];
 const ALERT_SIGNAL_FAMILY_OPTIONS = [
@@ -55,7 +54,6 @@ const SETTINGS_TABS = [
   { key: 'sources', label: 'Sources' },
   { key: 'model-library', label: 'Model Library' },
   { key: 'appearance', label: 'Appearance' },
-  { key: 'run', label: 'Run' },
   { key: 'monitoring', label: 'Monitoring' },
   { key: 'initialization', label: 'Initialization' },
 ];
@@ -80,7 +78,7 @@ const MODEL_STAGE_COPY = {
     usedFor: 'AI-backed anomaly screening and event prefiltering.',
   },
   anomaly_stage_2: {
-    title: 'Anomaly Stage 2 Models',
+    title: 'Anomaly Detection Models',
     description: 'These models interpret Stage 1 events using the saved anomaly prompt configuration and final anomaly labels.',
     usedFor: 'Prompt-driven anomaly interpretation and event labeling.',
   },
@@ -516,7 +514,8 @@ const SettingsPage = ({
   });
   const [draftThemeKey, setDraftThemeKey] = useState(currentThemeKey);
   const [appearanceMessage, setAppearanceMessage] = useState(null);
-  const requestedTab = forcedTab || searchParams.get('tab');
+  const rawRequestedTab = forcedTab || searchParams.get('tab');
+  const requestedTab = rawRequestedTab === 'run' ? 'monitoring' : rawRequestedTab;
   const allowedTabs = forcedTab ? [...SETTINGS_TABS, ...STANDALONE_PAGE_TABS] : SETTINGS_TABS;
   const activeTab = allowedTabs.some((tab) => tab.key === requestedTab)
     ? requestedTab
@@ -526,10 +525,14 @@ const SettingsPage = ({
     if (forcedTab) {
       return;
     }
+    if (rawRequestedTab === 'run') {
+      setSearchParams({ tab: 'monitoring' }, { replace: true });
+      return;
+    }
     if (!requestedTab || !SETTINGS_TABS.some((tab) => tab.key === requestedTab)) {
       setSearchParams({ tab: 'sources' }, { replace: true });
     }
-  }, [forcedTab, requestedTab, setSearchParams]);
+  }, [forcedTab, rawRequestedTab, requestedTab, setSearchParams]);
 
   useEffect(() => {
     localStorage.setItem('settingsSourcesDraft', JSON.stringify(sources));
@@ -1138,7 +1141,7 @@ const SettingsPage = ({
       setAnomalyItems((data.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
       setAnomalyBehaviors((data.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
-      setBanner({ kind: 'success', text: 'Stage 2 anomaly config saved.' });
+      setBanner({ kind: 'success', text: 'Anomaly detection config saved.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
@@ -1148,12 +1151,12 @@ const SettingsPage = ({
 
   const loadStandardAnomalyPromptConfig = () => {
     if (!standardPromptSettings.anomaly_items?.length && !standardPromptSettings.anomaly_behaviors?.length) {
-      setBanner({ kind: 'error', text: 'Standard Stage 2 anomaly config is unavailable.' });
+      setBanner({ kind: 'error', text: 'Standard anomaly detection config is unavailable.' });
       return;
     }
     setAnomalyItems((standardPromptSettings.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
     setAnomalyBehaviors((standardPromptSettings.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
-    setBanner({ kind: 'success', text: 'Loaded standard Stage 2 anomaly config.' });
+    setBanner({ kind: 'success', text: 'Loaded standard anomaly detection config.' });
   };
 
   const saveSources = async () => {
@@ -1797,7 +1800,7 @@ const SettingsPage = ({
                     <div className="card-header">
                       <div>
                         <h3>Default Model Bindings</h3>
-                        <p>Set default detector, tracker, Heuristic Filter, and anomaly Stage 2 models for new runs.</p>
+                        <p>Set default detector, tracker, Heuristic Filter, and anomaly detection models for new runs.</p>
                         <p className="muted-text">{modelZooSummary}</p>
                         <p className="muted-text">Defaults and camera overrides are mounted centrally. Choosing an available model mounts it when you save.</p>
                       </div>
@@ -1835,7 +1838,7 @@ const SettingsPage = ({
                     <div className="card-header">
                       <div>
                         <h3>Anomaly Prompt Settings</h3>
-                        <p>Manage the Stage 2 anomaly config as structured anomaly items and anomaly behaviors. The prompt template stays hidden in the prompt config file.</p>
+                        <p>Manage anomaly detection config as structured anomaly items and anomaly behaviors. The prompt template stays hidden in the prompt config file.</p>
                       </div>
                     </div>
                     <div className="source-list">
@@ -1932,7 +1935,7 @@ const SettingsPage = ({
                         className="secondary-button"
                         disabled={!standardPromptSettings.anomaly_items?.length && !standardPromptSettings.anomaly_behaviors?.length}
                       >
-                        Use Standard Stage 2 Config
+                        Use Standard Anomaly Detection Config
                       </button>
                       <button
                         type="button"
@@ -1940,7 +1943,7 @@ const SettingsPage = ({
                         className="secondary-button"
                         disabled={isSavingAnomalyPrompts}
                       >
-                        {isSavingAnomalyPrompts ? 'Saving...' : 'Save Stage 2 Anomaly Config'}
+                        {isSavingAnomalyPrompts ? 'Saving...' : 'Save Anomaly Detection Config'}
                       </button>
                     </div>
                   </div>
@@ -1961,7 +1964,7 @@ const SettingsPage = ({
                       <div className="muted-text">GET {`${BaseURL}/model-options`}</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/model-bindings`}</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/settings/anomaly-prompts`}</div>
-                      <div className="muted-text">The Stage 2 prompt template is managed in `shared/prompts/stage2_prompt_config.yaml`.</div>
+                      <div className="muted-text">The anomaly detection prompt template is managed in `shared/prompts/stage2_prompt_config.yaml`.</div>
                     </div>
                   </div>
 
@@ -2227,31 +2230,7 @@ const SettingsPage = ({
                 </div>
               )}
 
-              <section className="control-grid">
-                <div className="control-column">
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <h3>Trigger Zoo</h3>
-                        <p>Catalog of supported trigger types and what each one needs.</p>
-                      </div>
-                    </div>
-                    {triggerZoo.length === 0 ? (
-                      <div className="empty-state">Trigger catalog is currently unavailable.</div>
-                    ) : (
-                      <div className="source-list">
-                        {(Array.isArray(triggerZoo) ? triggerZoo : []).map((entry) => (
-                          <div key={entry.key} className="empty-state">
-                            <strong>{entry.label}</strong>
-                            <div className="muted-text">{entry.description}</div>
-                            <div className="muted-text">Key: <code>{entry.key}</code></div>
-                            <div className="muted-text">Needs: {(entry.requirements || []).join(', ') || 'n/a'}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
+              <section className="control-column">
                   <div className="card">
                     <div className="card-header">
                       <div>
@@ -2446,47 +2425,6 @@ const SettingsPage = ({
                       </button>
                     </div>
                   </div>
-                </div>
-
-                <div className="control-column">
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <h3>Connector Zoo</h3>
-                        <p>Catalog of delivery connectors that can subscribe to triggers.</p>
-                      </div>
-                    </div>
-                    {connectorZoo.length === 0 ? (
-                      <div className="empty-state">Connector catalog is currently unavailable.</div>
-                    ) : (
-                      <div className="source-list">
-                        {(Array.isArray(connectorZoo) ? connectorZoo : []).map((entry) => (
-                          <div key={entry.key} className="empty-state">
-                            <strong>{entry.label}</strong>
-                            <div className="muted-text">{entry.description}</div>
-                            <div className="muted-text">Key: <code>{entry.key}</code></div>
-                            <div className="muted-text">Needs: {(entry.requirements || []).join(', ') || 'n/a'}</div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <h3>How It Works</h3>
-                        <p>Detection rules use detector confidence, while anomaly rules use the saved prompt targets plus a per-rule `1-10` cutoff.</p>
-                      </div>
-                    </div>
-                    <div className="empty-state endpoint-info">
-                      <strong>GET {`${BaseURL}/settings/alert-rule-options`}</strong>
-                      <div className="muted-text">Prepared source-specific detector, anomaly object, and anomaly activity targets.</div>
-                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/trigger-rules`}</div>
-                      <div className="muted-text">Rules can target multiple cameras and are evaluated during live detector and anomaly processing.</div>
-                    </div>
-                  </div>
-                </div>
               </section>
             </>
           )}
@@ -2842,8 +2780,7 @@ const SettingsPage = ({
             </section>
           )}
 
-          {activeTab === 'run' && <RunSection embedded pollingEnabled />}
-          {activeTab === 'monitoring' && <MonitoringSection embedded pollingEnabled />}
+          {activeTab === 'monitoring' && <MonitoringPage />}
 
           {activeTab === 'initialization' && (
             <div className="control-column">
