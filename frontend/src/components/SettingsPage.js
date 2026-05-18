@@ -84,6 +84,13 @@ const MODEL_STAGE_COPY = {
   },
 };
 
+const normalizeBindingsPayload = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.bindings)) return payload.bindings;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+};
+
 const createSourceDraft = (kind = 'camera_url') => ({
   clientKey: `settings-source-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   id: null,
@@ -1021,14 +1028,15 @@ const SettingsPage = ({
     ]);
     setModelOptionCatalog(modelData || { stages: [] });
     setMountedModels(modelData?.mounted_models || {});
+    const bindingList = normalizeBindingsPayload(bindingData);
     const nextDefaults = {};
-    (bindingData || [])
+    bindingList
       .filter((binding) => binding.binding_scope === 'default')
       .forEach((binding) => {
         nextDefaults[binding.stage] = binding.model_key || '';
       });
     setDefaultBindings(nextDefaults);
-    return { modelData, bindingData };
+    return { modelData, bindingData: bindingList };
   };
 
   const saveDefaultBindings = async () => {

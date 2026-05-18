@@ -74,6 +74,8 @@ class OutputThread(Thread):
             self.tasks.add("write_annotated")
         if cfg.output.visualize.show_vid:
             self.tasks.add("write_annotated")
+        if cfg.output.frames.save_frames:
+            self.tasks.add("write_frames")
 
         for task in self.tasks:
             if task in task_threads:

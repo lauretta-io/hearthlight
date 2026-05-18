@@ -19,7 +19,7 @@ import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from omegaconf import OmegaConf
-from sqlalchemy import text
+from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
@@ -463,6 +463,36 @@ def collect_dependency_status():
     return normalize_dependency_status(checks)
 
 
+def merge_hybrid_operator_status(
+    module_state: dict[str, str] | None,
+    dependency_state: dict[str, dict] | None,
+    local_worker_health: dict | None = None,
+) -> dict[str, str]:
+    """Keep top-level operator status aligned with local worker health in hybrid mode."""
+    merged = dict(module_state or {})
+    if not is_hybrid_local_cpu_runtime():
+        return merged
+    workers = (local_worker_health or {}).get("workers") or {}
+    for module_name in (ModuleNames.INGESTOR, ModuleNames.ANOMALY):
+        details = workers.get(module_name)
+        if isinstance(details, dict):
+            merged[module_name] = (
+                DataModels.Status.RUNNING
+                if bool(details.get("running"))
+                else DataModels.Status.IDLE
+            )
+    dependency_state = dependency_state or {}
+    for module_name in (ModuleNames.INGESTOR, ModuleNames.ANOMALY):
+        dependency = dependency_state.get(module_name.lower())
+        if not isinstance(dependency, dict):
+            continue
+        if dependency.get("status") == "ok":
+            merged[module_name] = DataModels.Status.RUNNING
+        elif dependency.get("status") == "error":
+            merged[module_name] = DataModels.Status.ERROR
+    return merged
+
+
 def reset_runtime_state(clear_run: bool):
     global frame_id
     global total_frames
@@ -637,11 +667,12 @@ def build_live_resource_snapshot(db: Session) -> dict:
         get_previous_resource_snapshot(db),
         thresholds=get_resource_drift_thresholds(),
     )
+    local_worker_health = get_local_worker_health() if is_hybrid_local_cpu_runtime() else None
     snapshot["dependency_status"] = collect_dependency_status()
-    snapshot["module_status"] = {
+    snapshot["module_status"] = merge_hybrid_operator_status({
         ModuleNames.WEBAPP: DataModels.Status.RUNNING,
         **module_status.copy(),
-    }
+    }, snapshot["dependency_status"], local_worker_health)
     snapshot["module_metrics"] = module_metrics.copy()
     snapshot["model_health"] = build_model_health(
         registry_bundle,
@@ -661,7 +692,6 @@ def build_live_resource_snapshot(db: Session) -> dict:
     )
     source_errors = build_enabled_source_errors(source_rows, db)
     if is_hybrid_local_cpu_runtime():
-        local_worker_health = get_local_worker_health()
         if local_worker_health.get("status") != "ready":
             workers = local_worker_health.get("workers") or {}
             reasons = [
@@ -715,16 +745,17 @@ def get_current_resource_snapshot(db: Session) -> dict:
         source_rows = get_active_source_rows(db)
         enabled_source_rows = [row for row in source_rows if row.enabled]
         registry_bundle = get_registry_bundle(db, source_rows=source_rows)
+        local_worker_health = get_local_worker_health() if is_hybrid_local_cpu_runtime() else None
         snapshot["dependency_status"] = collect_dependency_status()
         snapshot["drift"] = build_resource_drift(
             snapshot,
             get_previous_resource_snapshot(db),
             thresholds=get_resource_drift_thresholds(),
         )
-        snapshot["module_status"] = {
+        snapshot["module_status"] = merge_hybrid_operator_status({
             ModuleNames.WEBAPP: DataModels.Status.RUNNING,
             **module_status.copy(),
-        }
+        }, snapshot["dependency_status"], local_worker_health)
         snapshot["module_metrics"] = module_metrics.copy()
         snapshot["model_health"] = build_model_health(
             registry_bundle,
@@ -744,7 +775,6 @@ def get_current_resource_snapshot(db: Session) -> dict:
         )
         source_errors = build_enabled_source_errors(source_rows, db)
         if is_hybrid_local_cpu_runtime():
-            local_worker_health = get_local_worker_health()
             if local_worker_health.get("status") != "ready":
                 workers = local_worker_health.get("workers") or {}
                 reasons = [
@@ -770,6 +800,28 @@ def get_current_resource_snapshot(db: Session) -> dict:
                 snapshot["admission"]["allowed"] = False
                 snapshot["admission"]["reason"] = source_errors[0]
     return snapshot
+
+
+def get_latest_run_frame_id(db: Session) -> int | None:
+    if run_id is None:
+        return None
+    run_row = db.query(SQLModels.Run).filter_by(run_identifier=run_id).first()
+    if run_row is None:
+        return None
+    latest = (
+        db.query(func.max(SQLModels.Frame.frame_id))
+        .filter(
+            SQLModels.Frame.run_id == run_row.id,
+            SQLModels.Frame.is_deleted.is_(False),
+        )
+        .scalar()
+    )
+    if latest is None:
+        return None
+    try:
+        return int(latest)
+    except (TypeError, ValueError):
+        return None
 
 
 def shutdown_external_resources():
@@ -1090,8 +1142,9 @@ def build_input_source_response(
     upload_row: SQLModels.UploadedMedia | None,
     recording: SQLModels.CameraRecording | None,
     resource_snapshot: dict,
+    current_frame_override: int | None = None,
 ):
-    current_frame = frame_id
+    current_frame = current_frame_override if current_frame_override is not None else frame_id
     current_total = recording.total_frames if recording is not None else None
     effective_error = build_effective_source_error(source_row, upload_row)
     if (
@@ -1153,12 +1206,16 @@ def build_source_responses(db: Session, resource_snapshot: dict):
         db, [row.upload_id for row in source_rows if row.upload_id is not None]
     )
     recordings = get_run_recordings_by_source_id(db)
+    current_frame_override = (
+        get_latest_run_frame_id(db) if is_hybrid_local_cpu_runtime() else None
+    )
     return [
         build_input_source_response(
             row,
             upload_rows.get(row.upload_id),
             recordings.get(row.id),
             resource_snapshot,
+            current_frame_override=current_frame_override,
         )
         for row in source_rows
     ]
@@ -2240,6 +2297,12 @@ def build_runtime_cfg(db: Session, run_identifier: str):
     runtime_cfg = clone_cfg()
     runtime_cfg.run_id = run_identifier
     runtime_cfg.input.cameras = build_runtime_camera_map(source_rows, upload_paths)
+    if is_hybrid_local_cpu_runtime():
+        # Local hybrid workers run headless; disable GUI preview paths and persist
+        # periodic frames so status APIs can surface concrete frame progress.
+        runtime_cfg.output.visualize.show_vid = False
+        runtime_cfg.output.frames.save_frames = True
+        runtime_cfg.output.frames.save_interval = 1
     runtime_cfg.model_bindings = build_runtime_binding_block(
         source_rows,
         registry_bundle,
@@ -2902,13 +2965,23 @@ async def stop(db: Session = Depends(get_db)):
 def get_status(db: Session = Depends(get_db)):
     current_status = refresh_runtime_status()
     snapshot = get_current_resource_snapshot(db)
+    snapshot_module_status = merge_hybrid_operator_status(
+        snapshot.get("module_status"),
+        snapshot.get("dependency_status"),
+        get_local_worker_health() if is_hybrid_local_cpu_runtime() else None,
+    )
+    effective_frame_id = frame_id
+    if is_hybrid_local_cpu_runtime():
+        db_frame_id = get_latest_run_frame_id(db)
+        if db_frame_id is not None:
+            effective_frame_id = db_frame_id
     sources = build_source_responses(db, snapshot)
     return Status(
         status=current_status,
-        frame_id=frame_id,
+        frame_id=effective_frame_id,
         total_frames=total_frames,
-        module_status=module_status.copy(),
-        error_modules=get_error_modules(module_status),
+        module_status=snapshot_module_status,
+        error_modules=get_error_modules(snapshot_module_status),
         run_id=run_id,
         sources=sources,
         resources=ResourceSnapshot.model_validate(snapshot),

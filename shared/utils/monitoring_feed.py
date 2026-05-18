@@ -18,13 +18,13 @@ def normalize_feed_limit(
     return max(1, min(int(limit), max_limit))
 
 
-def parse_serialized_json(raw_value: str | None):
+def parse_serialized_json(raw_value: str | None, default_value=None):
     if not raw_value:
-        return None
+        return default_value
     try:
         return json.loads(raw_value)
     except json.JSONDecodeError:
-        return None
+        return default_value
 
 
 def infer_run_status(
