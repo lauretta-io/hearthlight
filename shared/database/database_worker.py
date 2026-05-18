@@ -22,11 +22,16 @@ from ..utils.alert_rules import (
 from ..utils.backoff import with_exponential_backoff
 from ..constants import DetectorClasses, IncidentStatus, IncidentType
 from ..utils.model_registry import (
+    MODEL_STAGE_ANOMALY_STAGE_1,
+    MODEL_STAGE_ANOMALY_STAGE_2,
     MODEL_STAGE_DETECTOR,
+    build_model_display_name,
     build_default_bindings,
+    get_registration,
     load_registry_bundle,
     resolve_bindings_for_source,
 )
+from ..utils.monitoring_feed import parse_serialized_json
 from ..utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     queue_apple_message_trigger_notifications,
@@ -74,6 +79,7 @@ class DatabaseWorker:
         self.source_template_ids_by_camera_id = {}
         self.source_rows_by_id = {}
         self.runtime_binding_defaults = None
+        self.runtime_registry_bundle = None
 
         self.SessionLocal = SessionLocal
 
@@ -162,9 +168,23 @@ class DatabaseWorker:
     def get_runtime_binding_defaults(self) -> dict[str, str | None]:
         if self.runtime_binding_defaults is not None:
             return self.runtime_binding_defaults
-        bundle = load_registry_bundle()
+        bundle = self.get_runtime_registry_bundle()
         self.runtime_binding_defaults = build_default_bindings(bundle)
         return self.runtime_binding_defaults
+
+    def get_runtime_registry_bundle(self) -> dict:
+        if self.runtime_registry_bundle is None:
+            self.runtime_registry_bundle = load_registry_bundle()
+        return self.runtime_registry_bundle
+
+    def get_model_display_name(self, stage: str, model_key: str | None) -> str | None:
+        if not model_key:
+            return None
+        bundle = self.get_runtime_registry_bundle()
+        registration = get_registration(bundle, stage, model_key)
+        if registration is None:
+            return model_key
+        return build_model_display_name(stage, model_key, registration)
 
     def resolve_model_keys_for_source(self, source_id: int | None) -> dict[str, str | None]:
         source_row = self.get_source_row_by_id(source_id)
@@ -173,6 +193,125 @@ class DatabaseWorker:
         return resolve_bindings_for_source(
             source_row,
             self.get_runtime_binding_defaults(),
+        )
+
+    def create_model_result_log(
+        self,
+        *,
+        source_id: int | None,
+        source_label: str | None,
+        camera_id: int | None,
+        stage: str,
+        model_key: str | None,
+        frame_id: int | None,
+        result_summary: str,
+        result_payload: dict,
+    ):
+        if not model_key or not result_summary:
+            return None
+        return self.create(
+            SQLModels.ModelResultLog(
+                run_id=DatabaseWorker.run_id,
+                source_template_id=source_id,
+                source_label=source_label,
+                camera_id=camera_id,
+                stage=stage,
+                model_key=model_key,
+                model_display_name=self.get_model_display_name(stage, model_key),
+                frame_id=frame_id,
+                result_summary=result_summary,
+                result_payload_json=json.dumps(result_payload),
+            )
+        )
+
+    def create_detector_model_log(self, frame: DataModels.Frame, frame_id: int):
+        source_id = self.get_source_template_id_for_camera(frame.cam_id)
+        source_row = self.get_source_row_by_id(source_id)
+        model_keys = self.resolve_model_keys_for_source(source_id)
+        detector_model_key = model_keys.get(MODEL_STAGE_DETECTOR)
+        class_buckets: dict[str, list[float]] = defaultdict(list)
+        detections_payload = []
+        for detection in frame.detections:
+            clss = str(detection.clss or "").strip() or "unknown"
+            confidence = float(detection.confidence or 0.0)
+            class_buckets[clss].append(confidence)
+            detections_payload.append(
+                {
+                    "class": clss,
+                    "confidence": round(confidence, 4),
+                    "bbox": list(detection.bbox.tolist() if hasattr(detection.bbox, "tolist") else detection.bbox),
+                }
+            )
+        if class_buckets:
+            parts = [
+                f"{clss} x{len(confidences)} (max {max(confidences):.2f})"
+                for clss, confidences in sorted(class_buckets.items())
+            ]
+            summary = f"{len(frame.detections)} detections · {'; '.join(parts)}"
+        else:
+            summary = "0 detections"
+        self.create_model_result_log(
+            source_id=source_id,
+            source_label=getattr(source_row, "label", None),
+            camera_id=frame.cam_id,
+            stage=MODEL_STAGE_DETECTOR,
+            model_key=detector_model_key,
+            frame_id=frame_id,
+            result_summary=summary,
+            result_payload={
+                "detection_count": len(frame.detections),
+                "detections": detections_payload,
+            },
+        )
+
+    def build_anomaly_log_summary(
+        self,
+        event: DataModels.AnomalyEvent,
+        *,
+        include_reasoning: bool = False,
+    ) -> str:
+        parts = [f"Score {float(event.score or 0.0):.2f}", event.title or event.category]
+        if event.visible_items:
+            parts.append(f"items: {', '.join(event.visible_items)}")
+        if event.visible_activities:
+            parts.append(f"behaviors: {', '.join(event.visible_activities)}")
+        if include_reasoning and event.reasoning:
+            parts.append(event.reasoning.strip())
+        return " · ".join(part for part in parts if part)
+
+    def create_anomaly_model_logs(self, event: DataModels.AnomalyEvent):
+        source_id = event.source_id or self.get_source_template_id_for_camera(event.camera_id)
+        source_row = self.get_source_row_by_id(source_id)
+        model_keys = self.resolve_model_keys_for_source(source_id)
+        stage_1_model_key = event.stage_1_model_key or model_keys.get(MODEL_STAGE_ANOMALY_STAGE_1)
+        stage_2_model_key = event.stage_2_model_key or event.model_key or model_keys.get(MODEL_STAGE_ANOMALY_STAGE_2)
+        payload = {
+            "category": event.category,
+            "score": round(float(event.score or 0.0), 4),
+            "title": event.title,
+            "visible_items": list(event.visible_items),
+            "visible_activities": list(event.visible_activities),
+            "reasoning": event.reasoning,
+        }
+        self.create_model_result_log(
+            source_id=source_id,
+            source_label=getattr(source_row, "label", None),
+            camera_id=event.camera_id,
+            stage=MODEL_STAGE_ANOMALY_STAGE_1,
+            model_key=stage_1_model_key,
+            frame_id=event.frame_id,
+            result_summary=self.build_anomaly_log_summary(event),
+            result_payload=payload,
+        )
+        self.create_model_result_log(
+            source_id=source_id,
+            source_label=getattr(source_row, "label", None),
+            camera_id=event.camera_id,
+            stage=MODEL_STAGE_ANOMALY_STAGE_2,
+            model_key=stage_2_model_key,
+            frame_id=event.frame_id,
+            result_summary=self.build_anomaly_log_summary(event, include_reasoning=True),
+            result_payload=payload,
         )
 
     def get_enabled_alert_rules(
@@ -184,11 +323,10 @@ class DatabaseWorker:
         if source_id is None:
             return []
         ensure_alert_rule_tables()
-        return (
+        rows = (
             self.db.query(SQLModels.TriggerRule)
             .filter_by(
                 trigger_key=TRIGGER_KEY_ALERT_RULE,
-                source_template_id=source_id,
                 signal_family=signal_family,
                 enabled=True,
                 is_deleted=False,
@@ -199,6 +337,14 @@ class DatabaseWorker:
             )
             .all()
         )
+        matched_rows = []
+        for row in rows:
+            source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
+            if not source_ids and row.source_template_id is not None:
+                source_ids = [row.source_template_id]
+            if source_id in source_ids:
+                matched_rows.append(row)
+        return matched_rows
 
     def create_alert_incident(
         self,
@@ -386,6 +532,7 @@ class DatabaseWorker:
         if source_id is None:
             return
         confidence = float(event.score or 0.0)
+        cutoff_score = max(1, min(10, int(round(confidence * 10)) or 1))
         model_keys = {
             "anomaly_stage_1": event.stage_1_model_key,
             "anomaly_stage_2": event.stage_2_model_key or event.model_key,
@@ -418,7 +565,14 @@ class DatabaseWorker:
                 matched_target = normalized_candidates.get(normalized_target)
                 if matched_target is None:
                     continue
-                if confidence < float(rule.min_confidence):
+                anomaly_cutoff = getattr(rule, "anomaly_cutoff", None)
+                if anomaly_cutoff is None:
+                    metadata = parse_serialized_json(getattr(rule, "metadata_json", None)) or {}
+                    if isinstance(metadata, dict):
+                        anomaly_cutoff = metadata.get("anomaly_cutoff")
+                if anomaly_cutoff is None:
+                    anomaly_cutoff = 6
+                if cutoff_score < int(anomaly_cutoff):
                     continue
                 dedupe_key = f"anomaly:{rule.id}:{event.event_id}:{normalized_target}"
                 self.create_alert_incident(
@@ -794,6 +948,7 @@ class DatabaseWorker:
         with self.SessionLocal() as self.db:
             for frame in frames:
                 self.create_frame(frame, frame_id)
+                self.create_detector_model_log(frame, frame_id)
 
     def publish_incidents(self, new_incidents: list, resolved_incidents: list):
         with self.SessionLocal() as self.db:
@@ -839,6 +994,7 @@ class DatabaseWorker:
             for event in anomaly_events:
                 created_event = self.create_anomaly_event(event)
                 if created_event is not None:
+                    self.create_anomaly_model_logs(event)
                     self.create_incident_from_anomaly_event(event)
                     self.maybe_create_anomaly_alerts(event)
 

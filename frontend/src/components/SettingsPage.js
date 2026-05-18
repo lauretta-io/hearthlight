@@ -9,6 +9,7 @@ import {
   validateSelectedVideoFile,
   VIDEO_UPLOAD_ACCEPT,
 } from '../utils/videoUpload';
+import { THEME_GROUP_LABELS, getThemeOption } from '../theme';
 import '../styles/CameraConfig.css';
 
 const TASK_OPTIONS = ['PERSON', 'BAG'];
@@ -20,7 +21,7 @@ const SOURCE_KIND_OPTIONS = [
 const MODEL_STAGE_OPTIONS = [
   { stage: 'detector', label: 'Detector', field: 'detector_model_key' },
   { stage: 'tracker', label: 'Tracker', field: 'tracker_model_key' },
-  { stage: 'anomaly_stage_1', label: 'Anomaly Stage 1', field: 'anomaly_stage_1_model_key' },
+  { stage: 'anomaly_stage_1', label: 'Heuristic Filter', field: 'anomaly_stage_1_model_key' },
   { stage: 'anomaly_stage_2', label: 'Anomaly Stage 2', field: 'anomaly_stage_2_model_key' },
 ];
 const TEMPLATE_OPTIONS = ['active', 'example', 'master_config', 'office_config'];
@@ -29,12 +30,23 @@ const ALERT_SIGNAL_FAMILY_OPTIONS = [
   { value: 'anomaly_object', label: 'Anomaly Object' },
   { value: 'anomaly_activity', label: 'Anomaly Activity' },
 ];
+const RULE_KIND_OPTIONS = [
+  { value: 'detector', label: 'Detection Rules' },
+  { value: 'anomaly', label: 'Anomaly Detection Rules' },
+];
+const ANOMALY_TARGET_KIND_OPTIONS = [
+  { value: 'object', label: 'Object' },
+  { value: 'behavior', label: 'Behavior' },
+];
 const ALERT_LEVEL_OPTIONS = [
   { value: 'low', label: 'Low' },
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ];
-const HIDDEN_MODEL_STAGE_DEFAULTS = ['reid'];
+const MODEL_LIBRARY_SUB_TABS = [
+  { key: 'inventory', label: 'Model Inventory' },
+  { key: 'library', label: 'Model Library' },
+];
 const EMPTY_PROMPT_SETTINGS = {
   anomaly_items: [],
   anomaly_behaviors: [],
@@ -42,6 +54,7 @@ const EMPTY_PROMPT_SETTINGS = {
 const SETTINGS_TABS = [
   { key: 'sources', label: 'Sources' },
   { key: 'model-library', label: 'Model Library' },
+  { key: 'appearance', label: 'Appearance' },
   { key: 'run', label: 'Run' },
   { key: 'monitoring', label: 'Monitoring' },
   { key: 'initialization', label: 'Initialization' },
@@ -62,7 +75,7 @@ const MODEL_STAGE_COPY = {
     usedFor: 'Turning frame-by-frame detections into stable moving tracks.',
   },
   anomaly_stage_1: {
-    title: 'Anomaly Stage 1 Models',
+    title: 'Heuristic Filter Models',
     description: 'These models run the first AI anomaly pass and decide which moments are worth escalating for deeper reasoning.',
     usedFor: 'AI-backed anomaly screening and event prefiltering.',
   },
@@ -84,6 +97,7 @@ const createSourceDraft = (kind = 'camera_url') => ({
   source_value: kind === 'webcam' ? 0 : '',
   upload_id: null,
   upload: null,
+  process_every_n_frames: 1,
   detector_model_key: null,
   tracker_model_key: null,
   anomaly_stage_1_model_key: null,
@@ -101,46 +115,56 @@ const hydrateSource = (source, fallbackIndex = 0) => ({
   source_value: source.source_value ?? (source.kind === 'webcam' ? 0 : ''),
   upload_id: source.upload_id ?? null,
   upload: source.upload ?? null,
+  process_every_n_frames: Number.isFinite(source.process_every_n_frames) ? source.process_every_n_frames : 1,
   detector_model_key: source.detector_model_key ?? null,
   tracker_model_key: source.tracker_model_key ?? null,
   anomaly_stage_1_model_key: source.anomaly_stage_1_model_key ?? null,
   anomaly_stage_2_model_key: source.anomaly_stage_2_model_key ?? null,
 });
 
-const createAlertRuleDraft = (sourceId, signalFamily = 'detector') => ({
+const createAlertRuleDraft = (ruleKind = 'detector') => ({
   clientKey: `settings-alert-rule-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   id: null,
-  source_id: sourceId,
+  source_id: null,
+  source_ids: [],
   enabled: true,
   rule_label: '',
-  signal_family: signalFamily,
+  rule_kind: ruleKind,
+  signal_family: ruleKind === 'detector' ? 'detector' : 'anomaly_object',
+  anomaly_target_kind: ruleKind === 'anomaly' ? 'object' : null,
   target_key: '',
   min_confidence: 0.5,
+  anomaly_cutoff: 6,
   alert_level: 'medium',
 });
 
 const hydrateAlertRule = (rule, fallbackIndex = 0) => ({
   clientKey: rule.id ? `settings-alert-rule-${rule.id}` : `settings-alert-rule-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
   id: rule.id ?? null,
-  source_id: rule.source_id,
+  source_id: rule.source_id ?? (Array.isArray(rule.source_ids) && rule.source_ids.length > 0 ? rule.source_ids[0] : null),
+  source_ids: Array.isArray(rule.source_ids)
+    ? rule.source_ids
+    : (rule.source_id ? [rule.source_id] : []),
   enabled: rule.enabled ?? true,
   rule_label: rule.rule_label ?? '',
+  rule_kind: rule.rule_kind ?? ((rule.signal_family || '').startsWith('anomaly_') ? 'anomaly' : 'detector'),
   signal_family: rule.signal_family ?? 'detector',
+  anomaly_target_kind: rule.anomaly_target_kind
+    ?? (rule.signal_family === 'anomaly_activity' ? 'behavior' : (rule.signal_family === 'anomaly_object' ? 'object' : null)),
   target_key: rule.target_key ?? '',
   min_confidence: Number.isFinite(rule.min_confidence) ? rule.min_confidence : 0.5,
+  anomaly_cutoff: Number.isFinite(rule.anomaly_cutoff) ? rule.anomaly_cutoff : 6,
   alert_level: rule.alert_level ?? 'medium',
 });
 
-const createAnomalyItemDraft = (item = '', triggerScore = 6) => ({
+const createAnomalyItemDraft = (item = '') => ({
   clientKey: `settings-anomaly-item-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   item,
-  trigger_score: triggerScore,
 });
 
 const hydrateAnomalyItem = (item, fallbackIndex = 0) => ({
   clientKey: `settings-anomaly-item-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
-  item: item?.item ?? '',
-  trigger_score: Number.isFinite(item?.trigger_score) ? item.trigger_score : 6,
+  item: typeof item === 'string' ? item : (item?.item ?? ''),
 });
 
 const createAnomalyBehaviorDraft = (value = '') => ({
@@ -203,6 +227,7 @@ const sanitizeSourcesForApi = (sources) =>
     order: index,
     source_value: source.kind === 'video_upload' ? null : source.source_value,
     upload_id: source.kind === 'video_upload' ? source.upload_id : null,
+    process_every_n_frames: Math.max(1, Number(source.process_every_n_frames) || 1),
     detector_model_key: source.detector_model_key || null,
     tracker_model_key: source.tracker_model_key || null,
     reid_model_key: null,
@@ -213,13 +238,17 @@ const sanitizeSourcesForApi = (sources) =>
 const sanitizeAlertRulesForApi = (rules) =>
   rules.map((rule) => ({
     id: rule.id ?? undefined,
-    source_id: rule.source_id,
+    source_ids: rule.source_ids,
     enabled: rule.enabled,
     rule_label: rule.rule_label?.trim() || null,
+    rule_kind: rule.rule_kind,
     signal_family: rule.signal_family,
+    anomaly_target_kind: rule.anomaly_target_kind,
     target_key: rule.target_key,
     min_confidence: Number(rule.min_confidence),
+    anomaly_cutoff: rule.rule_kind === 'anomaly' ? Number(rule.anomaly_cutoff) : null,
     alert_level: rule.alert_level,
+    trigger_key: 'alert_rule_trigger',
   }));
 
 const sanitizeTelegramSubscriptionsForApi = (subscriptions) =>
@@ -301,6 +330,16 @@ const buildLaunchCommand = (plan) => {
   }
   return command.join(' ');
 };
+
+const groupThemeOptions = (themeOptions = []) =>
+  themeOptions.reduce((result, option) => {
+    const groupKey = option.group || 'core';
+    if (!result[groupKey]) {
+      result[groupKey] = [];
+    }
+    result[groupKey].push(option);
+    return result;
+  }, {});
 
 const normalizeSourceKindLabel = (kind) => {
   if (!kind) {
@@ -411,6 +450,12 @@ const SettingsPage = ({
   hideTabBar = false,
   pageTitle = 'Settings',
   pageSubtitle = 'Configure sources, run control, monitoring, and repository initialization from one workspace.',
+  themeOptions = [],
+  currentThemeKey = 'fidelity-light',
+  appearanceLoaded = false,
+  appearanceError = '',
+  isSavingAppearance = false,
+  onSaveAppearance = null,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [sources, setSources] = useState(() => {
@@ -426,11 +471,13 @@ const SettingsPage = ({
   });
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingBindings, setIsSavingBindings] = useState(false);
+  const [isSavingMountedModels, setIsSavingMountedModels] = useState(false);
   const [isSavingAnomalyPrompts, setIsSavingAnomalyPrompts] = useState(false);
   const [isSavingAlertRules, setIsSavingAlertRules] = useState(false);
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
   const [banner, setBanner] = useState(null);
+  const [mountedModels, setMountedModels] = useState({});
   const [rowErrors, setRowErrors] = useState({});
   const [alertRuleErrors, setAlertRuleErrors] = useState({});
   const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
@@ -451,6 +498,8 @@ const SettingsPage = ({
   const [anomalyItems, setAnomalyItems] = useState([]);
   const [anomalyBehaviors, setAnomalyBehaviors] = useState([]);
   const [standardPromptSettings, setStandardPromptSettings] = useState(EMPTY_PROMPT_SETTINGS);
+  const [modelLibrarySubTab, setModelLibrarySubTab] = useState('inventory');
+  const [expandedInventoryStages, setExpandedInventoryStages] = useState({});
   const [launchPlan, setLaunchPlan] = useState(() => {
     const saved = localStorage.getItem('settingsLaunchPlanDraft');
     if (!saved) {
@@ -465,6 +514,8 @@ const SettingsPage = ({
       return createLaunchPlan();
     }
   });
+  const [draftThemeKey, setDraftThemeKey] = useState(currentThemeKey);
+  const [appearanceMessage, setAppearanceMessage] = useState(null);
   const requestedTab = forcedTab || searchParams.get('tab');
   const allowedTabs = forcedTab ? [...SETTINGS_TABS, ...STANDALONE_PAGE_TABS] : SETTINGS_TABS;
   const activeTab = allowedTabs.some((tab) => tab.key === requestedTab)
@@ -488,14 +539,27 @@ const SettingsPage = ({
     localStorage.setItem('settingsLaunchPlanDraft', JSON.stringify(launchPlan));
   }, [launchPlan]);
 
+  useEffect(() => {
+    setDraftThemeKey(getThemeOption(currentThemeKey).key);
+  }, [currentThemeKey]);
+
   const reloadAlertRuleState = async ({ includeRules = true, sourcesSnapshot = [] } = {}) => {
-    const requests = [
-      fetch(`${BaseURL}/settings/alert-rule-options`),
-    ];
+    let ruleResponse = null;
+    const optionResponse = await fetch(`${BaseURL}/settings/alert-rule-options`);
     if (includeRules) {
-      requests.unshift(fetch(`${BaseURL}/settings/alert-rules`));
+      ruleResponse = await fetch(`${BaseURL}/settings/trigger-rules`);
+      if (ruleResponse.ok) {
+        try {
+          const preview = await ruleResponse.clone().json();
+          if (!Array.isArray(preview)) {
+            ruleResponse = await fetch(`${BaseURL}/settings/alert-rules`);
+          }
+        } catch (error) {
+          ruleResponse = await fetch(`${BaseURL}/settings/alert-rules`);
+        }
+      }
     }
-    const responses = await Promise.all(requests);
+    const responses = includeRules ? [ruleResponse, optionResponse] : [optionResponse];
     const firstFailure = responses.find((response) => !response.ok);
     if (firstFailure) {
       let detail = null;
@@ -516,7 +580,7 @@ const SettingsPage = ({
         ruleResponse.json(),
         optionResponse.json(),
       ]);
-      setAlertRules((ruleData || []).map((rule, index) => hydrateAlertRule(rule, index)));
+      setAlertRules((Array.isArray(ruleData) ? ruleData : []).map((rule, index) => hydrateAlertRule(rule, index)));
       setAlertRuleOptions(optionData || { sources: [] });
       setAlertRuleLoadHint(buildAlertRuleSetupHint(sourcesSnapshot));
     } else {
@@ -562,38 +626,18 @@ const SettingsPage = ({
   useEffect(() => {
     const loadSources = async () => {
       try {
-        const [sourceResponse, modelResponse, bindingResponse] = await Promise.all([
+        const [sourceResponse] = await Promise.all([
           fetch(`${BaseURL}/settings/input-sources`),
-          fetch(`${BaseURL}/model-options`),
-          fetch(`${BaseURL}/model-bindings`),
         ]);
         if (!sourceResponse.ok) {
           throw new Error('Failed to load input source settings');
         }
-        if (!modelResponse.ok || !bindingResponse.ok) {
-          throw new Error('Failed to load model registry settings');
-        }
-        const [sourceData, modelData, bindingData] = await Promise.all([
-          sourceResponse.json(),
-          modelResponse.json(),
-          bindingResponse.json(),
-        ]);
+        const sourceData = await sourceResponse.json();
         const hydratedSources = sourceData.length > 0
           ? sourceData.map((source, index) => hydrateSource(source, index))
           : [createSourceDraft()];
-        if (sourceData.length > 0) {
-          setSources(hydratedSources);
-        } else {
-          setSources(hydratedSources);
-        }
-        setModelOptionCatalog(modelData);
-        const nextDefaults = {};
-        bindingData
-          .filter((binding) => binding.binding_scope === 'default')
-          .forEach((binding) => {
-            nextDefaults[binding.stage] = binding.model_key || '';
-          });
-        setDefaultBindings(nextDefaults);
+        setSources(hydratedSources);
+        await reloadModelRegistryState();
         try {
           let standardPromptData = EMPTY_PROMPT_SETTINGS;
           const standardPromptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts/standard`);
@@ -662,6 +706,9 @@ const SettingsPage = ({
   };
 
   const alertRuleOptionSources = alertRuleOptions.sources || [];
+  const groupedThemeOptions = groupThemeOptions(themeOptions);
+  const themeGroupsInOrder = ['light', 'dark', 'accessible', 'core']
+    .filter((groupKey) => Array.isArray(groupedThemeOptions[groupKey]) && groupedThemeOptions[groupKey].length > 0);
   const alertRuleOptionsBySource = alertRuleOptionSources.reduce((result, sourceOption) => {
     result[sourceOption.source_id] = sourceOption;
     return result;
@@ -676,10 +723,10 @@ const SettingsPage = ({
     return preferred?.signal_family || 'detector';
   };
 
-  const addAlertRule = (sourceId) => {
+  const addAlertRule = (ruleKind = 'detector') => {
     setAlertRules((previous) => [
       ...previous,
-      createAlertRuleDraft(sourceId, getPreferredSignalFamily(sourceId)),
+      createAlertRuleDraft(ruleKind),
     ]);
   };
 
@@ -705,6 +752,30 @@ const SettingsPage = ({
     );
   };
 
+  const toggleAlertRuleSource = (clientKey, sourceId, checked) => {
+    setAlertRules((previous) =>
+      previous.map((rule) => {
+        if (rule.clientKey !== clientKey) {
+          return rule;
+        }
+        const nextSourceIds = new Set(rule.source_ids || []);
+        if (checked) {
+          nextSourceIds.add(sourceId);
+        } else {
+          nextSourceIds.delete(sourceId);
+        }
+        const orderedIds = sources
+          .filter((source) => nextSourceIds.has(source.id))
+          .map((source) => source.id);
+        return {
+          ...rule,
+          source_ids: orderedIds,
+          source_id: orderedIds[0] ?? null,
+        };
+      })
+    );
+  };
+
   const setAlertRuleSignalFamily = (clientKey, signalFamily) => {
     setAlertRules((previous) =>
       previous.map((rule) =>
@@ -712,7 +783,39 @@ const SettingsPage = ({
           ? {
               ...rule,
               signal_family: signalFamily,
+              anomaly_target_kind: signalFamily === 'anomaly_activity' ? 'behavior' : (signalFamily === 'anomaly_object' ? 'object' : null),
               target_key: '',
+            }
+          : rule
+      )
+    );
+  };
+
+  const saveAppearanceSettings = async () => {
+    if (!onSaveAppearance) {
+      return;
+    }
+    setAppearanceMessage(null);
+    try {
+      const savedThemeKey = await onSaveAppearance(draftThemeKey);
+      setDraftThemeKey(getThemeOption(savedThemeKey).key);
+      setAppearanceMessage({ kind: 'success', text: `Theme updated to ${getThemeOption(savedThemeKey).label}.` });
+    } catch (error) {
+      setAppearanceMessage(null);
+    }
+  };
+
+  const setAlertRuleKind = (clientKey, ruleKind) => {
+    setAlertRules((previous) =>
+      previous.map((rule) =>
+        rule.clientKey === clientKey
+          ? {
+              ...rule,
+              rule_kind: ruleKind,
+              signal_family: ruleKind === 'detector' ? 'detector' : 'anomaly_object',
+              anomaly_target_kind: ruleKind === 'anomaly' ? 'object' : null,
+              target_key: '',
+              anomaly_cutoff: ruleKind === 'anomaly' ? (rule.anomaly_cutoff || 6) : null,
             }
           : rule
       )
@@ -832,6 +935,8 @@ const SettingsPage = ({
         nextErrors[source.clientKey] = 'Upload a video file before saving.';
       } else if (source.kind !== 'video_upload' && `${source.source_value ?? ''}`.trim() === '') {
         nextErrors[source.clientKey] = 'Source value is required.';
+      } else if (Number.isNaN(Number(source.process_every_n_frames)) || Number(source.process_every_n_frames) < 1) {
+        nextErrors[source.clientKey] = 'Process every Nth frame must be 1 or greater.';
       }
     });
     setRowErrors(nextErrors);
@@ -841,16 +946,32 @@ const SettingsPage = ({
   const validateAlertRules = () => {
     const nextErrors = {};
     alertRules.forEach((rule) => {
-      const sourceSignalOptions = getSignalOptionsForSource(rule.source_id, rule.signal_family);
-      const validTargets = new Set((sourceSignalOptions?.options || []).map((option) => option.key.toLowerCase()));
+      if (!Array.isArray(rule.source_ids) || rule.source_ids.length === 0) {
+        nextErrors[rule.clientKey] = 'Select at least one camera.';
+        return;
+      }
       if (!rule.target_key) {
         nextErrors[rule.clientKey] = 'Select a target for the rule.';
-      } else if (sourceSignalOptions?.unavailable_reason) {
-        nextErrors[rule.clientKey] = sourceSignalOptions.unavailable_reason;
-      } else if (!validTargets.has(rule.target_key.toLowerCase())) {
-        nextErrors[rule.clientKey] = 'Select a valid target from the prepared options.';
-      } else if (Number.isNaN(Number(rule.min_confidence)) || Number(rule.min_confidence) < 0 || Number(rule.min_confidence) > 1) {
-        nextErrors[rule.clientKey] = 'Confidence must be between 0.0 and 1.0.';
+        return;
+      }
+      for (const sourceId of rule.source_ids) {
+        const sourceSignalOptions = getSignalOptionsForSource(sourceId, rule.signal_family);
+        const validTargets = new Set((sourceSignalOptions?.options || []).map((option) => option.key.toLowerCase()));
+        if (sourceSignalOptions?.unavailable_reason) {
+          nextErrors[rule.clientKey] = sourceSignalOptions.unavailable_reason;
+          return;
+        }
+        if (!validTargets.has(rule.target_key.toLowerCase())) {
+          nextErrors[rule.clientKey] = 'Select a valid target from the prepared options.';
+          return;
+        }
+      }
+      if (rule.rule_kind === 'detector') {
+        if (Number.isNaN(Number(rule.min_confidence)) || Number(rule.min_confidence) < 0 || Number(rule.min_confidence) > 1) {
+          nextErrors[rule.clientKey] = 'Confidence must be between 0.0 and 1.0.';
+        }
+      } else if (Number.isNaN(Number(rule.anomaly_cutoff)) || Number(rule.anomaly_cutoff) < 1 || Number(rule.anomaly_cutoff) > 10) {
+        nextErrors[rule.clientKey] = 'Anomaly trigger cutoff must be between 1 and 10.';
       }
     });
     setAlertRuleErrors(nextErrors);
@@ -883,21 +1004,38 @@ const SettingsPage = ({
     return Object.keys(nextErrors).length === 0;
   };
 
+  const reloadModelRegistryState = async () => {
+    const [modelResponse, bindingResponse] = await Promise.all([
+      fetch(`${BaseURL}/model-options`),
+      fetch(`${BaseURL}/model-bindings`),
+    ]);
+    if (!modelResponse.ok || !bindingResponse.ok) {
+      throw new Error('Failed to load model registry settings');
+    }
+    const [modelData, bindingData] = await Promise.all([
+      modelResponse.json(),
+      bindingResponse.json(),
+    ]);
+    setModelOptionCatalog(modelData || { stages: [] });
+    setMountedModels(modelData?.mounted_models || {});
+    const nextDefaults = {};
+    (bindingData || [])
+      .filter((binding) => binding.binding_scope === 'default')
+      .forEach((binding) => {
+        nextDefaults[binding.stage] = binding.model_key || '';
+      });
+    setDefaultBindings(nextDefaults);
+    return { modelData, bindingData };
+  };
+
   const saveDefaultBindings = async () => {
     setIsSavingBindings(true);
     try {
-      const payload = [
-        ...MODEL_STAGE_OPTIONS.map((option) => ({
-          stage: option.stage,
-          model_key: defaultBindings[option.stage] || null,
-          binding_scope: 'default',
-        })),
-        ...HIDDEN_MODEL_STAGE_DEFAULTS.map((stage) => ({
-          stage,
-          model_key: null,
-          binding_scope: 'default',
-        })),
-      ];
+      const payload = MODEL_STAGE_OPTIONS.map((option) => ({
+        stage: option.stage,
+        model_key: defaultBindings[option.stage] || null,
+        binding_scope: 'default',
+      }));
       const response = await fetch(`${BaseURL}/model-bindings`, {
         method: 'PUT',
         headers: {
@@ -909,13 +1047,7 @@ const SettingsPage = ({
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save default model bindings');
       }
-      const nextDefaults = {};
-      data
-        .filter((binding) => binding.binding_scope === 'default')
-        .forEach((binding) => {
-          nextDefaults[binding.stage] = binding.model_key || '';
-        });
-      setDefaultBindings(nextDefaults);
+      await reloadModelRegistryState();
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
       setBanner({ kind: 'success', text: 'Default model bindings saved.' });
     } catch (error) {
@@ -939,7 +1071,7 @@ const SettingsPage = ({
         item.clientKey === clientKey
           ? {
               ...item,
-              [field]: field === 'trigger_score' ? Number(value) : value,
+              [field]: value,
             }
           : item
       )
@@ -968,9 +1100,9 @@ const SettingsPage = ({
   };
 
   const validateAnomalyPrompts = () => {
-    const invalidItem = anomalyItems.find((item) => !item.item.trim() || !Number.isFinite(Number(item.trigger_score)) || Number(item.trigger_score) < 1 || Number(item.trigger_score) > 10);
+    const invalidItem = anomalyItems.find((item) => !item.item.trim());
     if (invalidItem) {
-      setBanner({ kind: 'error', text: 'Each anomaly item needs a name and a trigger score from 1 to 10.' });
+      setBanner({ kind: 'error', text: 'Each anomaly item needs a name.' });
       return false;
     }
     const invalidBehavior = anomalyBehaviors.find((behavior) => !behavior.value.trim());
@@ -995,7 +1127,6 @@ const SettingsPage = ({
         body: JSON.stringify({
           anomaly_items: anomalyItems.map((item) => ({
             item: item.item.trim(),
-            trigger_score: Number(item.trigger_score),
           })),
           anomaly_behaviors: anomalyBehaviors.map((behavior) => behavior.value.trim()).filter(Boolean),
         }),
@@ -1046,12 +1177,67 @@ const SettingsPage = ({
       }
       const hydratedSources = data.map((source, index) => hydrateSource(source, index));
       setSources(hydratedSources);
+      await reloadModelRegistryState();
       await reloadAlertRuleState({ sourcesSnapshot: data });
       setBanner({ kind: 'success', text: 'Source settings updated.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
       setIsSaving(false);
+    }
+  };
+
+  const toggleMountedModel = (stage, modelKey, checked) => {
+    setMountedModels((previous) => {
+      const current = new Set(previous[stage] || []);
+      if (checked) {
+        current.add(modelKey);
+      } else {
+        current.delete(modelKey);
+      }
+      return {
+        ...previous,
+        [stage]: Array.from(current),
+      };
+    });
+  };
+
+  const toggleInventoryStage = (stage) => {
+    setExpandedInventoryStages((previous) => ({
+      ...previous,
+      [stage]: !previous[stage],
+    }));
+  };
+
+  const saveMountedModels = async () => {
+    setIsSavingMountedModels(true);
+    try {
+      const payload = MODEL_STAGE_OPTIONS.map((option) => ({
+        stage: option.stage,
+        mounted_model_keys: mountedModels[option.stage] || [],
+      }));
+      const response = await fetch(`${BaseURL}/mounted-models`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save mounted models');
+      }
+      const nextMounted = {};
+      (data || []).forEach((entry) => {
+        nextMounted[entry.stage] = entry.mounted_model_keys || [];
+      });
+      setMountedModels(nextMounted);
+      await reloadModelRegistryState();
+      setBanner({ kind: 'success', text: 'Mounted model inventory updated.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingMountedModels(false);
     }
   };
 
@@ -1124,18 +1310,42 @@ const SettingsPage = ({
     }
     setIsSavingAlertRules(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/alert-rules`, {
+      const response = await fetch(`${BaseURL}/settings/trigger-rules`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(sanitizeAlertRulesForApi(alertRules)),
       });
-      const data = await response.json();
-      if (!response.ok) {
+      let data = await response.json();
+      let finalResponse = response;
+      if (!finalResponse.ok || !Array.isArray(data)) {
+        finalResponse = await fetch(`${BaseURL}/settings/alert-rules`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(
+            alertRules
+              .filter((rule) => rule.rule_kind === 'detector' && rule.source_ids.length > 0)
+              .map((rule) => ({
+                id: rule.id ?? undefined,
+                source_id: rule.source_ids[0],
+                enabled: rule.enabled,
+                rule_label: rule.rule_label?.trim() || null,
+                signal_family: 'detector',
+                target_key: rule.target_key,
+                min_confidence: Number(rule.min_confidence),
+                alert_level: rule.alert_level,
+              })),
+          ),
+        });
+        data = await finalResponse.json();
+      }
+      if (!finalResponse.ok) {
         throw new Error(data.detail || 'Failed to save alert rules');
       }
-      setAlertRules((data || []).map((rule, index) => hydrateAlertRule(rule, index)));
+      setAlertRules((Array.isArray(data) ? data : []).map((rule, index) => hydrateAlertRule(rule, index)));
       setAlertRuleErrors({});
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
       setBanner({ kind: 'success', text: 'Alert rules saved.' });
@@ -1292,11 +1502,13 @@ const SettingsPage = ({
     }
     return modelDisplayNamesByStage[stage]?.[modelKey] || modelKey;
   };
-  const alertRulesBySource = sources.reduce((result, source) => {
-    result[source.id ?? source.clientKey] = alertRules.filter((rule) => rule.source_id === source.id);
-    return result;
-  }, {});
+  const detectionRules = alertRules.filter((rule) => rule.rule_kind === 'detector');
+  const anomalyRules = alertRules.filter((rule) => rule.rule_kind === 'anomaly');
   const modelZooSource = modelOptionCatalog.model_zoo || {};
+  const persistedMountedModelsByStage = modelOptionCatalog.mounted_models || {};
+  const mountedModelsByStage = Object.keys(mountedModels || {}).length > 0
+    ? mountedModels
+    : persistedMountedModelsByStage;
   const modelZooSummary = modelZooSource.commit_short
     ? `Options prepared from model-zoo commit ${modelZooSource.commit_short}${modelZooSource.resolved_from ? ` via ${modelZooSource.resolved_from.replace('_', ' ')}` : ''}.`
     : 'Options prepared from the installed model-zoo catalog.';
@@ -1311,13 +1523,81 @@ const SettingsPage = ({
   );
   const stageLibraryEntries = MODEL_STAGE_OPTIONS.map((option) => {
     const stageOptions = modelOptionsByStage[option.stage] || [];
+    const mountedCount = (mountedModelsByStage[option.stage] || []).length;
     return {
       ...option,
       ...MODEL_STAGE_COPY[option.stage],
       options: stageOptions,
+      mountedCount,
       defaultDisplayName: getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'No default selected'),
     };
   });
+  const mountedModelChanges = MODEL_STAGE_OPTIONS.reduce(
+    (result, option) => {
+      const persistedSet = new Set(persistedMountedModelsByStage[option.stage] || []);
+      const draftSet = new Set(mountedModelsByStage[option.stage] || []);
+      for (const modelKey of draftSet) {
+        if (!persistedSet.has(modelKey)) {
+          result.added += 1;
+        }
+      }
+      for (const modelKey of persistedSet) {
+        if (!draftSet.has(modelKey)) {
+          result.removed += 1;
+        }
+      }
+      return result;
+    },
+    { added: 0, removed: 0 },
+  );
+  const hasMountedModelChanges = mountedModelChanges.added > 0 || mountedModelChanges.removed > 0;
+  const mountedModelActionLabel = hasMountedModelChanges ? 'Remount Models' : 'Mount Models';
+  const mountedModelProgressLabel = mountedModelChanges.added > 0 && mountedModelChanges.removed > 0
+    ? 'Remounting models...'
+    : mountedModelChanges.removed > 0
+      ? 'Dismounting models...'
+      : 'Mounting models...';
+  const getProcessingRateGuidance = (option) => {
+    if (option.stage === 'detector') {
+      return option.requires_gpu ? 'Moderate' : 'Heavy';
+    }
+    if (option.stage === 'tracker') {
+      return 'Lightweight';
+    }
+    if (option.stage === 'anomaly_stage_1') {
+      return 'Lightweight';
+    }
+    return option.requires_gpu ? 'Moderate' : 'Heavy';
+  };
+
+  const renderModelOptions = (stage) => {
+    const stageOptions = modelOptionsByStage[stage] || [];
+    const mountedKeys = new Set(mountedModelsByStage[stage] || []);
+    const mountedOptions = stageOptions.filter((option) => mountedKeys.has(option.model_key));
+    const availableOptions = stageOptions.filter((option) => !mountedKeys.has(option.model_key));
+    return (
+      <>
+        {mountedOptions.length > 0 && (
+          <optgroup label="Mounted">
+            {mountedOptions.map((registration) => (
+              <option key={registration.model_key} value={registration.model_key}>
+                {registration.display_name || registration.model_key}
+              </option>
+            ))}
+          </optgroup>
+        )}
+        {availableOptions.length > 0 && (
+          <optgroup label="Available to mount">
+            {availableOptions.map((registration) => (
+              <option key={registration.model_key} value={registration.model_key}>
+                {(registration.display_name || registration.model_key)} (mount on save)
+              </option>
+            ))}
+          </optgroup>
+        )}
+      </>
+    );
+  };
 
   return (
     <div className="settings-container">
@@ -1455,6 +1735,18 @@ const SettingsPage = ({
                                 onChange={(event) => setSourceField(source.clientKey, 'enabled', event.target.checked)}
                               />
                             </label>
+
+                            <label>
+                              <span>Frame Skipping</span>
+                              <input
+                                type="number"
+                                min="1"
+                                step="1"
+                                value={source.process_every_n_frames ?? 1}
+                                onChange={(event) => setSourceField(source.clientKey, 'process_every_n_frames', Number(event.target.value) || 1)}
+                              />
+                              <small className="muted-text">Process every Nth frame. `1` means every frame, `3` means every 3rd frame.</small>
+                            </label>
                           </div>
 
                           {source.enabled ? (
@@ -1469,11 +1761,7 @@ const SettingsPage = ({
                                     <option value="">
                                       Use default ({getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'None')})
                                     </option>
-                                    {(modelOptionsByStage[option.stage] || []).map((registration) => (
-                                      <option key={registration.model_key} value={registration.model_key}>
-                                        {registration.display_name || registration.model_key}
-                                      </option>
-                                    ))}
+                                    {renderModelOptions(option.stage)}
                                   </select>
                                 </label>
                               ))}
@@ -1509,8 +1797,9 @@ const SettingsPage = ({
                     <div className="card-header">
                       <div>
                         <h3>Default Model Bindings</h3>
-                        <p>Set default detector, tracker, anomaly Stage 1, and anomaly Stage 2 models for new runs.</p>
+                        <p>Set default detector, tracker, Heuristic Filter, and anomaly Stage 2 models for new runs.</p>
                         <p className="muted-text">{modelZooSummary}</p>
+                        <p className="muted-text">Defaults and camera overrides are mounted centrally. Choosing an available model mounts it when you save.</p>
                       </div>
                     </div>
                     <div className="model-binding-grid">
@@ -1525,11 +1814,7 @@ const SettingsPage = ({
                             }))}
                           >
                             <option value="">No default</option>
-                            {(modelOptionsByStage[option.stage] || []).map((registration) => (
-                              <option key={registration.model_key} value={registration.model_key}>
-                                {registration.display_name || registration.model_key}
-                              </option>
-                            ))}
+                            {renderModelOptions(option.stage)}
                           </select>
                         </label>
                       ))}
@@ -1589,17 +1874,6 @@ const SettingsPage = ({
                                       value={item.item}
                                       onChange={(event) => setAnomalyItemField(item.clientKey, 'item', event.target.value)}
                                       placeholder="weapon"
-                                    />
-                                  </label>
-                                  <label>
-                                    <span>Trigger Score (1-10)</span>
-                                    <input
-                                      type="number"
-                                      min="1"
-                                      max="10"
-                                      step="1"
-                                      value={item.trigger_score}
-                                      onChange={(event) => setAnomalyItemField(item.clientKey, 'trigger_score', event.target.value)}
                                     />
                                   </label>
                                 </div>
@@ -1720,7 +1994,94 @@ const SettingsPage = ({
 
               <section className="control-grid">
                 <div className="control-column">
-                  <div className="card">
+                  <div className="settings-subtabs">
+                    {MODEL_LIBRARY_SUB_TABS.map((tab) => (
+                      <button
+                        key={tab.key}
+                        type="button"
+                        className={`settings-subtab ${modelLibrarySubTab === tab.key ? 'active' : ''}`}
+                        onClick={() => setModelLibrarySubTab(tab.key)}
+                      >
+                        {tab.label}
+                      </button>
+                    ))}
+                  </div>
+
+                  {modelLibrarySubTab === 'inventory' && (
+                    <div className="card">
+                      <div className="card-header">
+                        <div>
+                          <h3>Model Inventory</h3>
+                          <p>Mount models centrally before deployment. Cameras can only run from this shared inventory.</p>
+                          <p className="muted-text">You can keep multiple models mounted per stage, including local or third-party registry entries.</p>
+                        </div>
+                      </div>
+
+                      <div className="model-library-stage-list">
+                        {stageLibraryEntries.map((stage) => {
+                          const mountedKeys = new Set(mountedModelsByStage[stage.stage] || []);
+                          const mountedOptions = stage.options.filter((option) => mountedKeys.has(option.model_key));
+                          const isExpanded = Boolean(expandedInventoryStages[stage.stage]);
+                          const visibleOptions = isExpanded ? stage.options : mountedOptions;
+                          return (
+                            <div key={`mounted-${stage.stage}`} className="model-library-stage">
+                              <div className="source-row-header">
+                                <div>
+                                  <strong>{stage.title || stage.label}</strong>
+                                  <div className="muted-text">
+                                    {stage.mountedCount} mounted · {stage.options.length} available
+                                  </div>
+                                </div>
+                                <button
+                                  type="button"
+                                  className="ghost-button"
+                                  onClick={() => toggleInventoryStage(stage.stage)}
+                                >
+                                  {isExpanded ? 'Hide available models' : 'Show mounted and available models'}
+                                </button>
+                              </div>
+                              {visibleOptions.length === 0 ? (
+                                <div className="empty-state">No mounted models yet for this stage.</div>
+                              ) : (
+                                <div className="model-library-grid">
+                                  {visibleOptions.map((option) => {
+                                    const isMounted = mountedKeys.has(option.model_key);
+                                    return (
+                                      <label key={`mounted-option-${option.model_key}`} className="model-mount-toggle">
+                                        <input
+                                          type="checkbox"
+                                          checked={isMounted}
+                                          onChange={(event) => toggleMountedModel(stage.stage, option.model_key, event.target.checked)}
+                                        />
+                                        <span>
+                                          {option.display_name || option.model_key}
+                                          {isMounted ? ' · Mounted' : ' · Available'}
+                                        </span>
+                                      </label>
+                                    );
+                                  })}
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="control-actions">
+                        <button
+                          type="button"
+                          onClick={saveMountedModels}
+                          className="secondary-button"
+                          disabled={isSavingMountedModels}
+                        >
+                          {isSavingMountedModels ? mountedModelProgressLabel : mountedModelActionLabel}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {modelLibrarySubTab === 'library' && (
+                    <div className="card">
                     <div className="card-header">
                       <div>
                         <h3>Model Library</h3>
@@ -1739,6 +2100,7 @@ const SettingsPage = ({
                             </div>
                             <div className="model-library-stage-meta">
                               <span>{stage.options.length} available</span>
+                              <span>{stage.mountedCount} mounted</span>
                               <span>Default: {stage.defaultDisplayName}</span>
                             </div>
                           </div>
@@ -1761,6 +2123,7 @@ const SettingsPage = ({
                                       </div>
                                       <div className="model-library-badges">
                                         {defaultBindings[stage.stage] === option.model_key && <span className="model-library-badge">Default</span>}
+                                        {option.is_mounted && <span className="model-library-badge">Mounted</span>}
                                         {option.requires_gpu && <span className="model-library-badge">GPU required</span>}
                                         {option.option_origin === 'local_override' && <span className="model-library-badge">Override</span>}
                                       </div>
@@ -1794,10 +2157,14 @@ const SettingsPage = ({
                                         <span className="model-library-fact-label">Backend</span>
                                         <span>{backend || 'catalog entry'}</span>
                                       </div>
+                                      <div className="model-library-fact">
+                                        <span className="model-library-fact-label">Processing Rate</span>
+                                        <span>{getProcessingRateGuidance(option)}</span>
+                                      </div>
                                       {option.stage === 'detector' && detectorClasses.length > 0 && (
                                         <div className="model-library-fact">
                                           <span className="model-library-fact-label">Available Classes</span>
-                                          <span>{formatListLabel(detectorClasses)}</span>
+                                          <span>{formatDetectorClassSummary(detectorClasses)}</span>
                                         </div>
                                       )}
                                       <div className="model-library-fact">
@@ -1813,7 +2180,8 @@ const SettingsPage = ({
                         </div>
                       ))}
                     </div>
-                  </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="control-column">
@@ -1829,6 +2197,7 @@ const SettingsPage = ({
                       <div className="muted-text">1. Pick a default model per stage in the Sources tab.</div>
                       <div className="muted-text">2. Override a model on an individual source only when that source needs something different.</div>
                       <div className="muted-text">3. Alert rules then use the effective detector model and the saved anomaly prompt lists for their available targets.</div>
+                      <div className="muted-text">Processing Rate is qualitative guidance only. Live cadence depends on camera FPS and frame skipping.</div>
                     </div>
                   </div>
 
@@ -1887,7 +2256,7 @@ const SettingsPage = ({
                     <div className="card-header">
                       <div>
                         <h3>Rules</h3>
-                        <p>Define single-condition alert rules per source, using detector classes or anomaly prompt lists.</p>
+                        <p>Define detection rules and anomaly detection rules, each with multi-camera targeting.</p>
                       </div>
                     </div>
 
@@ -1896,162 +2265,184 @@ const SettingsPage = ({
                         <div className="empty-state">{alertRuleLoadHint}</div>
                       )}
 
-                      {sources.map((source, index) => {
-                        const sourceOption = alertRuleOptionsBySource[source.id];
-                        const signalOptions = sourceOption?.signal_options || [];
-                        const sourceRules = alertRulesBySource[source.id] || [];
-                        return (
-                          <div key={source.clientKey} className="source-row">
-                            <div className="source-row-header">
-                              <div>
-                                <strong>{source.label?.trim() || defaultSourceLabel(source, index, sources)}</strong>
-                                <div className="muted-text">
-                                  {getDisplayNameForStage('detector', source.detector_model_key || defaultBindings.detector, 'No Detector')} · {getDisplayNameForStage('anomaly_stage_1', source.anomaly_stage_1_model_key || defaultBindings.anomaly_stage_1, 'No Anomaly Stage 1')} · {getDisplayNameForStage('anomaly_stage_2', source.anomaly_stage_2_model_key || defaultBindings.anomaly_stage_2, 'No Anomaly Stage 2')}
-                                </div>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => source.id && addAlertRule(source.id)}
-                                className="secondary-button"
-                                disabled={!source.id}
-                              >
-                                Add Rule
-                              </button>
-                            </div>
-
-                            {signalOptions.length > 0 && (
-                              <div className="alert-option-grid">
-                                {signalOptions.map((signalOption) => (
-                                  <div key={`${source.id}-${signalOption.signal_family}`} className="empty-state">
-                                    <strong>
-                                      {ALERT_SIGNAL_FAMILY_OPTIONS.find((option) => option.value === signalOption.signal_family)?.label || signalOption.signal_family}
-                                    </strong>
-                                    {signalOption.unavailable_reason ? (
-                                      <div className="muted-text">{signalOption.unavailable_reason}</div>
-                                    ) : (
-                                      <div className="muted-text">
-                                        {(signalOption.options || []).map((option) => option.label).join(', ') || 'No options available'}
-                                      </div>
-                                    )}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            {sourceRules.length === 0 ? (
-                              <div className="empty-state">No alert rules for this source yet.</div>
-                            ) : (
-                              <div className="source-list">
-                                {sourceRules.map((rule, ruleIndex) => {
-                                  const selectedSignalOptions = getSignalOptionsForSource(rule.source_id, rule.signal_family);
-                                  const targetOptions = selectedSignalOptions?.options || [];
-                                  const selectedTargetOption = targetOptions.find((option) => option.key === rule.target_key);
-                                  return (
-                                    <div key={rule.clientKey} className="source-row">
-                                      <div className="source-row-header">
-                                        <strong>Rule {ruleIndex + 1}</strong>
-                                        <button
-                                          type="button"
-                                          onClick={() => removeAlertRule(rule.clientKey)}
-                                          className="ghost-button"
-                                        >
-                                          Remove
-                                        </button>
-                                      </div>
-
-                                      <div className="model-binding-grid">
-                                        <label>
-                                          <span>Rule Label</span>
-                                          <input
-                                            type="text"
-                                            value={rule.rule_label}
-                                            onChange={(event) => setAlertRuleField(rule.clientKey, 'rule_label', event.target.value)}
-                                            placeholder="Optional operator label"
-                                          />
-                                        </label>
-                                        <label>
-                                          <span>Signal</span>
-                                          <select
-                                            value={rule.signal_family}
-                                            onChange={(event) => setAlertRuleSignalFamily(rule.clientKey, event.target.value)}
-                                          >
-                                            {ALERT_SIGNAL_FAMILY_OPTIONS.map((option) => (
-                                              <option key={option.value} value={option.value}>
-                                                {option.label}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </label>
-                                        <label>
-                                          <span>Target</span>
-                                          <select
-                                            value={rule.target_key}
-                                            onChange={(event) => setAlertRuleField(rule.clientKey, 'target_key', event.target.value)}
-                                            disabled={Boolean(selectedSignalOptions?.unavailable_reason)}
-                                          >
-                                            <option value="">
-                                              {selectedSignalOptions?.unavailable_reason ? 'Unavailable' : 'Select target'}
-                                            </option>
-                                            {targetOptions.map((option) => (
-                                              <option key={option.key} value={option.key}>
-                                                {option.label}
-                                              </option>
-                                            ))}
-                                          </select>
-                                          {selectedTargetOption?.description && (
-                                            <small className="muted-text">{selectedTargetOption.description}</small>
-                                          )}
-                                        </label>
-                                        <label>
-                                          <span>Min Confidence</span>
-                                          <input
-                                            type="number"
-                                            min="0"
-                                            max="1"
-                                            step="0.01"
-                                            value={rule.min_confidence}
-                                            onChange={(event) => setAlertRuleField(rule.clientKey, 'min_confidence', event.target.value)}
-                                          />
-                                        </label>
-                                        <label>
-                                          <span>Alert Level</span>
-                                          <select
-                                            value={rule.alert_level}
-                                            onChange={(event) => setAlertRuleField(rule.clientKey, 'alert_level', event.target.value)}
-                                          >
-                                            {ALERT_LEVEL_OPTIONS.map((option) => (
-                                              <option key={option.value} value={option.value}>
-                                                {option.label}
-                                              </option>
-                                            ))}
-                                          </select>
-                                        </label>
-                                        <label className="toggle-field">
-                                          <span>Enabled</span>
-                                          <input
-                                            type="checkbox"
-                                            checked={rule.enabled}
-                                            onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)}
-                                          />
-                                        </label>
-                                      </div>
-
-                                      {alertRuleErrors[rule.clientKey] && (
-                                        <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>
-                                      )}
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
+                      <div className="source-row">
+                        <div className="source-row-header">
+                          <div>
+                            <strong>Detection Rules</strong>
+                            <div className="muted-text">Use detector targets like `PERSON` and `BAG` with a confidence threshold from `0.0` to `1.0`.</div>
                           </div>
-                        );
-                      })}
+                          <button type="button" onClick={() => addAlertRule('detector')} className="secondary-button">
+                            Add Detection Rule
+                          </button>
+                        </div>
+                        {detectionRules.length === 0 ? (
+                          <div className="empty-state">No detection rules configured yet.</div>
+                        ) : (
+                          <div className="source-list">
+                            {detectionRules.map((rule, ruleIndex) => {
+                              const selectedSourceId = rule.source_ids?.[0];
+                              const selectedSignalOptions = selectedSourceId ? getSignalOptionsForSource(selectedSourceId, 'detector') : null;
+                              const targetOptions = selectedSignalOptions?.options || [];
+                              const selectedTargetOption = targetOptions.find((option) => option.key === rule.target_key);
+                              return (
+                                <div key={rule.clientKey} className="source-row">
+                                  <div className="source-row-header">
+                                    <strong>Detection Rule {ruleIndex + 1}</strong>
+                                    <button type="button" onClick={() => removeAlertRule(rule.clientKey)} className="ghost-button">Remove</button>
+                                  </div>
+                                  <div className="model-binding-grid">
+                                    <label>
+                                      <span>Rule Label</span>
+                                      <input type="text" value={rule.rule_label} onChange={(event) => setAlertRuleField(rule.clientKey, 'rule_label', event.target.value)} placeholder="Optional operator label" />
+                                    </label>
+                                    <div className="camera-rule-selector">
+                                      <span>Applies To</span>
+                                      <div className="camera-checkbox-grid">
+                                        {sources.filter((source) => source.id).map((source, index) => (
+                                          <label key={`${rule.clientKey}-detector-source-${source.id}`} className="model-mount-toggle">
+                                            <input
+                                              type="checkbox"
+                                              checked={(rule.source_ids || []).includes(source.id)}
+                                              onChange={(event) => toggleAlertRuleSource(rule.clientKey, source.id, event.target.checked)}
+                                            />
+                                            <span>{source.label?.trim() || defaultSourceLabel(source, index, sources)}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <label>
+                                      <span>Detector Target</span>
+                                      <select value={rule.target_key} onChange={(event) => setAlertRuleField(rule.clientKey, 'target_key', event.target.value)}>
+                                        <option value="">Select target</option>
+                                        {targetOptions.map((option) => (
+                                          <option key={option.key} value={option.key}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                      {selectedTargetOption?.description && <small className="muted-text">{selectedTargetOption.description}</small>}
+                                    </label>
+                                    <label>
+                                      <span>Confidence Threshold</span>
+                                      <input type="number" min="0" max="1" step="0.01" value={rule.min_confidence} onChange={(event) => setAlertRuleField(rule.clientKey, 'min_confidence', event.target.value)} />
+                                    </label>
+                                    <label>
+                                      <span>Alert Level</span>
+                                      <select value={rule.alert_level} onChange={(event) => setAlertRuleField(rule.clientKey, 'alert_level', event.target.value)}>
+                                        {ALERT_LEVEL_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label className="toggle-field">
+                                      <span>Enabled</span>
+                                      <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
+                                    </label>
+                                  </div>
+                                  {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="source-row">
+                        <div className="source-row-header">
+                          <div>
+                            <strong>Anomaly Detection Rules</strong>
+                            <div className="muted-text">Use saved anomaly objects or behaviors with a `1-10` trigger cutoff per rule.</div>
+                          </div>
+                          <button type="button" onClick={() => addAlertRule('anomaly')} className="secondary-button">
+                            Add Anomaly Rule
+                          </button>
+                        </div>
+                        {anomalyRules.length === 0 ? (
+                          <div className="empty-state">No anomaly detection rules configured yet.</div>
+                        ) : (
+                          <div className="source-list">
+                            {anomalyRules.map((rule, ruleIndex) => {
+                              const signalFamily = rule.anomaly_target_kind === 'behavior' ? 'anomaly_activity' : 'anomaly_object';
+                              const selectedSourceId = rule.source_ids?.[0];
+                              const selectedSignalOptions = selectedSourceId ? getSignalOptionsForSource(selectedSourceId, signalFamily) : null;
+                              const targetOptions = selectedSignalOptions?.options || [];
+                              return (
+                                <div key={rule.clientKey} className="source-row">
+                                  <div className="source-row-header">
+                                    <strong>Anomaly Rule {ruleIndex + 1}</strong>
+                                    <button type="button" onClick={() => removeAlertRule(rule.clientKey)} className="ghost-button">Remove</button>
+                                  </div>
+                                  <div className="model-binding-grid">
+                                    <label>
+                                      <span>Rule Label</span>
+                                      <input type="text" value={rule.rule_label} onChange={(event) => setAlertRuleField(rule.clientKey, 'rule_label', event.target.value)} placeholder="Optional operator label" />
+                                    </label>
+                                    <div className="camera-rule-selector">
+                                      <span>Applies To</span>
+                                      <div className="camera-checkbox-grid">
+                                        {sources.filter((source) => source.id).map((source, index) => (
+                                          <label key={`${rule.clientKey}-anomaly-source-${source.id}`} className="model-mount-toggle">
+                                            <input
+                                              type="checkbox"
+                                              checked={(rule.source_ids || []).includes(source.id)}
+                                              onChange={(event) => toggleAlertRuleSource(rule.clientKey, source.id, event.target.checked)}
+                                            />
+                                            <span>{source.label?.trim() || defaultSourceLabel(source, index, sources)}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <label>
+                                      <span>Anomaly Type</span>
+                                      <select
+                                        value={rule.anomaly_target_kind || 'object'}
+                                        onChange={(event) => {
+                                          const nextKind = event.target.value;
+                                          setAlertRuleField(rule.clientKey, 'anomaly_target_kind', nextKind);
+                                          setAlertRuleSignalFamily(rule.clientKey, nextKind === 'behavior' ? 'anomaly_activity' : 'anomaly_object');
+                                        }}
+                                      >
+                                        {ANOMALY_TARGET_KIND_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      <span>Target</span>
+                                      <select value={rule.target_key} onChange={(event) => setAlertRuleField(rule.clientKey, 'target_key', event.target.value)}>
+                                        <option value="">Select target</option>
+                                        {targetOptions.map((option) => (
+                                          <option key={option.key} value={option.key}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      <span>Trigger Cutoff (1-10)</span>
+                                      <input type="number" min="1" max="10" step="1" value={rule.anomaly_cutoff ?? 6} onChange={(event) => setAlertRuleField(rule.clientKey, 'anomaly_cutoff', event.target.value)} />
+                                    </label>
+                                    <label>
+                                      <span>Alert Level</span>
+                                      <select value={rule.alert_level} onChange={(event) => setAlertRuleField(rule.clientKey, 'alert_level', event.target.value)}>
+                                        {ALERT_LEVEL_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label className="toggle-field">
+                                      <span>Enabled</span>
+                                      <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
+                                    </label>
+                                  </div>
+                                  {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
                     </div>
 
                     <div className="control-actions">
                       <button type="button" onClick={saveAlertRules} className="secondary-button" disabled={isSavingAlertRules}>
-                        {isSavingAlertRules ? 'Saving...' : 'Save Alert Rules'}
+                        {isSavingAlertRules ? 'Saving...' : 'Save Rules'}
                       </button>
                     </div>
                   </div>
@@ -2085,14 +2476,14 @@ const SettingsPage = ({
                     <div className="card-header">
                       <div>
                         <h3>How It Works</h3>
-                        <p>Each rule watches one source and one signal family. When the target is present above the confidence threshold, the system creates an `ALERT` trigger.</p>
+                        <p>Detection rules use detector confidence, while anomaly rules use the saved prompt targets plus a per-rule `1-10` cutoff.</p>
                       </div>
                     </div>
                     <div className="empty-state endpoint-info">
                       <strong>GET {`${BaseURL}/settings/alert-rule-options`}</strong>
                       <div className="muted-text">Prepared source-specific detector, anomaly object, and anomaly activity targets.</div>
-                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/alert-rules`}</div>
-                      <div className="muted-text">Rules are evaluated per source during live detector and anomaly processing.</div>
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/trigger-rules`}</div>
+                      <div className="muted-text">Rules can target multiple cameras and are evaluated during live detector and anomaly processing.</div>
                     </div>
                   </div>
                 </div>
@@ -2345,6 +2736,110 @@ const SettingsPage = ({
                   </div>
               </section>
             </>
+          )}
+
+          {activeTab === 'appearance' && (
+            <section className="control-grid">
+              <div className="control-column">
+                <div className="card">
+                  <div className="card-header">
+                    <div>
+                      <h3>Workspace Theme</h3>
+                      <p>Choose the shared Hearthlight theme for this workspace. The selected theme is persisted in backend settings and restored after app or server restarts.</p>
+                    </div>
+                  </div>
+
+                  {appearanceMessage && (
+                    <div className={`banner banner-${appearanceMessage.kind}`}>
+                      {appearanceMessage.text}
+                    </div>
+                  )}
+
+                  {appearanceError && (
+                    <div className="row-error">
+                      {appearanceError}
+                    </div>
+                  )}
+
+                  {!appearanceLoaded && (
+                    <div className="empty-state">Loading workspace appearance settings...</div>
+                  )}
+
+                  <div className="appearance-theme-groups">
+                    {themeGroupsInOrder.map((groupKey) => (
+                      <div key={groupKey} className="appearance-theme-group">
+                        <div className="source-row-header">
+                          <strong>{THEME_GROUP_LABELS[groupKey] || groupKey}</strong>
+                        </div>
+                        <div className="appearance-theme-grid">
+                          {groupedThemeOptions[groupKey].map((option) => (
+                            <button
+                              key={option.key}
+                              type="button"
+                              className={`appearance-theme-card ${draftThemeKey === option.key ? 'appearance-theme-card-active' : ''}`}
+                              onClick={() => {
+                                setAppearanceMessage(null);
+                                setDraftThemeKey(option.key);
+                              }}
+                            >
+                              <div className="appearance-theme-card-header">
+                                <strong>{option.label}</strong>
+                                <span className="appearance-theme-card-state">
+                                  {draftThemeKey === option.key ? 'Selected' : 'Available'}
+                                </span>
+                              </div>
+                              <div className="appearance-theme-swatches" aria-hidden="true">
+                                {(option.swatches || []).map((swatch) => (
+                                  <span
+                                    key={`${option.key}-${swatch}`}
+                                    className="appearance-theme-swatch"
+                                    style={{ backgroundColor: swatch }}
+                                  />
+                                ))}
+                              </div>
+                              <p>{option.description}</p>
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="control-actions">
+                    <button
+                      type="button"
+                      onClick={saveAppearanceSettings}
+                      className="secondary-button"
+                      disabled={isSavingAppearance || !appearanceLoaded}
+                    >
+                      {isSavingAppearance ? (
+                        <>
+                          <span className="button-spinner" aria-hidden="true" />
+                          Saving Appearance...
+                        </>
+                      ) : 'Save Appearance'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="control-column">
+                <div className="card">
+                  <div className="card-header">
+                    <div>
+                      <h3>Theme Behavior</h3>
+                      <p>Theme changes are shared across the workspace and applied consistently across the operator shell.</p>
+                    </div>
+                  </div>
+                  <div className="empty-state endpoint-info">
+                    <strong>GET/PUT {`${BaseURL}/settings/appearance`}</strong>
+                    <div className="muted-text">The backend stores the workspace theme as the source of truth.</div>
+                    <div className="muted-text">The browser keeps a local startup cache only to reduce theme flicker before the settings API responds.</div>
+                    <div className="muted-text">Accessible mode is intended for higher-contrast operation and clearer focus visibility.</div>
+                  </div>
+                </div>
+              </div>
+            </section>
           )}
 
           {activeTab === 'run' && <RunSection embedded pollingEnabled />}

@@ -74,6 +74,8 @@ The main operator-facing API surface for model selection and alert definition is
 - `GET /model-options`
 - `GET /model-bindings`
 - `PUT /model-bindings`
+- `GET /settings/appearance`
+- `PUT /settings/appearance`
 - `GET /settings/anomaly-prompts`
 - `PUT /settings/anomaly-prompts`
 - `GET /settings/alert-rules`

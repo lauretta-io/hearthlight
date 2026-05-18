@@ -33,6 +33,7 @@ from ...shared.database.database import SessionLocal, get_db
 from ...shared.models import DataModels, SQLModels
 from ...shared.models.APIModels import (
     AdmissionStatus,
+    AppearanceSettings,
     AppleMessageTriggerSubscription,
     AppleMessageTriggerTestResponse,
     AlertRule,
@@ -52,7 +53,9 @@ from ...shared.models.APIModels import (
     ModelBinding,
     ModelHealth,
     ModelOptionCatalog,
+    ModelResultLogPage,
     ModelRegistration,
+    MountedModelStage,
     MODEL_BINDING_STAGES,
     MonitoringOverview,
     POISearch,
@@ -127,16 +130,21 @@ from ...shared.utils.local_worker_runtime import (
     map_container_path_to_host,
 )
 from ...shared.utils.model_registry import (
+    OPERATOR_MODEL_STAGES,
     build_default_bindings,
     build_model_health,
     build_model_display_name,
     build_model_option_catalog,
     build_runtime_binding_block,
     build_source_binding_overrides,
+    build_effective_mounted_models,
+    collect_required_mounted_models,
+    ensure_mounted_model_key,
     get_registration,
     get_stage_field_name,
     load_registry_bundle,
     MODEL_BINDINGS_PATH,
+    persist_mounted_models,
     normalize_binding_stage,
     resolve_bindings_for_source,
     sync_registry_bundle_to_db,
@@ -158,6 +166,11 @@ from ...shared.utils.monitoring_feed import (
     parse_serialized_json,
 )
 from ...shared.utils.security import resolve_safe_child_path
+from ...shared.utils.workspace_settings import (
+    SETTING_KEY_APPEARANCE,
+    get_workspace_setting_value,
+    set_workspace_setting_value,
+)
 from ...shared.utils.system_state import (
     SystemStatus,
     derive_system_status,
@@ -204,14 +217,39 @@ def resolve_project_path(path_like: str | Path) -> Path:
 
 
 def get_expected_module_names() -> list[str]:
-    modules = [
+    return [
         ModuleNames.INGESTOR,
-        ModuleNames.REID,
         ModuleNames.ANOMALY,
     ]
-    if not is_hybrid_local_cpu_runtime():
-        modules.insert(2, ModuleNames.ASSOCIATION)
-    return modules
+
+
+def build_default_appearance_settings() -> AppearanceSettings:
+    return AppearanceSettings(theme_key="fidelity-light")
+
+
+def read_appearance_settings(db: Session) -> AppearanceSettings:
+    payload = get_workspace_setting_value(
+        db,
+        SETTING_KEY_APPEARANCE,
+        default=build_default_appearance_settings().model_dump(),
+    )
+    if not isinstance(payload, dict):
+        payload = build_default_appearance_settings().model_dump()
+    try:
+        return AppearanceSettings.model_validate(payload)
+    except Exception:
+        return build_default_appearance_settings()
+
+
+def write_appearance_settings(db: Session, payload: AppearanceSettings) -> AppearanceSettings:
+    settings = AppearanceSettings.model_validate(payload)
+    set_workspace_setting_value(
+        db,
+        SETTING_KEY_APPEARANCE,
+        settings.model_dump(),
+    )
+    db.commit()
+    return read_appearance_settings(db)
 
 
 def build_host_upload_path(upload_path: str | None) -> str | None:
@@ -315,7 +353,6 @@ ANOMALY_TYPE_PROMPT_PATH = Path(
 STANDARD_ANOMALY_PROMPT_CONFIG_PATH = resolve_project_path("shared/prompts/stage2_prompt_config.yaml")
 STANDARD_ANOMALY_TEXT_PROMPT_PATH = resolve_project_path("shared/prompts/prompt_v2.yaml")
 STANDARD_ANOMALY_TYPE_PROMPT_PATH = resolve_project_path("shared/prompts/anomaly_list.yaml")
-DEFAULT_ANOMALY_TRIGGER_SCORE = 6
 MODULE_RESTART_DELAY_SEC = float(os.environ.get("MODULE_RESTART_DELAY_SEC", "1.0"))
 REQUIRE_GPU_FOR_START = os.environ.get("WEBAPP_REQUIRE_GPU", "false").lower() in {
     "1",
@@ -336,8 +373,6 @@ frame_id = None
 total_frames = None
 module_status = {
     ModuleNames.INGESTOR: DataModels.Status.IDLE,
-    ModuleNames.REID: DataModels.Status.IDLE,
-    ModuleNames.ASSOCIATION: DataModels.Status.IDLE,
     ModuleNames.ANOMALY: DataModels.Status.IDLE,
 }
 module_metrics = {}
@@ -348,8 +383,6 @@ run_id = None
 def get_default_module_status():
     return {
         ModuleNames.INGESTOR: DataModels.Status.IDLE,
-        ModuleNames.REID: DataModels.Status.IDLE,
-        ModuleNames.ASSOCIATION: DataModels.Status.IDLE,
         ModuleNames.ANOMALY: DataModels.Status.IDLE,
     }
 
@@ -764,6 +797,7 @@ def shutdown_external_resources():
 
 
 def get_active_source_rows(db: Session):
+    ensure_source_template_columns(db)
     return (
         db.query(SQLModels.InputSourceTemplate)
         .filter_by(is_deleted=False)
@@ -773,6 +807,32 @@ def get_active_source_rows(db: Session):
         )
         .all()
     )
+
+
+def ensure_source_template_columns(db: Session) -> None:
+    existing = {
+        row[0]
+        for row in db.execute(
+            text(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'control'
+                  AND table_name = 'input_source_template'
+                """
+            )
+        ).all()
+    }
+    if "process_every_n_frames" not in existing:
+        db.execute(
+            text(
+                """
+                ALTER TABLE control.input_source_template
+                ADD COLUMN process_every_n_frames INTEGER NOT NULL DEFAULT 1
+                """
+            )
+        )
+        db.commit()
 
 
 def get_registry_bundle(
@@ -1050,6 +1110,7 @@ def build_input_source_response(
         source_value=coerce_source_value_for_api(source_row),
         upload_id=source_row.upload_id,
         upload=db_upload_to_api(upload_row),
+        process_every_n_frames=max(1, int(getattr(source_row, "process_every_n_frames", 1) or 1)),
         detector_model_key=source_row.detector_model_key,
         tracker_model_key=source_row.tracker_model_key,
         reid_model_key=source_row.reid_model_key,
@@ -1165,6 +1226,8 @@ def selected_sources_require_gpu(
 def build_model_registration_responses(bundle: dict):
     registrations = []
     for stage, stage_models in bundle.get("models", {}).items():
+        if stage not in OPERATOR_MODEL_STAGES:
+            continue
         for model_key, registration in stage_models.items():
             registrations.append(
                 ModelRegistration(
@@ -1194,7 +1257,7 @@ def build_model_binding_responses(
     defaults = build_default_bindings(bundle, has_gpu=has_gpu)
     bindings = [
         ModelBinding(stage=stage, model_key=defaults.get(stage), binding_scope="default")
-        for stage in sorted(MODEL_BINDING_STAGES)
+        for stage in sorted(OPERATOR_MODEL_STAGES)
     ]
     for source_row in source_rows:
         overrides = build_source_binding_overrides(source_row)
@@ -1209,6 +1272,14 @@ def build_model_binding_responses(
                     )
                 )
     return bindings
+
+
+def build_mounted_model_stage_responses(bundle: dict):
+    mounted_models = build_effective_mounted_models(bundle, bundle.get("mounted_models"))
+    return [
+        MountedModelStage(stage=stage, mounted_model_keys=list(mounted_models.get(stage) or []))
+        for stage in sorted(OPERATOR_MODEL_STAGES)
+    ]
 
 
 def persist_model_bindings(defaults: dict[str, str | None]):
@@ -1236,10 +1307,22 @@ def replace_sources(db: Session, sources: list[InputSource]):
     existing_rows = get_active_source_rows(db)
     existing_by_id = {row.id: row for row in existing_rows}
     validate_upload_references(db, sources)
+    bundle = get_registry_bundle(db, source_rows=existing_rows)
+    mounted_models = build_effective_mounted_models(bundle, bundle.get("mounted_models"))
 
     seen_ids = set()
     persisted_rows = []
     for order, source in enumerate(sources):
+        for stage in OPERATOR_MODEL_STAGES:
+            model_key = getattr(source, get_stage_field_name(stage), None)
+            if model_key is not None:
+                registration = get_registration(bundle, stage, model_key)
+                if registration is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"unknown {stage} model binding {model_key}",
+                    )
+                ensure_mounted_model_key(bundle, mounted_models, stage, model_key)
         row = existing_by_id.get(source.id) if source.id is not None else None
         if row is None:
             row = SQLModels.InputSourceTemplate()
@@ -1253,9 +1336,10 @@ def replace_sources(db: Session, sources: list[InputSource]):
         row.tasks = list(source.tasks)
         row.enabled = source.enabled
         row.sort_order = order
+        row.process_every_n_frames = max(1, int(source.process_every_n_frames or 1))
         row.detector_model_key = source.detector_model_key
         row.tracker_model_key = source.tracker_model_key
-        row.reid_model_key = source.reid_model_key
+        row.reid_model_key = None
         row.anomaly_stage_1_model_key = source.anomaly_stage_1_model_key
         row.anomaly_stage_2_model_key = source.anomaly_stage_2_model_key
         row.last_error = None
@@ -1267,6 +1351,7 @@ def replace_sources(db: Session, sources: list[InputSource]):
 
     db.flush()
     get_registry_bundle(db, source_rows=persisted_rows)
+    persist_mounted_models(mounted_models)
     seen_ids.update(row.id for row in persisted_rows if row.id is not None)
     for row in existing_rows:
         if row.id not in seen_ids:
@@ -1275,7 +1360,10 @@ def replace_sources(db: Session, sources: list[InputSource]):
     ensure_alert_rule_tables()
     active_source_ids = {row.id for row in persisted_rows if row.id is not None}
     for alert_rule_row in db.query(SQLModels.TriggerRule).filter_by(is_deleted=False).all():
-        if alert_rule_row.source_template_id not in active_source_ids:
+        referenced_source_ids = _deserialize_trigger_rule_source_ids(alert_rule_row)
+        if not referenced_source_ids:
+            referenced_source_ids = [alert_rule_row.source_template_id]
+        if any(source_id not in active_source_ids for source_id in referenced_source_ids if source_id is not None):
             alert_rule_row.is_deleted = True
             alert_rule_row.deleted_at = datetime.utcnow()
     sync_upload_lifecycle_states(db, source_rows=persisted_rows, active_upload_ids=set())
@@ -1327,7 +1415,7 @@ def _load_yaml_mapping(path: Path) -> dict:
     return data if isinstance(data, dict) else {}
 
 
-def _normalize_anomaly_items(raw_items) -> list[dict[str, int | str]]:
+def _normalize_anomaly_items(raw_items) -> list[dict[str, str]]:
     if raw_items is None:
         return []
     if not isinstance(raw_items, list):
@@ -1335,22 +1423,18 @@ def _normalize_anomaly_items(raw_items) -> list[dict[str, int | str]]:
     normalized = []
     seen = set()
     for entry in raw_items:
-        if not isinstance(entry, dict):
-            raise HTTPException(status_code=400, detail="each anomaly item must be a mapping")
-        item = str(entry.get("item") or "").strip()
+        item = ""
+        if isinstance(entry, dict):
+            item = str(entry.get("item") or "").strip()
+        else:
+            item = str(entry or "").strip()
         if not item:
             raise HTTPException(status_code=400, detail="anomaly item name cannot be empty")
         lowered = item.lower()
         if lowered in seen:
             continue
         seen.add(lowered)
-        try:
-            trigger_score = int(entry.get("trigger_score", DEFAULT_ANOMALY_TRIGGER_SCORE))
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail="anomaly item trigger_score must be an integer from 1 to 10") from exc
-        if trigger_score < 1 or trigger_score > 10:
-            raise HTTPException(status_code=400, detail="anomaly item trigger_score must be an integer from 1 to 10")
-        normalized.append({"item": item, "trigger_score": trigger_score})
+        normalized.append({"item": item})
     return normalized
 
 
@@ -1386,10 +1470,7 @@ def _read_stage2_prompt_config(
         config = {
             "template": str(prompt_cfg.get("template") or "").strip(),
             "anomaly_items": [
-                {
-                    "item": str(item).strip(),
-                    "trigger_score": DEFAULT_ANOMALY_TRIGGER_SCORE,
-                }
+                str(item).strip()
                 for item in list(type_cfg.get("anomaly_object_list") or [])
                 if str(item).strip()
             ],
@@ -1411,8 +1492,14 @@ def _read_stage2_prompt_config(
 
 
 def _build_anomaly_type_payload_from_config(config: dict) -> dict[str, list[str]]:
+    anomaly_items = []
+    for entry in config.get("anomaly_items", []):
+        value = entry.get("item") if isinstance(entry, dict) else entry
+        normalized = str(value or "").strip()
+        if normalized:
+            anomaly_items.append(normalized)
     return {
-        "anomaly_object_list": [str(entry["item"]).strip() for entry in config.get("anomaly_items", []) if str(entry.get("item") or "").strip()],
+        "anomaly_object_list": anomaly_items,
         "anomaly_activity_list": [str(item).strip() for item in config.get("anomaly_behaviors", []) if str(item).strip()],
     }
 
@@ -1455,9 +1542,7 @@ def _build_anomaly_prompt_settings_response(
 
 
 def _validate_prompt_settings_payload(payload: AnomalyPromptSettings):
-    for item in payload.anomaly_items:
-        if item.trigger_score < 1 or item.trigger_score > 10:
-            raise HTTPException(status_code=400, detail="anomaly item trigger_score must be an integer from 1 to 10")
+    del payload
 
 
 def read_anomaly_prompt_settings() -> AnomalyPromptSettings:
@@ -1488,13 +1573,7 @@ def write_anomaly_prompt_settings(payload: AnomalyPromptSettings) -> AnomalyProm
     ANOMALY_PROMPT_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     config = {
         "template": existing_config.get("template") or "",
-        "anomaly_items": [
-            {
-                "item": item.item,
-                "trigger_score": int(item.trigger_score),
-            }
-            for item in payload.anomaly_items
-        ],
+        "anomaly_items": [item.item for item in payload.anomaly_items],
         "anomaly_behaviors": list(payload.anomaly_behaviors),
     }
     ANOMALY_PROMPT_CONFIG_PATH.write_text(
@@ -1558,11 +1637,15 @@ def build_trigger_rule_responses(db: Session):
             id=row.id,
             trigger_key=row.trigger_key,
             source_id=row.source_template_id,
+            source_ids=_deserialize_trigger_rule_source_ids(row),
             enabled=row.enabled,
             rule_label=row.rule_label,
+            rule_kind=_deserialize_trigger_rule_kind(row),
             signal_family=row.signal_family,
+            anomaly_target_kind=_deserialize_trigger_rule_anomaly_target_kind(row),
             target_key=row.target_key,
             min_confidence=float(row.min_confidence),
+            anomaly_cutoff=_deserialize_trigger_rule_anomaly_cutoff(row),
             alert_level=row.alert_level,
             delivery_target_ids=parse_serialized_json(row.delivery_target_ids_json, []),
             metadata=parse_serialized_json(row.metadata_json, {}),
@@ -1571,6 +1654,60 @@ def build_trigger_rule_responses(db: Session):
         )
         for row in rows
     ]
+
+
+def _deserialize_trigger_rule_source_ids(row: SQLModels.TriggerRule) -> list[int]:
+    source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
+    if isinstance(source_ids, list):
+        normalized: list[int] = []
+        for item in source_ids:
+            try:
+                item_int = int(item)
+            except (TypeError, ValueError):
+                continue
+            if item_int > 0 and item_int not in normalized:
+                normalized.append(item_int)
+        if normalized:
+            return normalized
+    if row.source_template_id:
+        return [int(row.source_template_id)]
+    return []
+
+
+def _deserialize_trigger_rule_kind(row: SQLModels.TriggerRule) -> str:
+    value = str(getattr(row, "rule_kind", "") or "").strip().lower()
+    if value in {"detector", "anomaly"}:
+        return value
+    if str(row.signal_family or "").startswith("anomaly_"):
+        return "anomaly"
+    return "detector"
+
+
+def _deserialize_trigger_rule_anomaly_target_kind(row: SQLModels.TriggerRule) -> str | None:
+    value = str(getattr(row, "anomaly_target_kind", "") or "").strip().lower()
+    if value in {"object", "behavior"}:
+        return value
+    signal_family = str(row.signal_family or "").strip().lower()
+    if signal_family == "anomaly_object":
+        return "object"
+    if signal_family == "anomaly_activity":
+        return "behavior"
+    return None
+
+
+def _deserialize_trigger_rule_anomaly_cutoff(row: SQLModels.TriggerRule) -> int | None:
+    value = getattr(row, "anomaly_cutoff", None)
+    if value is None:
+        metadata = parse_serialized_json(row.metadata_json, {})
+        if isinstance(metadata, dict):
+            value = metadata.get("anomaly_cutoff")
+    if value is None:
+        return None
+    try:
+        value_int = int(value)
+    except (TypeError, ValueError):
+        return None
+    return value_int if 1 <= value_int <= 10 else None
 
 
 def build_alert_rule_options_response(db: Session) -> AlertRuleOptionCatalog:
@@ -1692,46 +1829,75 @@ def replace_trigger_rules(db: Session, rules: list[TriggerRule]):
         .all()
     )
     existing_by_id = {row.id: row for row in existing_rows}
-    alert_rules = [
-        AlertRule(
-            id=rule.id,
-            source_id=int(rule.source_id or 0),
-            enabled=rule.enabled,
-            rule_label=rule.rule_label,
-            signal_family=str(rule.signal_family or ""),
-            target_key=str(rule.target_key or ""),
-            min_confidence=rule.min_confidence,
-            alert_level=rule.alert_level,
-        )
-        for rule in rules
-        if rule.trigger_key == TRIGGER_KEY_ALERT_RULE
-    ]
-    if alert_rules:
-        replace_alert_rules(db, alert_rules)
+    source_rows = get_active_source_rows(db)
+    source_by_id = {row.id: row for row in source_rows}
+    option_lookup = build_alert_rule_option_lookup(
+        build_alert_rule_options_response(db).model_dump()
+    )
+
+    for rule in rules:
+        if rule.trigger_key != TRIGGER_KEY_ALERT_RULE:
+            continue
+        if not rule.source_ids:
+            raise HTTPException(status_code=400, detail="source_ids is required for alert rules")
+        for source_id in rule.source_ids:
+            if source_id not in source_by_id:
+                raise HTTPException(status_code=404, detail=f"source {source_id} not found")
+            signal_options = option_lookup.get(source_id, {}).get(rule.signal_family or "")
+            if signal_options is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"signal family {rule.signal_family} is unavailable for source {source_id}",
+                )
+            if signal_options.get("unavailable_reason"):
+                raise HTTPException(status_code=400, detail=signal_options["unavailable_reason"])
+            valid_targets = {
+                str(option.get("key")).strip().lower()
+                for option in signal_options.get("options", [])
+            }
+            if str(rule.target_key or "").strip().lower() not in valid_targets:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"invalid target '{rule.target_key}' for source {source_id} "
+                        f"and signal family {rule.signal_family}"
+                    ),
+                )
 
     seen_ids = {rule.id for rule in rules if rule.id is not None}
-    grouped_sort_orders: dict[tuple[str, int | None], int] = {}
+    grouped_sort_orders: dict[tuple[str, str], int] = {}
     for rule in rules:
-        if rule.trigger_key == TRIGGER_KEY_ALERT_RULE:
-            continue
-        key = (rule.trigger_key, rule.source_id)
         row = existing_by_id.get(rule.id) if rule.id is not None else None
         if row is None:
             row = SQLModels.TriggerRule()
             db.add(row)
+        key = (rule.trigger_key, rule.rule_kind)
         order = grouped_sort_orders.get(key, 0)
         grouped_sort_orders[key] = order + 1
         row.trigger_key = rule.trigger_key
-        row.source_template_id = rule.source_id
+        source_ids = list(rule.source_ids)
+        row.source_template_id = source_ids[0] if source_ids else None
+        row.source_ids_json = json.dumps(source_ids)
         row.enabled = rule.enabled
         row.sort_order = order
         row.rule_label = rule.rule_label
+        row.rule_kind = rule.rule_kind
         row.signal_family = rule.signal_family
+        row.anomaly_target_kind = rule.anomaly_target_kind
         row.target_key = rule.target_key
         row.min_confidence = rule.min_confidence
+        row.anomaly_cutoff = rule.anomaly_cutoff
         row.alert_level = rule.alert_level
         row.delivery_target_ids_json = json.dumps(list(rule.delivery_target_ids))
-        row.metadata_json = json.dumps(dict(rule.metadata or {}))
+        row.metadata_json = json.dumps(
+            {
+                **dict(rule.metadata or {}),
+                "source_ids": source_ids,
+                "rule_kind": rule.rule_kind,
+                "anomaly_target_kind": rule.anomaly_target_kind,
+                "anomaly_cutoff": rule.anomaly_cutoff,
+            }
+        )
         row.is_deleted = False
         row.deleted_at = None
 
@@ -2093,8 +2259,6 @@ def normalize_module_name(module_name: str) -> str:
     normalized = module_name.strip().upper()
     valid = {
         ModuleNames.INGESTOR,
-        ModuleNames.REID,
-        ModuleNames.ASSOCIATION,
         ModuleNames.ANOMALY,
     }
     if normalized not in valid:
@@ -2485,6 +2649,110 @@ def build_anomaly_feed_items(
     ]
 
 
+def build_model_result_log_page(
+    db: Session,
+    *,
+    page: int = 1,
+    page_size: int = 20,
+    stage: str | None = None,
+    source_id: int | None = None,
+    result_query: str | None = None,
+    run_identifier: str | None = None,
+):
+    normalized_page = max(1, int(page or 1))
+    normalized_page_size = min(100, max(1, int(page_size or 20)))
+    query = db.query(SQLModels.ModelResultLog).filter_by(is_deleted=False)
+    if run_identifier:
+        run_row = (
+            db.query(SQLModels.Run)
+            .filter_by(run_identifier=run_identifier, is_deleted=False)
+            .order_by(SQLModels.Run.id.desc())
+            .first()
+        )
+        if run_row is None:
+            return ModelResultLogPage(
+                page=normalized_page,
+                page_size=normalized_page_size,
+                total=0,
+                has_more=False,
+                rate_summary={},
+                records=[],
+            )
+        query = query.filter_by(run_id=run_row.id)
+    if stage:
+        query = query.filter_by(stage=stage)
+    if source_id is not None:
+        query = query.filter_by(source_template_id=source_id)
+    if result_query:
+        like_value = f"%{result_query.strip()}%"
+        query = query.filter(
+            SQLModels.ModelResultLog.result_summary.ilike(like_value)
+            | SQLModels.ModelResultLog.source_label.ilike(like_value)
+            | SQLModels.ModelResultLog.model_display_name.ilike(like_value)
+            | SQLModels.ModelResultLog.model_key.ilike(like_value)
+        )
+    total = query.count()
+    rows = (
+        query.order_by(
+            SQLModels.ModelResultLog.created_at.desc(),
+            SQLModels.ModelResultLog.id.desc(),
+        )
+        .offset((normalized_page - 1) * normalized_page_size)
+        .limit(normalized_page_size)
+        .all()
+    )
+    run_ids = {row.run_id for row in rows}
+    runs_by_id = {
+        run_row.id: run_row.run_identifier
+        for run_row in db.query(SQLModels.Run)
+        .filter(SQLModels.Run.id.in_(run_ids))
+        .all()
+    } if run_ids else {}
+    records = [
+        {
+            "id": row.id,
+            "created_at": row.created_at.isoformat() if row.created_at is not None else None,
+            "run_id": runs_by_id.get(row.run_id),
+            "source_id": row.source_template_id,
+            "source_label": row.source_label,
+            "camera_id": row.camera_id,
+            "stage": row.stage,
+            "model_key": row.model_key,
+            "model_display_name": row.model_display_name,
+            "frame_id": row.frame_id,
+            "result_summary": row.result_summary,
+            "result_payload": parse_serialized_json(row.result_payload_json) or {},
+        }
+        for row in rows
+    ]
+    recent_cutoff = datetime.utcnow().timestamp() - 60.0
+    recent_counts: dict[str, int] = {}
+    recent_rows = (
+        query.order_by(
+            SQLModels.ModelResultLog.created_at.desc(),
+            SQLModels.ModelResultLog.id.desc(),
+        )
+        .limit(500)
+        .all()
+    )
+    for row in recent_rows:
+        if row.created_at is None or row.created_at.timestamp() < recent_cutoff:
+            continue
+        stage_key = str(row.stage or "unknown")
+        recent_counts[stage_key] = recent_counts.get(stage_key, 0) + 1
+    return ModelResultLogPage(
+        page=normalized_page,
+        page_size=normalized_page_size,
+        total=total,
+        has_more=normalized_page * normalized_page_size < total,
+        rate_summary={
+            stage_key: round(count / 60.0, 2)
+            for stage_key, count in recent_counts.items()
+        },
+        records=records,
+    )
+
+
 def build_algorithm_feed_payload(
     db: Session,
     *,
@@ -2705,6 +2973,19 @@ def get_connector_zoo():
 @external_router.get("/settings/trigger-rules", response_model=list[TriggerRule])
 def get_settings_trigger_rules(db: Session = Depends(get_db)):
     return build_trigger_rule_responses(db)
+
+
+@external_router.get("/settings/appearance", response_model=AppearanceSettings)
+def get_settings_appearance(db: Session = Depends(get_db)):
+    return read_appearance_settings(db)
+
+
+@external_router.put("/settings/appearance", response_model=AppearanceSettings)
+def update_settings_appearance(
+    payload: AppearanceSettings,
+    db: Session = Depends(get_db),
+):
+    return write_appearance_settings(db, payload)
 
 
 @external_router.put("/settings/trigger-rules", response_model=list[TriggerRule])
@@ -3018,6 +3299,27 @@ def get_model_options(db: Session = Depends(get_db)):
     return ModelOptionCatalog.model_validate(build_model_option_catalog(bundle))
 
 
+@external_router.get("/model-logs", response_model=ModelResultLogPage)
+def get_model_logs(
+    page: int = 1,
+    page_size: int = 20,
+    stage: str | None = None,
+    source_id: int | None = None,
+    result_query: str | None = None,
+    run_identifier: str | None = None,
+    db: Session = Depends(get_db),
+):
+    return build_model_result_log_page(
+        db,
+        page=page,
+        page_size=page_size,
+        stage=stage,
+        source_id=source_id,
+        result_query=result_query,
+        run_identifier=run_identifier,
+    )
+
+
 @external_router.get("/model-bindings", response_model=list[ModelBinding])
 def get_model_bindings(db: Session = Depends(get_db)):
     source_rows = get_active_source_rows(db)
@@ -3030,15 +3332,25 @@ def get_model_bindings(db: Session = Depends(get_db)):
     )
 
 
+@external_router.get("/mounted-models", response_model=list[MountedModelStage])
+def get_mounted_models(db: Session = Depends(get_db)):
+    source_rows = get_active_source_rows(db)
+    bundle = get_registry_bundle(db, source_rows=source_rows)
+    return build_mounted_model_stage_responses(bundle)
+
+
 @external_router.put("/model-bindings", response_model=list[ModelBinding])
 def update_model_bindings(bindings: list[ModelBinding], db: Session = Depends(get_db)):
     source_rows = get_active_source_rows(db)
     source_by_id = {row.id: row for row in source_rows}
     bundle = get_registry_bundle(db, source_rows=source_rows)
     defaults = build_default_bindings(bundle)
+    mounted_models = build_effective_mounted_models(bundle, bundle.get("mounted_models"))
 
     for binding in bindings:
         stage = normalize_binding_stage(binding.stage)
+        if stage not in OPERATOR_MODEL_STAGES:
+            raise HTTPException(status_code=400, detail=f"{stage} is not editable in this workspace")
         if binding.model_key is not None:
             registration = get_registration(bundle, stage, binding.model_key)
             if registration is None:
@@ -3046,6 +3358,7 @@ def update_model_bindings(bindings: list[ModelBinding], db: Session = Depends(ge
                     status_code=400,
                     detail=f"unknown {stage} model binding {binding.model_key}",
                 )
+            ensure_mounted_model_key(bundle, mounted_models, stage, binding.model_key)
         if binding.binding_scope == "source" or binding.source_id is not None:
             if binding.source_id not in source_by_id:
                 raise HTTPException(status_code=404, detail="source binding target not found")
@@ -3054,6 +3367,7 @@ def update_model_bindings(bindings: list[ModelBinding], db: Session = Depends(ge
             defaults[stage] = binding.model_key
 
     persist_model_bindings(defaults)
+    persist_mounted_models(mounted_models)
     db.commit()
     refreshed_sources = get_active_source_rows(db)
     refreshed_bundle = get_registry_bundle(db, source_rows=refreshed_sources)
@@ -3063,6 +3377,46 @@ def update_model_bindings(bindings: list[ModelBinding], db: Session = Depends(ge
         refreshed_sources,
         has_gpu=bool(snapshot.get("gpus")),
     )
+
+
+@external_router.put("/mounted-models", response_model=list[MountedModelStage])
+def update_mounted_models(stages: list[MountedModelStage], db: Session = Depends(get_db)):
+    source_rows = get_active_source_rows(db)
+    bundle = get_registry_bundle(db, source_rows=source_rows)
+    mounted_models = {stage: [] for stage in OPERATOR_MODEL_STAGES}
+    for stage_entry in stages:
+        if stage_entry.stage not in OPERATOR_MODEL_STAGES:
+            raise HTTPException(status_code=400, detail=f"{stage_entry.stage} is not mountable in this workspace")
+        mounted_models[stage_entry.stage] = []
+        for model_key in stage_entry.mounted_model_keys:
+            registration = get_registration(bundle, stage_entry.stage, model_key)
+            if registration is None:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"unknown {stage_entry.stage} model binding {model_key}",
+                )
+            ensure_mounted_model_key(bundle, mounted_models, stage_entry.stage, model_key)
+
+    defaults = build_default_bindings(bundle)
+    required = collect_required_mounted_models(bundle, source_rows, defaults=defaults)
+    missing_by_stage = {}
+    for stage, required_keys in required.items():
+        missing = sorted(required_keys.difference(set(mounted_models.get(stage) or [])))
+        if missing:
+            missing_by_stage[stage] = missing
+    if missing_by_stage:
+        formatted = "; ".join(
+            f"{stage}: {', '.join(keys)}"
+            for stage, keys in missing_by_stage.items()
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"cannot unmount models currently in use: {formatted}",
+        )
+
+    persist_mounted_models(mounted_models)
+    refreshed_bundle = get_registry_bundle(db, source_rows=source_rows)
+    return build_mounted_model_stage_responses(refreshed_bundle)
 
 
 @external_router.get("/monitoring/runs", response_model=list[RunSummary])

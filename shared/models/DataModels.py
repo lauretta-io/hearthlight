@@ -304,6 +304,7 @@ class Camera(BaseModel):
     total_frames: int | None = None
     source_template_id: int | None = None
     upload_id: int | None = None
+    process_every_n_frames: int = 1
     detector_model_key: str | None = None
     tracker_model_key: str | None = None
     reid_model_key: str | None = None

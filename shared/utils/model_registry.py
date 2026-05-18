@@ -26,6 +26,12 @@ MODEL_BINDING_STAGES = (
     MODEL_STAGE_ANOMALY_STAGE_1,
     MODEL_STAGE_ANOMALY_STAGE_2,
 )
+OPERATOR_MODEL_STAGES = (
+    MODEL_STAGE_DETECTOR,
+    MODEL_STAGE_TRACKER,
+    MODEL_STAGE_ANOMALY_STAGE_1,
+    MODEL_STAGE_ANOMALY_STAGE_2,
+)
 MODEL_ZOO_PACKAGE_NAME = "hearthlight_model_zoo"
 MODEL_ZOO_MASTER_CATALOG_SOURCE = "hearthlight_model_zoo:master_catalog.json"
 MODEL_ZOO_REPOSITORY_URL = "https://github.com/lauretta-io/hearthlight_model_zoo.git"
@@ -43,6 +49,7 @@ REPO_ROOT = SHARED_ROOT.parent
 CONFIG_ROOT = SHARED_ROOT / "configs"
 REGISTRY_DIR = CONFIG_ROOT / "registries"
 MODEL_BINDINGS_PATH = CONFIG_ROOT / "model_bindings.yaml"
+MOUNTED_MODELS_PATH = CONFIG_ROOT / "mounted_models.yaml"
 
 REGISTRY_FILE_MAP = {
     MODEL_STAGE_DETECTOR: "detectors.yaml",
@@ -75,9 +82,13 @@ STAGE_LABELS = {
     MODEL_STAGE_DETECTOR: "Detector",
     MODEL_STAGE_TRACKER: "Tracker",
     MODEL_STAGE_REID: "Person ReID",
-    MODEL_STAGE_ANOMALY_STAGE_1: "Anomaly Stage 1",
+    MODEL_STAGE_ANOMALY_STAGE_1: "Heuristic Filter",
     MODEL_STAGE_ANOMALY_STAGE_2: "Anomaly Stage 2",
 }
+
+
+def is_operator_stage(stage: str) -> bool:
+    return stage in OPERATOR_MODEL_STAGES
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -191,11 +202,100 @@ def load_model_bindings(bindings_path: Path | None = None) -> dict[str, Any]:
     return {"defaults": defaults}
 
 
+def load_mounted_models(mounted_models_path: Path | None = None) -> dict[str, list[str]]:
+    mounted = _load_yaml(mounted_models_path or MOUNTED_MODELS_PATH)
+    raw = dict(mounted.get("mounted") or {})
+    normalized: dict[str, list[str]] = {stage: [] for stage in OPERATOR_MODEL_STAGES}
+    for stage in OPERATOR_MODEL_STAGES:
+        values = raw.get(stage) or []
+        if not isinstance(values, list):
+            continue
+        seen: list[str] = []
+        for value in values:
+            model_key = str(value or "").strip()
+            if model_key and model_key not in seen:
+                seen.append(model_key)
+        normalized[stage] = seen
+    return normalized
+
+
+def persist_mounted_models(mounted_models: dict[str, list[str]]):
+    payload = {
+        "mounted": {
+            stage: list(mounted_models.get(stage) or [])
+            for stage in OPERATOR_MODEL_STAGES
+        }
+    }
+    MOUNTED_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    OmegaConf.save(config=OmegaConf.create(payload), f=str(MOUNTED_MODELS_PATH))
+
+
+def build_effective_mounted_models(
+    bundle: dict[str, Any],
+    mounted_models: dict[str, list[str]] | None = None,
+) -> dict[str, list[str]]:
+    requested = mounted_models or load_mounted_models()
+    defaults = dict(bundle.get("bindings", {}).get("defaults") or {})
+    effective: dict[str, list[str]] = {stage: [] for stage in OPERATOR_MODEL_STAGES}
+    for stage in OPERATOR_MODEL_STAGES:
+        available = bundle.get("models", {}).get(stage, {})
+        seen: list[str] = []
+        for model_key in list(requested.get(stage) or []) + [defaults.get(stage)]:
+            normalized = str(model_key or "").strip()
+            if normalized and normalized in available and normalized not in seen:
+                seen.append(normalized)
+        if not seen:
+            fallback_key = defaults.get(stage)
+            if fallback_key and fallback_key in available:
+                seen.append(fallback_key)
+        effective[stage] = seen
+    return effective
+
+
+def ensure_mounted_model_key(
+    bundle: dict[str, Any],
+    mounted_models: dict[str, list[str]],
+    stage: str,
+    model_key: str | None,
+) -> None:
+    if not model_key:
+        return
+    normalized_stage = normalize_binding_stage(stage)
+    registration = get_registration(bundle, normalized_stage, model_key)
+    if registration is None:
+        raise ValueError(f"unknown {normalized_stage} model binding {model_key}")
+    mounted_stage = mounted_models.setdefault(normalized_stage, [])
+    if model_key not in mounted_stage:
+        mounted_stage.append(model_key)
+
+
+def collect_required_mounted_models(
+    bundle: dict[str, Any],
+    source_rows: list,
+    *,
+    defaults: dict[str, str | None] | None = None,
+) -> dict[str, set[str]]:
+    resolved_defaults = defaults or build_default_bindings(bundle)
+    required: dict[str, set[str]] = {
+        stage: set() for stage in OPERATOR_MODEL_STAGES
+    }
+    for stage, model_key in resolved_defaults.items():
+        if model_key:
+            required[stage].add(model_key)
+    for source_row in source_rows:
+        for stage, model_key in build_source_binding_overrides(source_row).items():
+            if model_key:
+                required[stage].add(model_key)
+    return required
+
+
 def load_registry_bundle() -> dict[str, Any]:
-    return {
+    bundle = {
         "models": load_model_registries(),
         "bindings": load_model_bindings(),
     }
+    bundle["mounted_models"] = build_effective_mounted_models(bundle, load_mounted_models())
+    return bundle
 
 
 def _read_model_zoo_direct_url() -> dict[str, Any]:
@@ -389,14 +489,16 @@ def _build_model_option_display_name(model_key: str, registration: dict[str, Any
 def build_model_option_catalog(bundle: dict[str, Any]) -> dict[str, Any]:
     upstream_catalog = _load_upstream_master_catalog()
     upstream_models = upstream_catalog.get("models") if isinstance(upstream_catalog, dict) else {}
+    mounted_models = build_effective_mounted_models(bundle, bundle.get("mounted_models"))
     stages = []
-    for stage in MODEL_BINDING_STAGES:
+    for stage in OPERATOR_MODEL_STAGES:
         stage_models = bundle.get("models", {}).get(stage, {})
         upstream_stage = dict(upstream_models.get(stage) or {}) if isinstance(upstream_models, dict) else {}
         options = []
         model_zoo_option_count = 0
         local_option_count = 0
         local_override_count = 0
+        mounted_option_count = 0
         for model_key in sorted(stage_models):
             registration = dict(stage_models.get(model_key) or {})
             source_path = registration.get("source_path")
@@ -410,6 +512,9 @@ def build_model_option_catalog(bundle: dict[str, Any]) -> dict[str, Any]:
             else:
                 option_origin = "local_registry"
                 local_option_count += 1
+            is_mounted = model_key in set(mounted_models.get(stage) or [])
+            if is_mounted:
+                mounted_option_count += 1
             options.append(
                 {
                     "model_key": model_key,
@@ -430,6 +535,7 @@ def build_model_option_catalog(bundle: dict[str, Any]) -> dict[str, Any]:
                     "option_origin": option_origin,
                     "comes_from_model_zoo": option_origin == "model_zoo",
                     "overrides_model_zoo": option_origin == "local_override",
+                    "is_mounted": is_mounted,
                 }
             )
         stages.append(
@@ -439,10 +545,12 @@ def build_model_option_catalog(bundle: dict[str, Any]) -> dict[str, Any]:
                 "model_zoo_option_count": model_zoo_option_count,
                 "local_option_count": local_option_count,
                 "local_override_count": local_override_count,
+                "mounted_option_count": mounted_option_count,
             }
         )
     return {
         "model_zoo": get_model_zoo_source_info(),
+        "mounted_models": mounted_models,
         "stages": stages,
     }
 

@@ -42,7 +42,7 @@ cp shared/configs/example_config.yaml shared/configs/config.yaml
 
 Then review:
 
-- default model bindings for detector, tracker, person ReID, anomaly Stage 1, and anomaly Stage 2
+- default model bindings for detector, tracker, Heuristic Filter, and anomaly Stage 2
 - output paths
 - saved templates under `shared/configs/saved_configs/`
 - model registry files under `shared/configs/registries/`
@@ -92,18 +92,28 @@ Once the API and UI are up:
 
 - open `http://localhost:3000`
 - go to `Settings`
+- choose the shared workspace theme in `Appearance` if needed
 - save input sources
 - save default model bindings
 - save anomaly prompt settings
+- prompt settings now store anomaly objects and behaviors only; anomaly `1-10` cutoffs belong to anomaly trigger rules
 - define triggered alerts if needed
 - review the launch-plan panel for the host-side startup command
 
 Then go to the Run page and start the system after admission is healthy.
 
+Appearance settings are workspace-wide:
+
+- change the operator shell theme in `Settings > Appearance`
+- the backend stores the selected theme and restores it after app or server restarts
+- the browser keeps a local startup cache only to reduce flicker before `/settings/appearance` responds
+- `Accessible` is the higher-contrast theme for stronger separation and focus visibility
+
 Alert-rule options are prepared by the backend:
 
 - detector class choices come from the effective detector model for that source
 - anomaly object and anomaly activity choices come only from the saved anomaly prompt settings
+- anomaly trigger cutoffs are configured per anomaly rule, not inside the saved prompt config
 
 For the current default COCO-trained YOLOX detector family, the validated raw detector classes are
 the full COCO 80-class surface. Representative examples include:

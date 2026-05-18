@@ -13,6 +13,11 @@
 - renamed the source save action to `Update Source Settings` and added a visible loading spinner while source settings save
 - expanded local anomaly registry compatibility so `siglip_stage_1_*` and `smolvlm_stage_2_*` defaults resolve even when the external model-zoo catalog is unavailable
 - simplified the Connectors page into a single-column connector list with configured-state badges
+- added per-camera frame skipping with `Process every Nth frame`
+- moved anomaly `1-10` trigger cutoffs out of Stage 2 prompt config and into anomaly detection rules
+- split Rules into separate detection and anomaly sections with multi-camera targeting
+- added processing-rate guidance in the model library and recent measured cadence in Model Logs
+- moved theme selection into `Settings > Appearance` and persisted it as a workspace-wide backend setting with cached startup restore
 - removed stale frontend pages and assets from the retired Control, Entity, and POI flows
 - cleaned up duplicate backup files such as `README (1).md` and `.gitignore (1)`
 - documented the validated detector class surface and clarified that live detector trigger IDs remain normalized to `PERSON` and `BAG`

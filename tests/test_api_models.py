@@ -5,7 +5,7 @@ PYDANTIC_AVAILABLE = importlib.util.find_spec("pydantic") is not None
 
 if PYDANTIC_AVAILABLE:
     from pydantic import ValidationError
-    from shared.models.APIModels import Camera, InputSource, POISearch
+    from shared.models.APIModels import AppearanceSettings, Camera, InputSource, POISearch
     from shared.models.OperationsModels import IncidentUpdate
 
 
@@ -58,6 +58,17 @@ class InputSourceModelTests(unittest.TestCase):
             source_value="1",
         )
         self.assertEqual(source.source_value, 1)
+
+
+@unittest.skipUnless(PYDANTIC_AVAILABLE, "pydantic is not installed")
+class AppearanceSettingsModelTests(unittest.TestCase):
+    def test_accepts_supported_theme_key(self):
+        settings = AppearanceSettings(theme_key="fidelity-dark")
+        self.assertEqual(settings.theme_key, "fidelity-dark")
+
+    def test_rejects_unsupported_theme_key(self):
+        with self.assertRaises(ValidationError):
+            AppearanceSettings(theme_key="unknown-theme")
 
 
 @unittest.skipUnless(PYDANTIC_AVAILABLE, "pydantic is not installed")

@@ -112,6 +112,7 @@ def build_runtime_camera_entry(
         "source": coerce_source_value(source_row.kind, source_row.source_value, upload_path),
         "source_template_id": source_row.id,
         "upload_id": source_row.upload_id,
+        "process_every_n_frames": max(1, int(getattr(source_row, "process_every_n_frames", 1) or 1)),
         "detector_model_key": getattr(source_row, "detector_model_key", None),
         "tracker_model_key": getattr(source_row, "tracker_model_key", None),
         "reid_model_key": getattr(source_row, "reid_model_key", None),

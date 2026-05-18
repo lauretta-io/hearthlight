@@ -28,6 +28,11 @@ beforeEach(() => {
         },
       ]);
     }
+    if (url.endsWith('/settings/appearance') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({
+        theme_key: 'fidelity-light',
+      });
+    }
     if (url.endsWith('/model-options')) {
       return buildJsonResponse({
         model_zoo: {
@@ -36,6 +41,12 @@ beforeEach(() => {
           commit_short: '273feddf',
           resolved_from: 'requirements_pin',
           catalog_available: true,
+        },
+        mounted_models: {
+          detector: ['builtin_yolox_s_gpu'],
+          tracker: ['builtin_bytetrack'],
+          anomaly_stage_1: ['heuristic_presence_stage_1'],
+          anomaly_stage_2: ['prompt_rules_stage_2'],
         },
         stages: [
           {
@@ -46,6 +57,7 @@ beforeEach(() => {
                 display_name: 'YOLOX Small (GPU)',
                 stage: 'detector',
                 adapter: 'yolox_detector',
+                is_mounted: true,
                 capabilities: {
                   tasks: ['PERSON', 'BAG'],
                   classes: ['person', 'bicycle', 'car', 'backpack', 'handbag', 'suitcase'],
@@ -56,6 +68,7 @@ beforeEach(() => {
                 display_name: 'YOLOX Tiny (CPU)',
                 stage: 'detector',
                 adapter: 'yolox_detector',
+                is_mounted: false,
                 capabilities: {
                   tasks: ['PERSON', 'BAG'],
                   classes: ['person', 'bicycle', 'car', 'backpack', 'handbag', 'suitcase'],
@@ -66,19 +79,19 @@ beforeEach(() => {
           {
             stage: 'tracker',
             options: [
-              { model_key: 'builtin_bytetrack', display_name: 'ByteTrack', stage: 'tracker', adapter: 'bytetrack_tracker' },
+              { model_key: 'builtin_bytetrack', display_name: 'ByteTrack', stage: 'tracker', adapter: 'bytetrack_tracker', is_mounted: true },
             ],
           },
           {
             stage: 'anomaly_stage_1',
             options: [
-              { model_key: 'heuristic_presence_stage_1', display_name: 'Heuristic Presence Stage 1', stage: 'anomaly_stage_1', adapter: 'heuristic_presence_stage_1' },
+              { model_key: 'heuristic_presence_stage_1', display_name: 'Heuristic Presence Stage 1', stage: 'anomaly_stage_1', adapter: 'heuristic_presence_stage_1', is_mounted: true },
             ],
           },
           {
             stage: 'anomaly_stage_2',
             options: [
-              { model_key: 'prompt_rules_stage_2', display_name: 'Prompt Rules Stage 2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2' },
+              { model_key: 'prompt_rules_stage_2', display_name: 'Prompt Rules Stage 2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2', is_mounted: true },
             ],
           },
         ],
@@ -95,10 +108,26 @@ beforeEach(() => {
     if (url.endsWith('/settings/anomaly-prompts') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse({
         anomaly_items: [
-          { item: 'weapon', trigger_score: 8 },
+          { item: 'weapon' },
         ],
         anomaly_behaviors: ['running'],
       });
+    }
+    if (url.endsWith('/settings/trigger-rules') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([
+        {
+          id: 11,
+          source_ids: [1],
+          enabled: true,
+          rule_label: 'Bag Watch',
+          rule_kind: 'detector',
+          signal_family: 'detector',
+          target_key: 'BAG',
+          min_confidence: 0.7,
+          anomaly_cutoff: null,
+          alert_level: 'high',
+        },
+      ]);
     }
     if (url.endsWith('/settings/alert-rules') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
@@ -199,6 +228,22 @@ beforeEach(() => {
         { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
       ]);
     }
+    if (url.endsWith('/settings/trigger-rules') && options.method === 'PUT') {
+      return buildJsonResponse([
+        {
+          id: 11,
+          source_ids: [1],
+          enabled: true,
+          rule_label: 'Bag Watch',
+          rule_kind: 'detector',
+          signal_family: 'detector',
+          target_key: 'BAG',
+          min_confidence: 0.7,
+          anomaly_cutoff: null,
+          alert_level: 'high',
+        },
+      ]);
+    }
     if (url.endsWith('/settings/alert-rules') && options.method === 'PUT') {
       return buildJsonResponse([
         {
@@ -250,9 +295,14 @@ beforeEach(() => {
     if (url.endsWith('/settings/anomaly-prompts') && options.method === 'PUT') {
       return buildJsonResponse({
         anomaly_items: [
-          { item: 'weapon', trigger_score: 8 },
+          { item: 'weapon' },
         ],
         anomaly_behaviors: ['running'],
+      });
+    }
+    if (url.endsWith('/settings/appearance') && options.method === 'PUT') {
+      return buildJsonResponse({
+        theme_key: 'fidelity-dark',
       });
     }
     return buildJsonResponse({});
@@ -280,6 +330,7 @@ test('renders source settings and saves to settings endpoint', async () => {
   expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
   expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
   expect(screen.getByText('Enable Video AI')).toBeTruthy();
+  expect(screen.getByDisplayValue('1')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Update Source Settings' })).toBeTruthy();
 
   await act(async () => {
@@ -339,7 +390,6 @@ test('renders stage 2 anomaly config and saves structured anomaly settings', asy
 
   expect(await screen.findByText('Anomaly Prompt Settings')).toBeTruthy();
   expect(screen.getByDisplayValue('weapon')).toBeTruthy();
-  expect(screen.getByDisplayValue('8')).toBeTruthy();
   expect(screen.getByDisplayValue('running')).toBeTruthy();
 
   await act(async () => {
@@ -354,7 +404,7 @@ test('renders stage 2 anomaly config and saves structured anomaly settings', asy
   });
 });
 
-test('renders alert rules and saves through the alert settings endpoint', async () => {
+test('renders split rules and saves through the trigger rules endpoint', async () => {
   await act(async () => {
     render(
       <MemoryRouter initialEntries={['/rules']}>
@@ -365,17 +415,19 @@ test('renders alert rules and saves through the alert settings endpoint', async 
 
   expect(await screen.findByRole('heading', { name: 'Rules', level: 2 })).toBeTruthy();
   expect(screen.queryByRole('tab', { name: 'Rules' })).toBeNull();
+  expect(screen.getByText('Detection Rules')).toBeTruthy();
+  expect(screen.getByText('Anomaly Detection Rules')).toBeTruthy();
   expect(screen.getByDisplayValue('Bag Watch')).toBeTruthy();
   expect(screen.getByDisplayValue('BAG')).toBeTruthy();
   expect(screen.getByText('Matches detector classes: backpack, handbag, suitcase')).toBeTruthy();
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Save Alert Rules'));
+    fireEvent.click(screen.getByText('Save Rules'));
   });
 
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringMatching(/\/settings\/alert-rules$/),
+      expect.stringMatching(/\/settings\/trigger-rules$/),
       expect.objectContaining({ method: 'PUT' }),
     );
   });
@@ -432,9 +484,13 @@ test('renders model library with readable stage and model descriptions', async (
     );
   });
 
-  expect(await screen.findByRole('heading', { name: 'Model Library' })).toBeTruthy();
-  expect(screen.getByText('Detector Models')).toBeTruthy();
+  expect((await screen.findAllByText('Model Inventory')).length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Model Inventory').length).toBeGreaterThan(0);
+  expect(screen.getByText('Mount Models')).toBeTruthy();
+  fireEvent.click(screen.getAllByRole('button', { name: 'Model Library' }).at(-1));
+  expect(screen.getAllByText('Detector Models').length).toBeGreaterThan(0);
   expect(screen.getByText('YOLOX Small (GPU)')).toBeTruthy();
+  expect(screen.getAllByText('Mounted').length).toBeGreaterThan(0);
   expect(screen.getAllByText('Default').length).toBeGreaterThan(0);
   expect(screen.getAllByText(/find people and bags in each frame/i).length).toBeGreaterThan(0);
   expect(
@@ -443,6 +499,53 @@ test('renders model library with readable stage and model descriptions', async (
   expect(screen.getAllByText(/Prompt Rules Stage 2/).length).toBeGreaterThan(0);
   expect(screen.queryByText('Person ReID Models')).toBeNull();
   expect(screen.getByText(/GET .*\/model-options/)).toBeTruthy();
+});
+
+test('renders appearance settings and saves workspace theme selection', async () => {
+  const onSaveAppearance = jest.fn(() => Promise.resolve('fidelity-dark'));
+
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=appearance']}>
+        <SettingsPage
+          themeOptions={[
+            {
+              key: 'fidelity-light',
+              label: 'Fidelity Light',
+              description: 'Professional teal light mode.',
+              group: 'light',
+              swatches: ['#557e85'],
+            },
+            {
+              key: 'fidelity-dark',
+              label: 'Fidelity Dark',
+              description: 'Dark professional mode.',
+              group: 'dark',
+              swatches: ['#78a3aa'],
+            },
+          ]}
+          currentThemeKey="fidelity-light"
+          appearanceLoaded
+          onSaveAppearance={onSaveAppearance}
+        />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Workspace Theme')).toBeTruthy();
+  expect(screen.getByText('Fidelity Light')).toBeTruthy();
+  expect(screen.getByText('Fidelity Dark')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: /fidelity dark/i }));
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save Appearance' }));
+  });
+
+  expect(onSaveAppearance).toHaveBeenCalledWith('fidelity-dark');
+  expect(await screen.findByText('Theme updated to Fidelity Dark.')).toBeTruthy();
 });
 
 test('shows a helpful tip when no saved sources exist for alert rules', async () => {
@@ -459,18 +562,26 @@ test('shows a helpful tip when no saved sources exist for alert rules', async ()
     if (url.endsWith('/settings/anomaly-prompts/standard')) {
       return buildJsonResponse({
         anomaly_items: [
-          { item: 'weapon', trigger_score: 8 },
+          { item: 'weapon' },
         ],
         anomaly_behaviors: ['running'],
+      });
+    }
+    if (url.endsWith('/settings/appearance') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({
+        theme_key: 'fidelity-light',
       });
     }
     if (url.endsWith('/settings/anomaly-prompts') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse({
         anomaly_items: [
-          { item: 'weapon', trigger_score: 8 },
+          { item: 'weapon' },
         ],
         anomaly_behaviors: ['running'],
       });
+    }
+    if (url.endsWith('/settings/trigger-rules') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
     }
     if (url.endsWith('/settings/alert-rules') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([]);

@@ -4,6 +4,7 @@ from collections import OrderedDict
 from typing import Any
 
 from omegaconf import OmegaConf
+from sqlalchemy import inspect, text
 
 from ..database.database import get_engine
 from ..models import SQLModels
@@ -57,6 +58,24 @@ def ensure_alert_rule_tables() -> None:
         ],
         checkfirst=True,
     )
+    inspector = inspect(engine)
+    column_names = {
+        column["name"]
+        for column in inspector.get_columns("trigger_rule", schema="control")
+    }
+    alterations: list[str] = []
+    if "source_ids_json" not in column_names:
+        alterations.append("ADD COLUMN source_ids_json TEXT")
+    if "rule_kind" not in column_names:
+        alterations.append("ADD COLUMN rule_kind VARCHAR(32) NOT NULL DEFAULT 'detector'")
+    if "anomaly_target_kind" not in column_names:
+        alterations.append("ADD COLUMN anomaly_target_kind VARCHAR(32)")
+    if "anomaly_cutoff" not in column_names:
+        alterations.append("ADD COLUMN anomaly_cutoff INTEGER")
+    if alterations:
+        with engine.begin() as conn:
+            for alteration in alterations:
+                conn.execute(text(f"ALTER TABLE control.trigger_rule {alteration}"))
 
 
 def _normalize_detector_target(raw_target: str) -> str | None:

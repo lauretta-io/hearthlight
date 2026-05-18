@@ -11,7 +11,7 @@ const endpointURL = (path) => `${BaseURL}${path}`;
 const STAGE_LABELS = {
   detector: 'Detector',
   tracker: 'Tracker',
-  anomaly_stage_1: 'Anomaly Stage 1',
+  anomaly_stage_1: 'Heuristic Filter',
   anomaly_stage_2: 'Anomaly Stage 2',
 };
 
@@ -65,7 +65,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const runs = overview?.runs || [];
   const resources = overview?.resources;
   const dependencyStatus = Object.entries(resources?.dependency_status || {});
-  const moduleMetrics = Object.entries(resources?.module_metrics || {});
+  const moduleMetrics = Object.entries(resources?.module_metrics || {}).filter(
+    ([name]) => ['INGESTOR', 'ANOMALY'].includes(name),
+  );
   const modelHealth = Object.entries(resources?.model_health || {});
   const sources = overview?.sources || [];
   const modelBindings = overview?.model_bindings || [];
@@ -153,12 +155,12 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         <div className="monitor-summary-card">
           <span className="monitor-label">Consumers</span>
           <strong>{feedEndpoints.length} endpoints</strong>
-          <span className="monitor-muted">JSON feeds for triggers, entities, and orchestration data</span>
+          <span className="monitor-muted">JSON feeds for triggers, model results, and orchestration data</span>
         </div>
         <div className="monitor-summary-card">
           <span className="monitor-label">Model Registry</span>
           <strong>{modelRegistrations.length} models</strong>
-          <span className="monitor-muted">Detector, tracker, anomaly Stage 1, and anomaly Stage 2</span>
+          <span className="monitor-muted">Detector, tracker, heuristic filter, and anomaly Stage 2</span>
         </div>
       </div>
 
