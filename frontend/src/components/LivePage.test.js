@@ -89,5 +89,5 @@ test('shows backend preview failure message when preview image load fails', asyn
     previewImage.dispatchEvent(new Event('error'));
   });
 
-  expect(await screen.findByText(/The backend preview stream could not be opened/i)).toBeTruthy();
+  expect(await screen.findByText(/The preview stream could not be opened/i)).toBeTruthy();
 });

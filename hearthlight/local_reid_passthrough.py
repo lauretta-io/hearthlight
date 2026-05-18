@@ -7,6 +7,7 @@ import time
 from threading import Thread
 
 from shared.constants import FRAME_UPDATE_INTERVAL, FPS_INTERVAL, ModuleNames, QUEUE_TIMEOUT
+from shared.database.database_worker import DatabaseWorker
 from shared.models.DataModels import Status, StatusMessage, TrackInstance
 from shared.rabbit_messenger import (
     BagPublisher,
@@ -25,12 +26,26 @@ logger = logging.getLogger(__name__)
 
 
 class _OutputThread(Thread):
-    def __init__(self):
+    def __init__(self, run_identifier: str | None = None):
         super().__init__(name=self.__class__.__name__, daemon=True)
         self.process = False
+        self.run_identifier = run_identifier
         self.queue = queue.Queue[tuple[dict[str, list[TrackInstance]], int]]()
+        self.database_worker = DatabaseWorker()
         self.person_publisher = PersonPublisher()
         self.bag_publisher = BagPublisher()
+
+    def _ensure_run_id(self) -> bool:
+        if DatabaseWorker.run_id is not None:
+            return True
+        if not self.run_identifier:
+            return False
+        try:
+            DatabaseWorker.set_run_id(self.run_identifier)
+        except Exception:
+            logger.exception("Failed to set run id for database publish")
+            return False
+        return DatabaseWorker.run_id is not None
 
     def run(self):
         self.process = True
@@ -39,6 +54,9 @@ class _OutputThread(Thread):
                 tracks, frame_id = self.queue.get(timeout=QUEUE_TIMEOUT)
             except queue.Empty:
                 continue
+            if not self._ensure_run_id():
+                continue
+            self.database_worker.publish_reid_data(tracks)
             person_tracks = tracks.get("PERSON", [])
             for track in person_tracks:
                 track.drop_tensors()
@@ -58,9 +76,18 @@ class PassthroughReID(Thread):
     def __init__(self, cfg, status_publisher: StatusPublisher):
         super().__init__(name=self.__class__.__name__, daemon=True)
         set_run_logging(cfg, module_name=ModuleNames.REID)
+        self.run_identifier = getattr(cfg, "run_id", None)
+        if self.run_identifier:
+            try:
+                DatabaseWorker.set_run_id(self.run_identifier)
+            except Exception:
+                logger.warning(
+                    "Run id not in database yet; database publish will retry after ingestor starts",
+                    exc_info=True,
+                )
         self.process = False
         self.consumer = get_reid_message_consumer()
-        self.output_thread = _OutputThread()
+        self.output_thread = _OutputThread(run_identifier=self.run_identifier)
         self.status_publisher = status_publisher
 
     def run(self):

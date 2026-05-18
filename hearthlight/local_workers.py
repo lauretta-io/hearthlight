@@ -225,14 +225,22 @@ class LocalWorkerSupervisor:
                         pass
                 upload_path = (query.get("upload_path") or [None])[0]
                 try:
-                    self.send_response(HTTPStatus.OK)
-                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
-                    self.end_headers()
-                    for encoded in supervisor.preview_stream(
+                    preview_frames = supervisor.preview_stream(
                         kind=kind,
                         source_value=source_value,
                         upload_path=upload_path,
-                    ):
+                    )
+                    first_encoded = next(preview_frames, None)
+                    if first_encoded is None:
+                        raise RuntimeError("source preview could not be opened on host")
+                    self.send_response(HTTPStatus.OK)
+                    self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
+                    self.end_headers()
+                    self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n")
+                    self.wfile.write(first_encoded)
+                    self.wfile.write(b"\r\n")
+                    self.wfile.flush()
+                    for encoded in preview_frames:
                         self.wfile.write(b"--frame\r\nContent-Type: image/jpeg\r\n\r\n")
                         self.wfile.write(encoded)
                         self.wfile.write(b"\r\n")

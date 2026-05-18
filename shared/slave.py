@@ -46,19 +46,27 @@ def run_command_listener(module_name: str, Module: type[ModuleProtocol]):
                 message = system_message_consumer.queue.get(timeout=QUEUE_TIMEOUT)
             except queue.Empty:
                 if module is not None and not module.is_alive():
-                    orchestration_logger.error(
-                        "Module %s exited unexpectedly",
-                        module_name,
-                    )
+                    completed_normally = getattr(module, "completed_normally", False)
                     try:
                         module.join(timeout=2)
                     except Exception:
                         orchestration_logger.exception(
-                            "Failed to join unexpectedly exited module %s",
+                            "Failed to join exited module %s",
                             module_name,
                         )
                     module = None
-                    status = Status.ERROR
+                    if completed_normally:
+                        orchestration_logger.info(
+                            "Module %s finished normally",
+                            module_name,
+                        )
+                        status = Status.STOPPED
+                    else:
+                        orchestration_logger.error(
+                            "Module %s exited unexpectedly",
+                            module_name,
+                        )
+                        status = Status.ERROR
                     publish_status(status)
                 continue
             orchestration_logger.info(f"Received command: {message.command}")

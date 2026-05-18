@@ -174,6 +174,50 @@ def derive_source_error(
     return None
 
 
+def ffmpeg_input_prefix_and_source(source) -> tuple[list[str], str]:
+    """Build ffmpeg/ffprobe CLI prefix args and input target for a capture source."""
+    if isinstance(source, int):
+        if platform.system() == "Darwin":
+            return ["-f", "avfoundation", "-framerate", "30"], f"{source}:none"
+        if platform.system() == "Linux":
+            return ["-f", "v4l2"], f"/dev/video{source}"
+        raise ValueError(
+            f"webcam device index {source} is not supported for ffmpeg recording on "
+            f"{platform.system()}"
+        )
+    if not isinstance(source, str):
+        raise TypeError(f"unsupported source type {type(source)!r}")
+    prefix = []
+    if source.lower().startswith("rtsp://"):
+        prefix = ["-rtsp_transport", "tcp"]
+    return prefix, source
+
+
+WEBCAM_CAPTURE_WIDTH = 640
+WEBCAM_CAPTURE_HEIGHT = 480
+
+
+def is_webcam_source(source) -> bool:
+    return isinstance(source, int)
+
+
+def ffmpeg_input_size_args(source, width: int, height: int) -> list[str]:
+    # -video_size is only valid for capture devices (v4l2/avfoundation), not files/URLs.
+    if is_webcam_source(source):
+        return [
+            "-video_size",
+            f"{WEBCAM_CAPTURE_WIDTH}x{WEBCAM_CAPTURE_HEIGHT}",
+        ]
+    return []
+
+
+def ffmpeg_mp4_output_args(source) -> list[str]:
+    # Device/webcam capture is usually rawvideo and cannot be stream-copied into MP4.
+    if isinstance(source, int):
+        return ["-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p"]
+    return ["-c", "copy"]
+
+
 def configure_capture_timeouts(capture, timeout_ms: int):
     if cv2 is None:
         return
@@ -236,7 +280,13 @@ def probe_source_connection(
         # For network streams, frame decode can fail due to codec quirks (e.g. non-conformant
         # HEVC parameter sets) even when the source is fully reachable.  A successful open
         # with valid dimensions from the SDP is sufficient proof of connectivity.
-        if kind == SOURCE_KIND_CAMERA_URL and cv2 is not None and hasattr(capture, "get"):
+        # Webcams (especially on macOS) can report valid dimensions before the first frame is
+        # ready; treat that as a successful probe instead of failing start admission.
+        if (
+            kind in {SOURCE_KIND_CAMERA_URL, SOURCE_KIND_WEBCAM}
+            and cv2 is not None
+            and hasattr(capture, "get")
+        ):
             width = capture.get(cv2.CAP_PROP_FRAME_WIDTH)
             height = capture.get(cv2.CAP_PROP_FRAME_HEIGHT)
             if width > 0 and height > 0:

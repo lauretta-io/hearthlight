@@ -70,8 +70,23 @@ def get_ffmpeg_binary():
     return ffmpeg_path
 
 
+def resolve_camera_recording_path(path: str | None) -> str | None:
+    if not path:
+        return None
+    app_root = Path(os.environ.get("HEARTHLIGHT_APP_ROOT", "/app"))
+    candidates = [Path(path)]
+    if path.startswith("src/shared/"):
+        candidates.append(Path("shared") / path[len("src/shared/"):])
+    for candidate in candidates:
+        resolved = candidate if candidate.is_absolute() else app_root / candidate
+        if resolved.exists():
+            return str(resolved)
+    return path
+
+
 def require_existing_file(path: str | None, description: str):
-    if not path or not os.path.exists(path):
+    resolved_path = resolve_camera_recording_path(path)
+    if not resolved_path or not os.path.exists(resolved_path):
         raise HTTPException(status_code=404, detail=f"{description} not found")
 
 
@@ -400,16 +415,23 @@ def get_incident_video(
     run_id = db_incident.run_id
 
     camera = get_db_camera(cam_id, run_id, db)
-    require_existing_file(camera.cam_recording_path, "camera recording")
+    recording_path = resolve_camera_recording_path(camera.cam_recording_path)
+    require_existing_file(recording_path, "camera recording")
 
-    recording_start_time = camera.start_timestamp
-    start_time = max(db_incident.timestamp - duration / 2, recording_start_time)
+    incident_timestamp = db_incident.timestamp
+    if incident_timestamp is None and db_incident.created_at is not None:
+        incident_timestamp = db_incident.created_at.timestamp()
+    if incident_timestamp is None:
+        raise HTTPException(status_code=404, detail="incident timestamp not available")
+
+    recording_start_time = camera.start_timestamp or 0.0
+    start_time = max(incident_timestamp - duration / 2, recording_start_time)
     seek_seconds = start_time - recording_start_time
 
     # fmt: off
     command = [
         get_ffmpeg_binary(),
-        "-i", camera.cam_recording_path,    # Input file
+        "-i", recording_path,    # Input file
         "-ss", str(seek_seconds),           # Output seek — avoids HEVC keyframe/VPS errors
         "-t", str(duration),                # Duration of clip
         "-an",                              # No audio

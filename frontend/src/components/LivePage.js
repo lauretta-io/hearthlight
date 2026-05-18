@@ -14,7 +14,7 @@ const getSupportMessage = (source, previewFailed) => {
     return 'This source is missing a stable identifier, so a preview stream cannot be requested.';
   }
   if (previewFailed) {
-    return 'The backend preview stream could not be opened. Check that the source is reachable from the backend container.';
+    return 'The preview stream could not be opened. If a run is active, stop it and refresh — the webcam may already be in use. Otherwise confirm the source is reachable from this machine.';
   }
   return null;
 };

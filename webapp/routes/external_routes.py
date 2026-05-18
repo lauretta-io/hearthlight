@@ -875,6 +875,12 @@ def coerce_source_value_for_api(source_row: SQLModels.InputSourceTemplate):
     return source_row.source_value
 
 
+def format_source_value_for_query(source_value: str | int | None) -> str:
+    if source_value is None:
+        return ""
+    return str(source_value)
+
+
 def resolve_preview_source_value(
     source_row: SQLModels.InputSourceTemplate,
     db: Session,
@@ -2110,22 +2116,27 @@ def process_messages():
             message = consumer.queue.get(timeout=SHORT_SLEEP)
         except queue.Empty:
             break
-        if message.status == DataModels.Status.INFO and message.extra is not None:
-            frame_id = message.extra.get("frame_id")
-            total_frames = message.extra.get("total_frames")
-            if message.module:
-                backpressure = message.extra.get("backpressure")
-                queue_depths = message.extra.get("queue_depths")
-                if backpressure is not None:
-                    module_metrics[message.module] = dict(backpressure)
-                elif queue_depths is not None:
-                    module_metrics[message.module] = summarize_queue_backpressure(
-                        queue_depths
+        extra = message.extra
+        if extra is not None:
+            if message.status in (DataModels.Status.INFO, DataModels.Status.STOPPED):
+                if "frame_id" in extra:
+                    frame_id = extra.get("frame_id")
+                if "total_frames" in extra:
+                    total_frames = extra.get("total_frames")
+            if message.status == DataModels.Status.INFO:
+                if message.module:
+                    backpressure = extra.get("backpressure")
+                    queue_depths = extra.get("queue_depths")
+                    if backpressure is not None:
+                        module_metrics[message.module] = dict(backpressure)
+                    elif queue_depths is not None:
+                        module_metrics[message.module] = summarize_queue_backpressure(
+                            queue_depths
+                        )
+                    module_runtime_details.setdefault(message.module, {}).update(
+                        dict(extra)
                     )
-                module_runtime_details.setdefault(message.module, {}).update(
-                    dict(message.extra)
-                )
-        elif message.module in module_status:
+        if message.module in module_status:
             module_status[message.module] = message.status
         else:
             logger.warning("Received status update for unknown module %s", message.module)
@@ -2817,7 +2828,9 @@ async def get_source_preview(source_id: int, request: Request, db: Session = Dep
             upload_path = upload_row.stored_path if upload_row is not None else None
         query = {
             "kind": source_row.kind,
-            "source_value": str(coerce_source_value_for_api(source_row) or ""),
+            "source_value": format_source_value_for_query(
+                coerce_source_value_for_api(source_row),
+            ),
         }
         host_upload_path = build_host_upload_path(upload_path)
         if host_upload_path:

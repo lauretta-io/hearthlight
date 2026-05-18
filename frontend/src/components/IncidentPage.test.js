@@ -49,7 +49,7 @@ beforeEach(() => {
       runFetchCount += 1;
       return buildJsonResponse(runFetchCount === 1 ? [] : ['run-1']);
     }
-    if (url.includes('/operations/incidents/?run_identifier=run-1')) {
+    if (url.includes('/operations/incidents?run_identifier=run-1')) {
       return buildJsonResponse([
         {
           incident_id: 'GUN-20260415-1',
@@ -114,7 +114,7 @@ test('auto-follows a run that appears after the page loads via stream update', a
 
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringMatching(/\/operations\/incidents\/\?run_identifier=run-1&include_crop=true$/),
+      expect.stringMatching(/\/operations\/incidents\?run_identifier=run-1&include_crop=true$/),
     );
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringMatching(/\/feeds\/algorithm\?run_identifier=run-1&limit=50$/),

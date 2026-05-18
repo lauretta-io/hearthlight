@@ -48,7 +48,7 @@ class Ingestor(Thread):
             self.process = False
             self.cfg = cfg
             self.detector = Detector(cfg)
-            
+
             self.capture = MultiCapture(
                 cfg.input.cameras,
                 resize=cfg.input.get("resize"),
@@ -56,13 +56,13 @@ class Ingestor(Thread):
                 if not cfg.output.video.save_raw
                 else cfg.output.video.raw_path,
             )
-            
+
             self.track_frames = {}
             self.track_time = {}
             self.cam_last_eval = {}
             self.eval_interval = cfg.anomaly.get("eval_interval", ANOMALY_EVAL_INTERVAL)
             for cam_id in cfg.input.cameras:
-                self.track_frames[cam_id] = deque(maxlen=30) # track 1 frame per second for the last 30 seconds 
+                self.track_frames[cam_id] = deque(maxlen=30)
                 self.track_time[cam_id] = 0
                 self.cam_last_eval[cam_id] = None
 
@@ -75,6 +75,7 @@ class Ingestor(Thread):
             )
             self.run_info_published = False
             self.run_logging_activated = False
+            self.completed_normally = False
             self.no_frame_timeout = float(cfg.input.get("no_frame_timeout", 15.0))
             self.status_publisher = status_publisher
         except Exception:
@@ -93,6 +94,7 @@ class Ingestor(Thread):
         last_frame_update = float("-inf")
         last_metrics_update = float("-inf")
         last_frame_received_at = time.time()
+        self.last_frame_id = None
         timer = LoopTimer(
             log_interval=FPS_INTERVAL, task=ModuleNames.INGESTOR, abbrev="ing."
         )
@@ -121,6 +123,25 @@ class Ingestor(Thread):
                 frames = self.frames_thread.queue.get(timeout=QUEUE_TIMEOUT)
             except queue.Empty:
                 now = time.time()
+                if self.capture.all_file_sources_finished():
+                    logger.info(
+                        "All uploaded/file sources finished; stopping ingestor",
+                        extra={"task": self.name},
+                    )
+                    self.completed_normally = True
+                    self.status_publisher.publish(
+                        StatusMessage(
+                            status=Status.STOPPED,
+                            module=ModuleNames.INGESTOR,
+                            extra={
+                                "reason": "file_sources_completed",
+                                "frame_id": self.last_frame_id,
+                                "total_frames": self.capture.total_frames,
+                            },
+                        )
+                    )
+                    self.process = False
+                    continue
                 if should_fail_for_missing_frames(
                     last_frame_received_at=last_frame_received_at,
                     now=now,
@@ -141,6 +162,7 @@ class Ingestor(Thread):
                     self.process = False
                 continue
             last_frame_received_at = time.time()
+            self.last_frame_id = frames.frame_id
             timer.time("fetch")
 
             if not self.run_info_published:

@@ -13,9 +13,31 @@ from ..shared.constants import SHORT_SLEEP
 from ..shared.models.DataModels import Frame, Frames, CameraType
 from ..shared.models.DataModels import Camera as CameraModel
 from ..shared.utils.backoff import with_exponential_backoff
+from ..shared.utils.input_sources import (
+    WEBCAM_CAPTURE_HEIGHT,
+    WEBCAM_CAPTURE_WIDTH,
+    configure_capture_timeouts,
+    ffmpeg_input_prefix_and_source,
+    ffmpeg_input_size_args,
+    ffmpeg_mp4_output_args,
+    is_webcam_source,
+    open_capture,
+)
 
 logger = logging.getLogger(__name__)
 RECONNECT_MAX_TRIES = 5
+
+
+def _read_exactly(stream, size: int) -> bytes | None:
+    chunks = []
+    remaining = size
+    while remaining > 0:
+        chunk = stream.read(remaining)
+        if not chunk:
+            return None
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
 
 
 class ConnectionState:
@@ -85,7 +107,7 @@ class MultiCapture:
             for cam_id, cam_cfg in camera_cfg.items():
                 camera = CameraModel(cam_id=cam_id, **cam_cfg)
                 self.cameras.append(camera)
-                if record_dir:
+                if record_dir and not is_webcam_source(camera.source):
                     camera.recording_path = os.path.join(
                         record_dir, f"{camera.cam_id}.mp4"
                     )
@@ -94,9 +116,19 @@ class MultiCapture:
                         camera.source,
                         camera.recording_path,
                     )
-                    assert capture.recorder.start_timestamp is not None
+                    if capture.recorder.start_timestamp is None:
+                        raise RuntimeError(
+                            f"Recorder failed to start for camera {camera.cam_id}"
+                        )
                     camera.set_start_timestamp(capture.recorder.start_timestamp)
                 else:
+                    if record_dir and is_webcam_source(camera.source):
+                        logger.info(
+                            "Webcam %s uses OpenCV capture; ffmpeg raw sidecar recording is skipped",
+                            camera.cam_id,
+                            extra={"task": self.name},
+                        )
+                        camera.set_start_timestamp(time.time())
                     capture = Capture(camera.cam_id, camera.source)
                 camera.width = capture.width
                 camera.height = capture.height
@@ -152,6 +184,14 @@ class MultiCapture:
     def join(self):
         for thread in self.threads:
             thread.join()
+
+    def all_file_sources_finished(self) -> bool:
+        if not self.threads:
+            return False
+        file_threads = [thread for thread in self.threads if isinstance(thread, VideoFile)]
+        if not file_threads or len(file_threads) != len(self.threads):
+            return False
+        return all(not thread.is_alive() for thread in file_threads)
 
 
 class Camera(Thread):
@@ -336,21 +376,15 @@ class Capture:
         self.cap = cv2.VideoCapture()
         if isinstance(self.source, str) and self.source.lower().startswith("rtsp://"):
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
-        if isinstance(self.source, str):
-            backends = [cv2.CAP_FFMPEG]
-        else:
-            backends = []
-            avfoundation_backend = getattr(cv2, "CAP_AVFOUNDATION", None)
-            if platform.system() == "Darwin" and avfoundation_backend is not None:
-                backends.append(avfoundation_backend)
-            backends.append(cv2.CAP_ANY)
-        opened = False
-        for backend in backends:
-            if self.cap.open(self.source, backend):
-                opened = True
-                break
+        configure_capture_timeouts(self.cap, 5000)
+        opened = open_capture(self.cap, self.source)
+        if opened and is_webcam_source(self.source):
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WEBCAM_CAPTURE_WIDTH)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, WEBCAM_CAPTURE_HEIGHT)
+            buffer_size_prop = getattr(cv2, "CAP_PROP_BUFFERSIZE", None)
+            if buffer_size_prop is not None:
+                self.cap.set(buffer_size_prop, 1)
         if opened:
-            print("running cv2 for source", self.source)
             self.connection_status = ConnectionState.CONNECTED
             self.connect_attempts = 0
         else:
@@ -363,8 +397,8 @@ class Capture:
             return False, None
         ret, array = self.cap.read()
         while not ret and self._consecutive_read_failures < READ_FAILURE_THRESHOLD:
-            print("retrying cap read")
             self._consecutive_read_failures += 1
+            time.sleep(SHORT_SLEEP)
             ret, array = self.cap.read()
         if not ret:
             self._consecutive_read_failures += 1
@@ -422,8 +456,8 @@ class RecorderCapture:
         self.recorder.start()
 
     def read(self):
-        raw = self.recorder.process.stdout.read(self.frame_size)
-        if not raw or len(raw) != self.frame_size:
+        raw = _read_exactly(self.recorder.process.stdout, self.frame_size)
+        if raw is None:
             self.connection_status = ConnectionState.DISCONNECTED
             return False, None
         frame = np.frombuffer(raw, dtype=np.uint8).reshape((self.height, self.width, 3))
@@ -456,19 +490,20 @@ class Recorder:
         self.source = source
         self.path = record_path
 
-    def _is_rtsp(self):
-        return isinstance(self.source, str) and self.source.lower().startswith("rtsp://")
+    def _ffmpeg_input(self) -> tuple[list[str], str]:
+        return ffmpeg_input_prefix_and_source(self.source)
 
     def get_metadata(self):
+        input_prefix, input_target = self._ffmpeg_input()
         # fmt: off
         cmd = [
             'ffprobe',
-            *(['-rtsp_transport', 'tcp'] if self._is_rtsp() else []),
+            *input_prefix,
             '-v', 'error',
             '-select_streams', 'v:0',
             '-show_entries', 'stream=width,height,r_frame_rate',
             '-of', 'csv=p=0',
-            self.source
+            input_target,
         ]
         # fmt: on
 
@@ -484,6 +519,9 @@ class Recorder:
         else:
             fps = float(fps_frac)
 
+        self.width = width
+        self.height = height
+        self.fps = fps
         return width, height, fps
 
     def start(self):
@@ -493,15 +531,22 @@ class Recorder:
         if output_dir and not os.path.exists(output_dir):
             os.makedirs(output_dir)
 
+        width = getattr(self, "width", 0)
+        height = getattr(self, "height", 0)
+        input_prefix, input_target = self._ffmpeg_input()
+        input_prefix = [
+            *input_prefix,
+            *ffmpeg_input_size_args(self.source, width, height),
+        ]
         # fmt: off
         cmd = [
             'ffmpeg',
-            *(['-rtsp_transport', 'tcp'] if self._is_rtsp() else []),
-            '-i', self.source,                      # Input stream
+            *input_prefix,
+            '-i', input_target,                     # Input stream
             
             # Record to file 
             '-map', '0:v:0',                   # Map only the first video stream
-            '-c', 'copy',                      # Copy streams without re-encoding
+            *ffmpeg_mp4_output_args(self.source),
             '-f', 'mp4',                       # MP4 container format
             '-movflags', 'frag_keyframe+empty_moov',  # fragmented MP4, readable while being written
             self.path,                         # write to file
@@ -528,11 +573,24 @@ class Recorder:
         self.log_thread.start()
 
         self._first_frame_event.wait(timeout=10)
+        if self.start_timestamp is None:
+            if self.process.poll() is not None:
+                self.process.kill()
+            raise RuntimeError(
+                f"ffmpeg recorder failed to start for camera {self.cam_id}"
+            )
 
         logger.info("Started", extra={"task": f"Recorder {self.cam_id}"})
 
     def log(self):
-        start_markers = ["Press [q] to stop", "Output #1", "swscaler"]
+        start_markers = [
+            "Press [q] to stop",
+            "Output #1",
+            "swscaler",
+            "Input #0",
+            "Stream mapping",
+            "frame=",
+        ]
         start_detected = False
         
         while True:

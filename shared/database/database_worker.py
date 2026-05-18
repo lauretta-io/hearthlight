@@ -149,14 +149,13 @@ class DatabaseWorker:
     def get_source_row_by_id(self, source_id: int | None):
         if source_id is None:
             return None
+        db = getattr(self, "db", None)
+        if db is not None:
+            return db.get(SQLModels.InputSourceTemplate, source_id)
         if source_id in self.source_rows_by_id:
             return self.source_rows_by_id[source_id]
-        source_row = (
-            self.db.query(SQLModels.InputSourceTemplate)
-            .filter_by(id=source_id)
-            .order_by(SQLModels.InputSourceTemplate.id.desc())
-            .first()
-        )
+        with self.SessionLocal() as session:
+            source_row = session.get(SQLModels.InputSourceTemplate, source_id)
         self.source_rows_by_id[source_id] = source_row
         return source_row
 
@@ -743,14 +742,18 @@ class DatabaseWorker:
     # Publish functions
 
     def publish_reid_data(self, tracks: dict[str, list[DataModels.TrackInstance]]):
+        if DatabaseWorker.run_id is None:
+            logger.warning("Skipping reid database publish because run id is not set")
+            return
+        self.source_rows_by_id.clear()
         with self.SessionLocal() as self.db:
             for clss in tracks:
                 for track in tracks[clss]:
+                    self.maybe_create_detector_alerts(track)
                     if clss == DetectorClasses.PERSON:
                         self.create_person_instance(track)
                     elif clss == DetectorClasses.BAG:
                         self.create_bag_instance(track)
-                    self.maybe_create_detector_alerts(track)
 
     def publish_journey_data(
         self,

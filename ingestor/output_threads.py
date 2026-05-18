@@ -526,8 +526,16 @@ class AnnotationWriter(Thread):
 
         self.consumer.stop(clear_queues=True)
         self.consumer.join()
-        cv2.destroyAllWindows()
-        cv2.waitKey(1)
+        if self.show:
+            try:
+                cv2.destroyAllWindows()
+                cv2.waitKey(1)
+            except cv2.error:
+                logger.warning(
+                    "Failed to close preview windows during shutdown",
+                    extra={"task": self.name},
+                    exc_info=True,
+                )
         if self.write:
             for _, worker in self.workers.items():
                 worker.stop()
@@ -560,35 +568,43 @@ class AnnotationWriter(Thread):
                     self.num_frames[cam_id] -= saves
 
         if self.show:
-            if self.mosaic:
-                images = [cv2.resize(image, self.size) for image in images]
-                images += self.empty_frames
-                skip = 0
-                for i in range(self.num_mosaics):
-                    rows = []
-                    for j in range(self.rows):
-                        row_imgs = images[
-                            skip + j * self.cols : skip + (j + 1) * self.cols
-                        ]
-                        row = cv2.hconcat(row_imgs)
-                        rows.append(row)
-                    mosaic = cv2.vconcat(rows)
-                    mosaic = cv2.putText(
-                        mosaic,
-                        f"Frame {frames.frame_id}",
-                        (10, 30),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        1,
-                        (0, 0, 0),
-                        2,
-                        cv2.LINE_AA,
-                    )
-                    cv2.imshow(f"Cameras_{i}", mosaic)
-                    skip += self.cols * self.rows
-            else:
-                for id, cam_id in enumerate(self.cam_ids):
-                    cv2.imshow(f"camera {cam_id}", images[id])
-            cv2.waitKey(1)
+            try:
+                if self.mosaic:
+                    images = [cv2.resize(image, self.size) for image in images]
+                    images += self.empty_frames
+                    skip = 0
+                    for i in range(self.num_mosaics):
+                        rows = []
+                        for j in range(self.rows):
+                            row_imgs = images[
+                                skip + j * self.cols : skip + (j + 1) * self.cols
+                            ]
+                            row = cv2.hconcat(row_imgs)
+                            rows.append(row)
+                        mosaic = cv2.vconcat(rows)
+                        mosaic = cv2.putText(
+                            mosaic,
+                            f"Frame {frames.frame_id}",
+                            (10, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX,
+                            1,
+                            (0, 0, 0),
+                            2,
+                            cv2.LINE_AA,
+                        )
+                        cv2.imshow(f"Cameras_{i}", mosaic)
+                        skip += self.cols * self.rows
+                else:
+                    for id, cam_id in enumerate(self.cam_ids):
+                        cv2.imshow(f"camera {cam_id}", images[id])
+                cv2.waitKey(1)
+            except cv2.error as exc:
+                logger.warning(
+                    "Local video display unavailable; disabling preview windows",
+                    extra={"task": self.name},
+                    exc_info=exc,
+                )
+                self.show = False
 
     def get_grid(self, cfg):
         max_height = cfg.output.visualize.max_height

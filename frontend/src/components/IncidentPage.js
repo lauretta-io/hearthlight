@@ -102,7 +102,7 @@ const IncidentPage = () => {
     try {
       const [incidentResponse, feedResponse] = await Promise.all([
         fetch(
-          `${BaseURL}/operations/incidents/?run_identifier=${runIdentifier}&include_crop=true`,
+          `${BaseURL}/operations/incidents?run_identifier=${runIdentifier}&include_crop=true`,
         ),
         fetch(`${BaseURL}/feeds/algorithm?run_identifier=${runIdentifier}&limit=50`),
       ]);

@@ -17,6 +17,22 @@ from ...shared.constants import Tasks
 
 logger = logging.getLogger(__name__)
 
+# COCO class ids used by YOLOv8 when falling back from the stub model-zoo detector.
+_YOLO_PERSON_CLASS_ID = 0
+_YOLO_BAG_CLASS_IDS = {24, 26, 28}
+
+
+def _model_zoo_detector_is_stub(model) -> bool:
+    probe = np.zeros((480, 640, 3), dtype=np.uint8)
+    try:
+        result = model([probe], {0: 0.01, 1: 0.01})
+    except Exception:
+        return False
+    if not result:
+        return True
+    output = np.asarray(result[0])
+    return output.size == 0
+
 
 class RTDetrDetectorAdapter:
     def __init__(self, cfg, registration):
@@ -35,8 +51,72 @@ class RTDetrDetectorAdapter:
             runtime.get("precision", "fp16"),
             device=runtime.get("device", "cuda:0"),
         )
+        self._ultralytics_model = None
+        if _model_zoo_detector_is_stub(self.model):
+            try:
+                from ultralytics import YOLO
+            except ImportError as exc:
+                logger.error(
+                    "hearthlight_model_zoo detector is a no-op stub and ultralytics is not installed; "
+                    "person/bag detection will not run. Install ingestor requirements or ultralytics.",
+                )
+                raise RuntimeError(
+                    "detector runtime unavailable: install ultralytics for local CPU fallback"
+                ) from exc
+            logger.warning(
+                "hearthlight_model_zoo detector is a compatibility stub; "
+                "using ultralytics YOLOv8n fallback for local detection",
+            )
+            self._ultralytics_model = YOLO("yolov8n.pt")
+
+    def _frame_array(self, frame):
+        return frame.array if hasattr(frame, "array") else frame
+
+    def _infer_ultralytics(self, frames):
+        outputs = []
+        person_threshold = float(self.conf_dict.get(0, 0.35))
+        bag_threshold = float(self.conf_dict.get(1, 0.35))
+        for frame in frames:
+            results = self._ultralytics_model(self._frame_array(frame), verbose=False)
+            rows = []
+            if results:
+                boxes = results[0].boxes
+                if boxes is not None and len(boxes):
+                    for box in boxes:
+                        class_id = int(box.cls.item())
+                        confidence = float(box.conf.item())
+                        if class_id == _YOLO_PERSON_CLASS_ID:
+                            if confidence < person_threshold:
+                                continue
+                            rows.append(
+                                [
+                                    float(box.xyxy[0][0]),
+                                    float(box.xyxy[0][1]),
+                                    float(box.xyxy[0][2]),
+                                    float(box.xyxy[0][3]),
+                                    confidence,
+                                    0,
+                                ]
+                            )
+                        elif class_id in _YOLO_BAG_CLASS_IDS:
+                            if confidence < bag_threshold:
+                                continue
+                            rows.append(
+                                [
+                                    float(box.xyxy[0][0]),
+                                    float(box.xyxy[0][1]),
+                                    float(box.xyxy[0][2]),
+                                    float(box.xyxy[0][3]),
+                                    confidence,
+                                    1,
+                                ]
+                            )
+            outputs.append(np.asarray(rows, dtype=np.float32).reshape(-1, 6))
+        return outputs
 
     def infer(self, frames):
+        if self._ultralytics_model is not None:
+            return self._infer_ultralytics(frames)
         inputs = [frame.array for frame in frames]
         return self.model(inputs, self.conf_dict)
 
@@ -128,6 +208,11 @@ class Detector:
         return track_results, detection_results
 
     def post_process_single(self, output, frame, track_class_ids):
+        output = np.asarray(output, dtype=np.float32)
+        if output.size == 0:
+            output = np.zeros((0, 6), dtype=np.float32)
+        elif output.ndim == 1:
+            output = output.reshape(-1, 6)
         clip_coords(output, frame.array.shape)
         allowed_tasks = self.camera_tasks.get(frame.cam_id, {Tasks.PERSON})
         track_classes = {

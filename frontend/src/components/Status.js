@@ -13,6 +13,9 @@ const getIngestorExplanation = ({ moduleStatus, systemStatus, admission }) => {
   if (ingestorState === 'error') {
     return 'Ingestor reported an error. Video frames are not being read or published into the pipeline.';
   }
+  if (ingestorState === 'stopped') {
+    return null;
+  }
   if (systemStatus === 'initializing') {
     return 'Ingestor is still starting. It should switch to running after the pipeline workers finish booting.';
   }
