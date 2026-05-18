@@ -197,9 +197,14 @@ enabled source queue into the in-memory runtime config before publishing the sys
 The runtime config still owns:
 
 - thresholds and tuning values
-- model registries and default stage bindings
+- default stage bindings and compatibility config for plugin-provided models
 - output paths
 - compatibility config blocks that the launcher still writes for older runtime readers
+
+Plugin discovery now happens at server startup through manifest bundles under `shared/plugins/`.
+Models, triggers, connectors, and rule-set templates are all loaded from that plugin catalog on
+restart, and missing plugin manifests are soft-disabled in the control-plane database rather than
+hard-deleted.
 
 ## Startup
 

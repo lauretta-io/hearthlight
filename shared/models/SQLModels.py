@@ -541,6 +541,53 @@ class ConnectorEndpoint(Base):
     deleted_at = mapped_column(DateTime)
 
 
+class PluginBundle(Base):
+    __tablename__ = "plugin_bundle"
+    __table_args__ = (
+        UniqueConstraint("plugin_key", name="uq_plugin_bundle_key"),
+        {"schema": "control"},
+    )
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plugin_key = mapped_column(String(128), nullable=False)
+    label = mapped_column(String(255), nullable=False)
+    version = mapped_column(String(64))
+    provider = mapped_column(String(255))
+    description = mapped_column(Text)
+    enabled_by_default = mapped_column(Boolean, default=True, nullable=False)
+    manifest_path = mapped_column(Text)
+    manifest_fingerprint = mapped_column(String(128))
+    load_status = mapped_column(String(32), nullable=False, server_default=text("'active'"))
+    load_error = mapped_column(Text)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class PluginComponent(Base):
+    __tablename__ = "plugin_component"
+    __table_args__ = (
+        UniqueConstraint("component_type", "component_key", name="uq_plugin_component_type_key"),
+        {"schema": "control"},
+    )
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    plugin_key = mapped_column(String(128), nullable=False)
+    component_key = mapped_column(String(128), nullable=False)
+    component_type = mapped_column(String(32), nullable=False)
+    stage = mapped_column(String(64))
+    category = mapped_column(String(128))
+    source_path = mapped_column(Text)
+    metadata_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
+    availability_status = mapped_column(String(32), nullable=False, server_default=text("'active'"))
+    load_error = mapped_column(Text)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
 class WorkspaceSetting(Base):
     __tablename__ = "workspace_setting"
     __table_args__ = (

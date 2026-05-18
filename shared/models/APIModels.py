@@ -220,6 +220,7 @@ class ModelRegistration(BaseModel):
     requires_gpu: bool = False
     resource_profile: dict = Field(default_factory=dict)
     source_path: str | None = None
+    plugin_key: str | None = None
 
 
 class ModelOption(BaseModel):
@@ -296,6 +297,8 @@ class ModelBinding(BaseModel):
     model_key: str | None = None
     source_id: int | None = None
     binding_scope: str = "default"
+    resolved: bool = True
+    unavailable_reason: str | None = None
 
     @field_validator("stage")
     def validate_stage(cls, value):
@@ -512,6 +515,8 @@ class TriggerRule(BaseModel):
     alert_level: str = "medium"
     delivery_target_ids: list[int] = Field(default_factory=list)
     metadata: dict = Field(default_factory=dict)
+    resolved: bool = True
+    unavailable_reason: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 
@@ -668,6 +673,8 @@ class TriggerZooEntry(BaseModel):
     requirements: list[str] = Field(default_factory=list)
     fields: list[dict] = Field(default_factory=list)
     delivery_capabilities: list[str] = Field(default_factory=list)
+    plugin_key: str | None = None
+    source_path: str | None = None
 
 
 class ConnectorZooEntry(BaseModel):
@@ -679,6 +686,44 @@ class ConnectorZooEntry(BaseModel):
     requirements: list[str] = Field(default_factory=list)
     fields: list[dict] = Field(default_factory=list)
     delivery_capabilities: list[str] = Field(default_factory=list)
+    plugin_key: str | None = None
+    source_path: str | None = None
+
+
+class RuleSetZooEntry(BaseModel):
+    key: str
+    label: str
+    description: str = ""
+    category: str = "general"
+    enabled: bool = True
+    plugin_key: str | None = None
+    source_path: str | None = None
+    templates: list[dict] = Field(default_factory=list)
+
+
+class PluginBundleRecord(BaseModel):
+    plugin_key: str
+    label: str
+    version: str | None = None
+    provider: str | None = None
+    description: str = ""
+    enabled_by_default: bool = True
+    manifest_path: str | None = None
+    manifest_fingerprint: str | None = None
+    load_status: str = "active"
+    load_error: str | None = None
+
+
+class PluginComponentRecord(BaseModel):
+    plugin_key: str
+    component_key: str
+    component_type: str
+    stage: str | None = None
+    category: str | None = None
+    source_path: str | None = None
+    metadata: dict = Field(default_factory=dict)
+    availability_status: str = "active"
+    load_error: str | None = None
 
 
 class ConnectorEndpoint(BaseModel):
@@ -688,6 +733,8 @@ class ConnectorEndpoint(BaseModel):
     enabled: bool = True
     config: dict = Field(default_factory=dict)
     delivery_capabilities: list[str] = Field(default_factory=list)
+    resolved: bool = True
+    unavailable_reason: str | None = None
     created_at: str | None = None
     updated_at: str | None = None
 

@@ -18,6 +18,7 @@
 - split Rules into separate detection and anomaly sections with multi-camera targeting
 - added processing-rate guidance in the model library and recent measured cadence in Model Logs
 - moved theme selection into `Settings > Appearance` and persisted it as a workspace-wide backend setting with cached startup restore
+- unified models, triggers, connectors, and rule-set templates under a restart-loaded plugin manifest system backed by persisted plugin bundle/component catalogs
 - removed stale frontend pages and assets from the retired Control, Entity, and POI flows
 - cleaned up duplicate backup files such as `README (1).md` and `.gitignore (1)`
 - documented the validated detector class surface and clarified that live detector trigger IDs remain normalized to `PERSON` and `BAG`
