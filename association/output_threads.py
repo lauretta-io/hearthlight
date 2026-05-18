@@ -3,8 +3,8 @@ import queue
 import logging
 
 from .incident_classes import Incident
-from shared.database.database_worker import DatabaseWorker
-from shared.constants import QUEUE_TIMEOUT
+from ..shared.database.database_worker import DatabaseWorker
+from ..shared.constants import QUEUE_TIMEOUT
 
 logger = logging.getLogger(__name__)
 

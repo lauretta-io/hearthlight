@@ -1,6 +1,10 @@
 MODULE_STATUS_IDLE = "idle"
 MODULE_STATUS_RUNNING = "running"
 MODULE_STATUS_ERROR = "error"
+MODULE_STATUS_STOPPED = "stopped"
+MODULE_STATUS_INITIALIZED = "initialized"
+MODULE_STATUS_INFO = "info"
+MODULE_STATUS_EXIT = "exit"
 
 
 class SystemStatus:
@@ -11,14 +15,28 @@ class SystemStatus:
     ERROR = "error"
 
 
+def normalize_module_status(raw_status: str | None) -> str:
+    if raw_status in {MODULE_STATUS_RUNNING, MODULE_STATUS_ERROR, MODULE_STATUS_IDLE}:
+        return raw_status
+    if raw_status in {MODULE_STATUS_STOPPED, MODULE_STATUS_INITIALIZED, MODULE_STATUS_INFO, MODULE_STATUS_EXIT}:
+        return MODULE_STATUS_IDLE
+    return MODULE_STATUS_IDLE
+
+
 def derive_system_status(current_status: str, module_statuses: list[str]) -> tuple[str, bool]:
-    if any(status == MODULE_STATUS_ERROR for status in module_statuses):
+    normalized_statuses = [normalize_module_status(status) for status in module_statuses]
+    if any(status == MODULE_STATUS_ERROR for status in normalized_statuses):
         return SystemStatus.ERROR, False
     if current_status == SystemStatus.INITIALIZING:
-        if all(status == MODULE_STATUS_RUNNING for status in module_statuses):
+        # Startup can legitimately settle into IDLE for stream-backed workers until
+        # first frames arrive; don't keep the whole system stuck in initializing.
+        if all(
+            status in {MODULE_STATUS_IDLE, MODULE_STATUS_RUNNING}
+            for status in normalized_statuses
+        ):
             return SystemStatus.RUNNING, False
     elif current_status == SystemStatus.STOPPING:
-        if all(status == MODULE_STATUS_IDLE for status in module_statuses):
+        if all(status == MODULE_STATUS_IDLE for status in normalized_statuses):
             return SystemStatus.IDLE, True
     return current_status, False
 
