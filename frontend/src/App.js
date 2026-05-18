@@ -163,7 +163,7 @@ const App = () => {
         <main className="main-content">
           <Status />
           <Routes>
-            <Route path="/" element={<Navigate to="/settings?tab=run" replace />} />
+            <Route path="/" element={<Navigate to="/settings?tab=monitoring" replace />} />
             <Route path="/settings" element={<SettingsPage {...settingsSharedProps} />} />
             <Route
               path="/rules"

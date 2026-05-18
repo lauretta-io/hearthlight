@@ -7,7 +7,7 @@ const STAGE_LABELS = {
   detector: 'Detector',
   tracker: 'Tracker',
   anomaly_stage_1: 'Heuristic Filter',
-  anomaly_stage_2: 'Anomaly Stage 2',
+  anomaly_stage_2: 'Anomaly Detection',
 };
 
 const ModelLogsPage = () => {
@@ -115,8 +115,8 @@ const ModelLogsPage = () => {
         </div>
       </div>
 
-      <section className="control-grid">
-        <div className="control-column control-column-wide">
+      <section className="control-column">
+        <div>
           <div className="card">
             <div className="card-header">
               <div>

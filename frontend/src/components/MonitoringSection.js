@@ -12,7 +12,7 @@ const STAGE_LABELS = {
   detector: 'Detector',
   tracker: 'Tracker',
   anomaly_stage_1: 'Heuristic Filter',
-  anomaly_stage_2: 'Anomaly Stage 2',
+  anomaly_stage_2: 'Anomaly Detection',
 };
 
 const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
@@ -160,7 +160,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         <div className="monitor-summary-card">
           <span className="monitor-label">Model Registry</span>
           <strong>{modelRegistrations.length} models</strong>
-          <span className="monitor-muted">Detector, tracker, heuristic filter, and anomaly Stage 2</span>
+          <span className="monitor-muted">Detector, tracker, heuristic filter, and anomaly detection</span>
         </div>
       </div>
 

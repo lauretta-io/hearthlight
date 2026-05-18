@@ -65,7 +65,7 @@ The current model stages are:
 - detector
 - tracker
 - Heuristic Filter
-- anomaly Stage 2
+- anomaly detection
 
 Operator-facing surfaces use readable names such as `YOLOX Small` and `TransReID Person + Hybrid Bag`.
 Stable internal keys such as `builtin_yolox_s_cpu` remain unchanged underneath for storage,
@@ -104,7 +104,7 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
 - the model library now shows qualitative processing-rate guidance, and Model Logs surfaces recent measured cadence by model stage
 - theme selection now lives in `Settings > Appearance`, with a workspace-wide backend setting plus browser startup cache
 - the frontend now runs on Vite instead of `react-scripts`
-- anomaly Stage 1 and Stage 2 defaults now have local CPU/CUDA/MLX-safe registry fallbacks
+- anomaly Stage 1 and anomaly detection defaults now have local CPU/CUDA/MLX-safe registry fallbacks
 - connectors are presented as a cleaner single-column list with configured-state badges
 
 ## Prerequisites

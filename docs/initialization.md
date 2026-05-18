@@ -42,7 +42,7 @@ cp shared/configs/example_config.yaml shared/configs/config.yaml
 
 Then review:
 
-- default model bindings for detector, tracker, Heuristic Filter, and anomaly Stage 2
+- default model bindings for detector, tracker, Heuristic Filter, and anomaly detection
 - output paths
 - saved templates under `shared/configs/saved_configs/`
 - model registry files under `shared/configs/registries/`
