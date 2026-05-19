@@ -309,6 +309,8 @@ def sync_plugin_catalog_to_db(db, plugin_catalog: dict[str, Any], sql_models) ->
         plugin_key = str(component.get("plugin_key") or "").strip()
         if not component_type or not component_key or not plugin_key:
             continue
+        if (component_type, component_key) in active_component_keys:
+            continue
         active_component_keys.add((component_type, component_key))
         row = (
             db.query(sql_models.PluginComponent)

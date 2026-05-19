@@ -42,6 +42,12 @@ const ALERT_LEVEL_OPTIONS = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ];
+const DEMO_TRIGGER_OPTIONS = [
+  { value: 'anomaly_event_trigger', label: 'Anomaly Event', severity: 'high' },
+  { value: 'unattended_bag_trigger', label: 'Unattended Bag', severity: 'high' },
+  { value: 'loitering_trigger', label: 'Loitering Compatibility', severity: 'medium' },
+  { value: 'manual_trigger', label: 'Manual Trigger', severity: 'low' },
+];
 const MODEL_LIBRARY_SUB_TABS = [
   { key: 'inventory', label: 'Model Inventory' },
   { key: 'library', label: 'Model Library' },
@@ -141,6 +147,9 @@ const createAlertRuleDraft = (ruleKind = 'detector') => ({
   min_confidence: 0.5,
   anomaly_cutoff: 6,
   alert_level: 'medium',
+  delivery_target_ids: [],
+  trigger_key: 'alert_rule_trigger',
+  metadata: {},
 });
 
 const hydrateAlertRule = (rule, fallbackIndex = 0) => ({
@@ -160,7 +169,24 @@ const hydrateAlertRule = (rule, fallbackIndex = 0) => ({
   min_confidence: Number.isFinite(rule.min_confidence) ? rule.min_confidence : 0.5,
   anomaly_cutoff: Number.isFinite(rule.anomaly_cutoff) ? rule.anomaly_cutoff : 6,
   alert_level: rule.alert_level ?? 'medium',
+  delivery_target_ids: Array.isArray(rule.delivery_target_ids) ? rule.delivery_target_ids : [],
+  trigger_key: rule.trigger_key ?? 'alert_rule_trigger',
+  metadata: rule.metadata ?? {},
 });
+
+const createDemoTriggerRuleDraft = (triggerKey = 'manual_trigger') => {
+  const template = DEMO_TRIGGER_OPTIONS.find((option) => option.value === triggerKey) || DEMO_TRIGGER_OPTIONS[0];
+  return {
+    ...createAlertRuleDraft('detector'),
+    trigger_key: template.value,
+    rule_label: template.label,
+    alert_level: template.severity,
+    target_key: template.value,
+    signal_family: 'detector',
+    min_confidence: 0.5,
+    anomaly_cutoff: null,
+  };
+};
 
 const createAnomalyItemDraft = (item = '') => ({
   clientKey: `settings-anomaly-item-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -227,6 +253,30 @@ const hydrateAppleMessageSubscription = (subscription, fallbackIndex = 0) => ({
   service: subscription.service ?? 'iMessage',
 });
 
+const createClaudeApiConnectorDraft = () => ({
+  clientKey: `settings-claude-api-connector-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  id: null,
+  enabled: true,
+  connector_label: '',
+  base_url: 'http://localhost:8787/v1/messages',
+  auth_token: '',
+  timeout_seconds: 10,
+  retry_count: 1,
+});
+
+const hydrateClaudeApiConnector = (connector, fallbackIndex = 0) => ({
+  clientKey: connector.id
+    ? `settings-claude-api-connector-${connector.id}`
+    : `settings-claude-api-connector-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+  id: connector.id ?? null,
+  enabled: connector.enabled ?? true,
+  connector_label: connector.connector_label ?? '',
+  base_url: connector.base_url ?? '',
+  auth_token: connector.auth_token ?? '',
+  timeout_seconds: connector.timeout_seconds ?? 10,
+  retry_count: connector.retry_count ?? 1,
+});
+
 const sanitizeSourcesForApi = (sources) =>
   sources.map((source, index) => ({
     id: source.id ?? undefined,
@@ -258,7 +308,9 @@ const sanitizeAlertRulesForApi = (rules) =>
     min_confidence: Number(rule.min_confidence),
     anomaly_cutoff: rule.rule_kind === 'anomaly' ? Number(rule.anomaly_cutoff) : null,
     alert_level: rule.alert_level,
-    trigger_key: 'alert_rule_trigger',
+    delivery_target_ids: rule.delivery_target_ids || [],
+    metadata: rule.metadata || {},
+    trigger_key: rule.trigger_key || 'alert_rule_trigger',
   }));
 
 const sanitizeTelegramSubscriptionsForApi = (subscriptions) =>
@@ -279,6 +331,17 @@ const sanitizeAppleMessageSubscriptionsForApi = (subscriptions) =>
     subscription_label: subscription.subscription_label?.trim() || null,
     recipient_handle: subscription.recipient_handle.trim(),
     service: subscription.service,
+  }));
+
+const sanitizeClaudeApiConnectorsForApi = (connectors) =>
+  connectors.map((connector) => ({
+    id: connector.id ?? undefined,
+    enabled: connector.enabled,
+    connector_label: connector.connector_label?.trim() || null,
+    base_url: connector.base_url.trim(),
+    auth_token: connector.auth_token.trim(),
+    timeout_seconds: Number(connector.timeout_seconds) || 10,
+    retry_count: Number(connector.retry_count) || 0,
   }));
 
 const buildAlertRuleSetupHint = (sources, errorDetail = null) => {
@@ -488,21 +551,26 @@ const SettingsPage = ({
   const [isSavingAlertRules, setIsSavingAlertRules] = useState(false);
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
+  const [isSavingClaudeApiConnectors, setIsSavingClaudeApiConnectors] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
   const [rowErrors, setRowErrors] = useState({});
   const [alertRuleErrors, setAlertRuleErrors] = useState({});
   const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
   const [appleMessageSubscriptionErrors, setAppleMessageSubscriptionErrors] = useState({});
+  const [claudeApiConnectorErrors, setClaudeApiConnectorErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
+  const [busyClaudeApiTests, setBusyClaudeApiTests] = useState({});
+  const [busyDemoTriggers, setBusyDemoTriggers] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
   const [alertRules, setAlertRules] = useState([]);
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
+  const [claudeApiConnectors, setClaudeApiConnectors] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
   const [triggerZoo, setTriggerZoo] = useState([]);
@@ -640,6 +708,22 @@ const SettingsPage = ({
     setAppleMessageSubscriptions((data || []).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
   };
 
+  const reloadClaudeApiConnectorState = async () => {
+    const response = await fetch(`${BaseURL}/settings/claude-api-connectors`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load third-party API connectors');
+    }
+    const data = await response.json();
+    setClaudeApiConnectors((Array.isArray(data) ? data : []).map((connector, index) => hydrateClaudeApiConnector(connector, index)));
+  };
+
   useEffect(() => {
     const loadSources = async () => {
       try {
@@ -679,6 +763,7 @@ const SettingsPage = ({
         }
         await reloadTelegramSubscriptionState();
         await reloadAppleMessageSubscriptionState();
+        await reloadClaudeApiConnectorState();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
         });
@@ -901,6 +986,88 @@ const SettingsPage = ({
     );
   };
 
+  const addClaudeApiConnector = () => {
+    setClaudeApiConnectors((previous) => [
+      ...previous,
+      createClaudeApiConnectorDraft(),
+    ]);
+  };
+
+  const removeClaudeApiConnector = (clientKey) => {
+    setClaudeApiConnectors((previous) =>
+      previous.filter((connector) => connector.clientKey !== clientKey)
+    );
+    setClaudeApiConnectorErrors((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+  };
+
+  const setClaudeApiConnectorField = (clientKey, field, value) => {
+    setClaudeApiConnectors((previous) =>
+      previous.map((connector) =>
+        connector.clientKey === clientKey
+          ? {
+              ...connector,
+              [field]: value,
+            }
+          : connector
+      )
+    );
+  };
+
+  const availableDeliveryTargets = [
+    ...telegramSubscriptions.map((subscription, index) => ({
+      id: subscription.id,
+      label: subscription.subscription_label?.trim() || `Telegram ${index + 1}`,
+      connectorKey: 'telegram',
+      enabled: subscription.enabled,
+    })),
+    ...claudeApiConnectors.map((connector, index) => ({
+      id: connector.id,
+      label: connector.connector_label?.trim() || `Third-party API ${index + 1}`,
+      connectorKey: 'claude_api',
+      enabled: connector.enabled,
+    })),
+  ].filter((target) => target.id);
+
+  const toggleAlertRuleDeliveryTarget = (clientKey, targetId, checked) => {
+    setAlertRules((previous) =>
+      previous.map((rule) => {
+        if (rule.clientKey !== clientKey) {
+          return rule;
+        }
+        const nextTargetIds = new Set(rule.delivery_target_ids || []);
+        if (checked) {
+          nextTargetIds.add(targetId);
+        } else {
+          nextTargetIds.delete(targetId);
+        }
+        return {
+          ...rule,
+          delivery_target_ids: availableDeliveryTargets
+            .filter((target) => nextTargetIds.has(target.id))
+            .map((target) => target.id),
+        };
+      })
+    );
+  };
+
+  const loadDemoTriggerPresets = () => {
+    setAlertRules((previous) => [
+      ...previous,
+      ...DEMO_TRIGGER_OPTIONS.map((option) => ({
+        ...createDemoTriggerRuleDraft(option.value),
+        source_ids: option.value === 'manual_trigger'
+          ? []
+          : sources.filter((source) => source.id).map((source) => source.id),
+        delivery_target_ids: availableDeliveryTargets.map((target) => target.id),
+      })),
+    ]);
+    setBanner({ kind: 'success', text: 'Loaded demo trigger presets.' });
+  };
+
   const setSourceKind = (clientKey, kind) => {
     setUploadFeedback((previous) => {
       const next = { ...previous };
@@ -963,8 +1130,11 @@ const SettingsPage = ({
   const validateAlertRules = () => {
     const nextErrors = {};
     alertRules.forEach((rule) => {
-      if (!Array.isArray(rule.source_ids) || rule.source_ids.length === 0) {
+      if (rule.trigger_key !== 'manual_trigger' && (!Array.isArray(rule.source_ids) || rule.source_ids.length === 0)) {
         nextErrors[rule.clientKey] = 'Select at least one camera.';
+        return;
+      }
+      if (rule.trigger_key !== 'alert_rule_trigger') {
         return;
       }
       if (!rule.target_key) {
@@ -1000,7 +1170,7 @@ const SettingsPage = ({
     telegramSubscriptions.forEach((subscription) => {
       if (!subscription.bot_token.trim()) {
         nextErrors[subscription.clientKey] = 'Bot token is required.';
-      } else if (subscription.bot_token.trim() === MASKED_SECRET_VALUE) {
+      } else if (subscription.bot_token.trim() === MASKED_SECRET_VALUE && !subscription.id) {
         nextErrors[subscription.clientKey] = 'Paste the new bot token value before saving.';
       } else if (!subscription.chat_id.trim()) {
         nextErrors[subscription.clientKey] = 'Chat ID is required.';
@@ -1020,6 +1190,25 @@ const SettingsPage = ({
       }
     });
     setAppleMessageSubscriptionErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const validateClaudeApiConnectors = () => {
+    const nextErrors = {};
+    claudeApiConnectors.forEach((connector) => {
+      if (!connector.base_url.trim()) {
+        nextErrors[connector.clientKey] = 'Base URL is required.';
+      } else if (!/^https?:\/\//i.test(connector.base_url.trim())) {
+        nextErrors[connector.clientKey] = 'Base URL must start with http:// or https://.';
+      } else if (connector.auth_token.trim() === MASKED_SECRET_VALUE && !connector.id) {
+        nextErrors[connector.clientKey] = 'Paste the new auth token value before saving.';
+      } else if (Number(connector.timeout_seconds) < 1 || Number(connector.timeout_seconds) > 120) {
+        nextErrors[connector.clientKey] = 'Timeout must be between 1 and 120 seconds.';
+      } else if (Number(connector.retry_count) < 0 || Number(connector.retry_count) > 5) {
+        nextErrors[connector.clientKey] = 'Retry count must be between 0 and 5.';
+      }
+    });
+    setClaudeApiConnectorErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
@@ -1510,6 +1699,104 @@ const SettingsPage = ({
     }
   };
 
+  const saveClaudeApiConnectors = async () => {
+    if (!validateClaudeApiConnectors()) {
+      setBanner({ kind: 'error', text: 'Fix the third-party API connector rows first.' });
+      return;
+    }
+    setIsSavingClaudeApiConnectors(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/claude-api-connectors`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeClaudeApiConnectorsForApi(claudeApiConnectors)),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save third-party API connectors');
+      }
+      setClaudeApiConnectors((data || []).map((connector, index) => hydrateClaudeApiConnector(connector, index)));
+      setClaudeApiConnectorErrors({});
+      setBanner({ kind: 'success', text: 'Third-party API connectors saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingClaudeApiConnectors(false);
+    }
+  };
+
+  const sendClaudeApiTest = async (connector) => {
+    if (!connector.base_url.trim()) {
+      setClaudeApiConnectorErrors((previous) => ({
+        ...previous,
+        [connector.clientKey]: 'Base URL is required.',
+      }));
+      setBanner({ kind: 'error', text: 'Base URL is required for a third-party API test payload.' });
+      return;
+    }
+    setBusyClaudeApiTests((previous) => ({ ...previous, [connector.clientKey]: true }));
+    try {
+      const response = await fetch(`${BaseURL}/settings/claude-api-connectors/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: connector.id ?? undefined,
+          enabled: connector.enabled,
+          connector_label: connector.connector_label?.trim() || null,
+          base_url: connector.base_url.trim(),
+          auth_token: connector.auth_token.trim(),
+          timeout_seconds: Number(connector.timeout_seconds) || 10,
+          retry_count: Number(connector.retry_count) || 0,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send third-party API test payload');
+      }
+      setBanner({ kind: 'success', text: data.detail || 'Third-party API test payload sent.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyClaudeApiTests((previous) => ({ ...previous, [connector.clientKey]: false }));
+    }
+  };
+
+  const fireDemoTrigger = async (rule) => {
+    setBusyDemoTriggers((previous) => ({ ...previous, [rule.clientKey]: true }));
+    try {
+      const response = await fetch(`${BaseURL}/demo/triggers/fire`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          trigger_key: rule.trigger_key,
+          display_title: rule.rule_label || DEMO_TRIGGER_OPTIONS.find((option) => option.value === rule.trigger_key)?.label || 'Demo Trigger',
+          alert_level: rule.alert_level,
+          source_id: rule.source_ids?.[0] || null,
+          delivery_target_ids: rule.delivery_target_ids || [],
+          metadata: {
+            preset: true,
+            source_ids: rule.source_ids || [],
+          },
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to fire demo trigger');
+      }
+      setBanner({ kind: 'success', text: data.detail || 'Demo trigger queued.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyDemoTriggers((previous) => ({ ...previous, [rule.clientKey]: false }));
+    }
+  };
+
   const modelOptionsByStage = MODEL_STAGE_OPTIONS.reduce((result, option) => {
     const stageEntry = (modelOptionCatalog.stages || []).find((entry) => entry.stage === option.stage);
     result[option.stage] = stageEntry?.options || [];
@@ -1528,8 +1815,10 @@ const SettingsPage = ({
     }
     return modelDisplayNamesByStage[stage]?.[modelKey] || modelKey;
   };
-  const detectionRules = alertRules.filter((rule) => rule.rule_kind === 'detector');
-  const anomalyRules = alertRules.filter((rule) => rule.rule_kind === 'anomaly');
+  const detectionRules = alertRules.filter((rule) => (!rule.trigger_key || rule.trigger_key === 'alert_rule_trigger') && rule.rule_kind === 'detector');
+  const anomalyRules = alertRules.filter((rule) => (!rule.trigger_key || rule.trigger_key === 'alert_rule_trigger') && rule.rule_kind === 'anomaly');
+  const demoTriggerRules = alertRules.filter((rule) => rule.trigger_key && rule.trigger_key !== 'alert_rule_trigger');
+  const alertConnectorRules = alertRules.filter((rule) => !rule.trigger_key || rule.trigger_key === 'alert_rule_trigger');
   const modelZooSource = modelOptionCatalog.model_zoo || {};
   const persistedMountedModelsByStage = modelOptionCatalog.mounted_models || {};
   const mountedModelsByStage = Object.keys(mountedModels || {}).length > 0
@@ -1546,6 +1835,9 @@ const SettingsPage = ({
       subscription.enabled
       && subscription.recipient_handle.trim()
       && ['iMessage', 'SMS'].includes(subscription.service),
+  );
+  const isClaudeApiConnectorConfigured = claudeApiConnectors.some(
+    (connector) => connector.enabled && connector.base_url.trim(),
   );
   const stageLibraryEntries = MODEL_STAGE_OPTIONS.map((option) => {
     const stageOptions = modelOptionsByStage[option.stage] || [];
@@ -2338,6 +2630,23 @@ const SettingsPage = ({
                                       <span>Enabled</span>
                                       <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
                                     </label>
+                                    <div className="camera-rule-selector">
+                                      <span>Delivery Targets</span>
+                                      <div className="camera-checkbox-grid">
+                                        {availableDeliveryTargets.length === 0 ? (
+                                          <span className="muted-text">Save Telegram or third-party API connectors first.</span>
+                                        ) : availableDeliveryTargets.map((target) => (
+                                          <label key={`${rule.clientKey}-target-${target.id}`} className="model-mount-toggle">
+                                            <input
+                                              type="checkbox"
+                                              checked={(rule.delivery_target_ids || []).includes(target.id)}
+                                              onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
+                                            />
+                                            <span>{target.label}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
                                   </div>
                                   {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
                                 </div>
@@ -2432,6 +2741,122 @@ const SettingsPage = ({
                                       <span>Enabled</span>
                                       <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
                                     </label>
+                                    <div className="camera-rule-selector">
+                                      <span>Delivery Targets</span>
+                                      <div className="camera-checkbox-grid">
+                                        {availableDeliveryTargets.length === 0 ? (
+                                          <span className="muted-text">Save Telegram or third-party API connectors first.</span>
+                                        ) : availableDeliveryTargets.map((target) => (
+                                          <label key={`${rule.clientKey}-target-${target.id}`} className="model-mount-toggle">
+                                            <input
+                                              type="checkbox"
+                                              checked={(rule.delivery_target_ids || []).includes(target.id)}
+                                              onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
+                                            />
+                                            <span>{target.label}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
+                                  </div>
+                                  {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </div>
+
+                      <div className="source-row">
+                        <div className="source-row-header">
+                          <div>
+                            <strong>Demo Trigger Templates</strong>
+                            <div className="muted-text">Configure anomaly, unattended bag, loitering compatibility, and manual triggers for local demos.</div>
+                          </div>
+                          <button type="button" onClick={loadDemoTriggerPresets} className="secondary-button">
+                            Load Demo Presets
+                          </button>
+                        </div>
+                        {demoTriggerRules.length === 0 ? (
+                          <div className="empty-state">No demo trigger templates configured yet.</div>
+                        ) : (
+                          <div className="source-list">
+                            {demoTriggerRules.map((rule, ruleIndex) => {
+                              const triggerOption = DEMO_TRIGGER_OPTIONS.find((option) => option.value === rule.trigger_key);
+                              return (
+                                <div key={rule.clientKey} className="source-row">
+                                  <div className="source-row-header">
+                                    <strong>{triggerOption?.label || `Demo Trigger ${ruleIndex + 1}`}</strong>
+                                    <button type="button" onClick={() => removeAlertRule(rule.clientKey)} className="ghost-button">Remove</button>
+                                  </div>
+                                  <div className="model-binding-grid">
+                                    <label>
+                                      <span>Label</span>
+                                      <input type="text" value={rule.rule_label} onChange={(event) => setAlertRuleField(rule.clientKey, 'rule_label', event.target.value)} placeholder="Operator label" />
+                                    </label>
+                                    <label>
+                                      <span>Trigger Type</span>
+                                      <select value={rule.trigger_key} onChange={(event) => setAlertRuleField(rule.clientKey, 'trigger_key', event.target.value)}>
+                                        {DEMO_TRIGGER_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <label>
+                                      <span>Severity</span>
+                                      <select value={rule.alert_level} onChange={(event) => setAlertRuleField(rule.clientKey, 'alert_level', event.target.value)}>
+                                        {ALERT_LEVEL_OPTIONS.map((option) => (
+                                          <option key={option.value} value={option.value}>{option.label}</option>
+                                        ))}
+                                      </select>
+                                    </label>
+                                    <div className="camera-rule-selector">
+                                      <span>Sources</span>
+                                      <div className="camera-checkbox-grid">
+                                        {sources.filter((source) => source.id).map((source, index) => (
+                                          <label key={`${rule.clientKey}-demo-source-${source.id}`} className="model-mount-toggle">
+                                            <input
+                                              type="checkbox"
+                                              checked={(rule.source_ids || []).includes(source.id)}
+                                              disabled={rule.trigger_key === 'manual_trigger'}
+                                              onChange={(event) => toggleAlertRuleSource(rule.clientKey, source.id, event.target.checked)}
+                                            />
+                                            <span>{source.label?.trim() || defaultSourceLabel(source, index, sources)}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <div className="camera-rule-selector">
+                                      <span>Delivery Targets</span>
+                                      <div className="camera-checkbox-grid">
+                                        {availableDeliveryTargets.length === 0 ? (
+                                          <span className="muted-text">Save Telegram or third-party API connectors first.</span>
+                                        ) : availableDeliveryTargets.map((target) => (
+                                          <label key={`${rule.clientKey}-demo-target-${target.id}`} className="model-mount-toggle">
+                                            <input
+                                              type="checkbox"
+                                              checked={(rule.delivery_target_ids || []).includes(target.id)}
+                                              onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
+                                            />
+                                            <span>{target.label}</span>
+                                          </label>
+                                        ))}
+                                      </div>
+                                    </div>
+                                    <label className="toggle-field">
+                                      <span>Enabled</span>
+                                      <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
+                                    </label>
+                                  </div>
+                                  <div className="control-actions">
+                                    <button
+                                      type="button"
+                                      onClick={() => fireDemoTrigger(rule)}
+                                      className="ghost-button"
+                                      disabled={Boolean(busyDemoTriggers[rule.clientKey])}
+                                    >
+                                      {busyDemoTriggers[rule.clientKey] ? 'Firing...' : 'Fire Demo Trigger'}
+                                    </button>
                                   </div>
                                   {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
                                 </div>
@@ -2591,6 +3016,139 @@ const SettingsPage = ({
                       <div className="muted-text">GET/PUT {`${BaseURL}/settings/telegram-trigger-subscriptions`}</div>
                       <div className="muted-text">POST {`${BaseURL}/settings/telegram-trigger-subscriptions/test`}</div>
                       <div className="muted-text">Each enabled subscriber receives a Telegram message whenever a new trigger row is created.</div>
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <div className="connector-header-line">
+                          <h3>Third-party API (Claude)</h3>
+                          <span className={`connector-status-badge ${isClaudeApiConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                            {isClaudeApiConnectorConfigured ? 'Configured' : 'Needs setup'}
+                          </span>
+                        </div>
+                        <p>Send trigger events to a Claude-compatible JSON endpoint with optional bearer auth, timeout, and retries.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={addClaudeApiConnector}
+                        className="secondary-button"
+                      >
+                        Add Endpoint
+                      </button>
+                    </div>
+
+                    {claudeApiConnectors.length === 0 ? (
+                      <div className="empty-state">
+                        No third-party API endpoints saved yet.
+                      </div>
+                    ) : (
+                      <div className="source-list">
+                        {claudeApiConnectors.map((connector, index) => (
+                          <div key={connector.clientKey} className="source-row">
+                            <div className="source-row-header">
+                              <strong>Endpoint {index + 1}</strong>
+                              <button
+                                type="button"
+                                onClick={() => removeClaudeApiConnector(connector.clientKey)}
+                                className="ghost-button"
+                              >
+                                Remove
+                              </button>
+                            </div>
+
+                            <div className="model-binding-grid">
+                              <label>
+                                <span>Label</span>
+                                <input
+                                  type="text"
+                                  value={connector.connector_label}
+                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'connector_label', event.target.value)}
+                                  placeholder="Optional operator label"
+                                />
+                              </label>
+                              <label>
+                                <span>Base URL</span>
+                                <input
+                                  type="url"
+                                  value={connector.base_url}
+                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'base_url', event.target.value)}
+                                  placeholder="http://localhost:8787/v1/messages"
+                                />
+                              </label>
+                              <label>
+                                <span>Auth Token / Secret</span>
+                                <input
+                                  type="password"
+                                  value={connector.auth_token}
+                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'auth_token', event.target.value)}
+                                  placeholder="Optional bearer token"
+                                />
+                              </label>
+                              <label>
+                                <span>Timeout Seconds</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="120"
+                                  value={connector.timeout_seconds}
+                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'timeout_seconds', event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                <span>Retry Count</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="5"
+                                  value={connector.retry_count}
+                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'retry_count', event.target.value)}
+                                />
+                              </label>
+                              <label className="toggle-field">
+                                <span>Enabled</span>
+                                <input
+                                  type="checkbox"
+                                  checked={connector.enabled}
+                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'enabled', event.target.checked)}
+                                />
+                              </label>
+                            </div>
+
+                            <div className="control-actions">
+                              <button
+                                type="button"
+                                onClick={() => sendClaudeApiTest(connector)}
+                                className="ghost-button"
+                                disabled={Boolean(busyClaudeApiTests[connector.clientKey])}
+                              >
+                                {busyClaudeApiTests[connector.clientKey] ? 'Sending Test...' : 'Send Test Payload'}
+                              </button>
+                            </div>
+
+                            {claudeApiConnectorErrors[connector.clientKey] && (
+                              <div className="row-error">{claudeApiConnectorErrors[connector.clientKey]}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={saveClaudeApiConnectors}
+                        className="secondary-button"
+                        disabled={isSavingClaudeApiConnectors}
+                      >
+                        {isSavingClaudeApiConnectors ? 'Saving...' : 'Save Third-party API Connectors'}
+                      </button>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/claude-api-connectors`}</div>
+                      <div className="muted-text">POST {`${BaseURL}/settings/claude-api-connectors/test`}</div>
+                      <div className="muted-text">Payload contract: Claude-style `messages` JSON plus `metadata` and `hearthlight` trigger context.</div>
                     </div>
                   </div>
                   <div className="card">

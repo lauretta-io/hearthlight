@@ -37,8 +37,14 @@ from ..utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     queue_apple_message_trigger_notifications,
 )
+from ..utils.claude_api_connector import (
+    build_claude_trigger_payload,
+    ensure_claude_api_connector_tables,
+    queue_claude_api_trigger_notifications,
+)
 from ..utils.connector_endpoints import (
     CONNECTOR_KEY_APPLE_MESSAGES,
+    CONNECTOR_KEY_CLAUDE_API,
     CONNECTOR_KEY_TELEGRAM,
     list_connector_endpoint_rows,
 )
@@ -347,6 +353,65 @@ class DatabaseWorker:
                 matched_rows.append(row)
         return matched_rows
 
+    def get_enabled_trigger_rules(self, *, trigger_key: str, source_id: int | None):
+        ensure_alert_rule_tables()
+        rows = (
+            self.db.query(SQLModels.TriggerRule)
+            .filter_by(trigger_key=trigger_key, enabled=True, is_deleted=False)
+            .order_by(SQLModels.TriggerRule.sort_order.asc(), SQLModels.TriggerRule.id.asc())
+            .all()
+        )
+        if source_id is None:
+            return [row for row in rows if not parse_serialized_json(getattr(row, "source_ids_json", None), [])]
+        matched_rows = []
+        for row in rows:
+            source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
+            if not source_ids and row.source_template_id is not None:
+                source_ids = [row.source_template_id]
+            if source_id in source_ids:
+                matched_rows.append(row)
+        return matched_rows
+
+    def resolve_trigger_delivery_target_ids(self, *, trigger_key: str, source_id: int | None):
+        rows = self.get_enabled_trigger_rules(trigger_key=trigger_key, source_id=source_id)
+        if not rows:
+            return None
+        target_ids: list[int] = []
+        seen: set[int] = set()
+        for row in rows:
+            for target_id in parse_serialized_json(getattr(row, "delivery_target_ids_json", None), []):
+                target_id = int(target_id)
+                if target_id in seen:
+                    continue
+                seen.add(target_id)
+                target_ids.append(target_id)
+        return target_ids
+
+    def resolve_source_delivery_target_ids(self, source_id: int | None) -> list[int] | None:
+        if source_id is None:
+            return None
+        ensure_alert_rule_tables()
+        rows = (
+            self.db.query(SQLModels.TriggerRule)
+            .filter_by(enabled=True, is_deleted=False)
+            .all()
+        )
+        target_ids: list[int] = []
+        seen: set[int] = set()
+        for row in rows:
+            source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
+            if not source_ids and row.source_template_id is not None:
+                source_ids = [row.source_template_id]
+            if source_id not in source_ids:
+                continue
+            for target_id in parse_serialized_json(getattr(row, "delivery_target_ids_json", None), []):
+                target_id = int(target_id)
+                if target_id in seen:
+                    continue
+                seen.add(target_id)
+                target_ids.append(target_id)
+        return target_ids if target_ids else None
+
     def create_alert_incident(
         self,
         *,
@@ -403,6 +468,11 @@ class DatabaseWorker:
             self.db.commit()
             self.db.refresh(incident_model)
             self.db.refresh(alert_model)
+            trigger_rule = self.db.query(SQLModels.TriggerRule).filter_by(id=alert_rule_id).first()
+            delivery_target_ids = parse_serialized_json(
+                getattr(trigger_rule, "delivery_target_ids_json", None),
+                [],
+            ) if trigger_rule is not None else []
             self.queue_trigger_notifications(
                 incident_model,
                 display_title=alert_model.title,
@@ -413,6 +483,8 @@ class DatabaseWorker:
                     "matched_target": matched_target,
                     "confidence": round(float(confidence), 3),
                 },
+                trigger_key=TRIGGER_KEY_ALERT_RULE,
+                delivery_target_ids=delivery_target_ids,
             )
             return alert_model
         except SQLAlchemyError:
@@ -436,6 +508,20 @@ class DatabaseWorker:
             enabled_only=True,
         )
 
+    def get_enabled_claude_api_connectors(self):
+        ensure_claude_api_connector_tables()
+        return list_connector_endpoint_rows(
+            self.db,
+            connector_key=CONNECTOR_KEY_CLAUDE_API,
+            enabled_only=True,
+        )
+
+    def filter_connector_rows_by_targets(self, rows, delivery_target_ids: list[int] | None):
+        if delivery_target_ids is None:
+            return rows
+        target_ids = {int(item) for item in delivery_target_ids}
+        return [row for row in rows if row.id in target_ids]
+
     def queue_trigger_notifications(
         self,
         incident_row: SQLModels.Incident,
@@ -444,10 +530,22 @@ class DatabaseWorker:
         source_id: int | None = None,
         alert_level: str | None = None,
         metadata: dict | None = None,
+        trigger_key: str | None = None,
+        delivery_target_ids: list[int] | None = None,
     ) -> None:
-        telegram_subscriptions = self.get_enabled_telegram_subscriptions()
-        apple_message_subscriptions = self.get_enabled_apple_message_subscriptions()
-        if not telegram_subscriptions and not apple_message_subscriptions:
+        telegram_subscriptions = self.filter_connector_rows_by_targets(
+            self.get_enabled_telegram_subscriptions(),
+            delivery_target_ids,
+        )
+        apple_message_subscriptions = self.filter_connector_rows_by_targets(
+            self.get_enabled_apple_message_subscriptions(),
+            delivery_target_ids,
+        )
+        claude_api_connectors = self.filter_connector_rows_by_targets(
+            self.get_enabled_claude_api_connectors(),
+            delivery_target_ids,
+        )
+        if not telegram_subscriptions and not apple_message_subscriptions and not claude_api_connectors:
             return
         run_row = (
             self.db.query(SQLModels.Run)
@@ -475,6 +573,18 @@ class DatabaseWorker:
             occurred_at=occurred_at,
             metadata=metadata,
         )
+        claude_payload = build_claude_trigger_payload(
+            trigger_id=f"{incident_row.incident_type}-{incident_row.id}",
+            trigger_type=str(trigger_key or incident_row.incident_type),
+            trigger_text=trigger_text,
+            display_title=display_title or str(incident_row.incident_type),
+            run_identifier=run_row.run_identifier if run_row is not None else None,
+            source_label=source_label,
+            camera_id=incident_row.camera_id,
+            alert_level=alert_level,
+            occurred_at=occurred_at,
+            metadata=metadata,
+        )
         if telegram_subscriptions:
             media = self.resolve_telegram_media(
                 run_identifier=run_row.run_identifier if run_row is not None else None,
@@ -490,6 +600,11 @@ class DatabaseWorker:
             queue_apple_message_trigger_notifications(
                 apple_message_subscriptions,
                 trigger_text=trigger_text,
+            )
+        if claude_api_connectors:
+            queue_claude_api_trigger_notifications(
+                claude_api_connectors,
+                payload=claude_payload,
             )
 
     def resolve_telegram_media(
@@ -752,6 +867,11 @@ class DatabaseWorker:
         self.queue_trigger_notifications(
             incident_row,
             source_id=self.get_source_template_id_for_camera(incident.cam_id),
+            trigger_key="unattended_bag_trigger" if incident.incident_type == IncidentType.UNATTENDED_BAG else None,
+            delivery_target_ids=self.resolve_trigger_delivery_target_ids(
+                trigger_key="unattended_bag_trigger",
+                source_id=self.get_source_template_id_for_camera(incident.cam_id),
+            ) if incident.incident_type == IncidentType.UNATTENDED_BAG else None,
         )
 
     def create_incident_person_mapping(
@@ -887,6 +1007,11 @@ class DatabaseWorker:
         return self.create(anomaly_model)
 
     def create_incident_from_anomaly_event(self, event: DataModels.AnomalyEvent):
+        source_id = (
+            event.source_id
+            if event.source_id is not None
+            else self.get_source_template_id_for_camera(event.camera_id)
+        )
         incident_model = SQLModels.Incident(
             run_id=DatabaseWorker.run_id,
             incident_type=IncidentType.ANOMALY,
@@ -899,14 +1024,22 @@ class DatabaseWorker:
         incident_row = self.create(incident_model)
         if incident_row is None:
             return
+        delivery_target_ids = self.resolve_trigger_delivery_target_ids(
+            trigger_key="anomaly_event_trigger",
+            source_id=source_id,
+        )
+        if delivery_target_ids is None:
+            delivery_target_ids = self.resolve_source_delivery_target_ids(source_id)
         self.queue_trigger_notifications(
             incident_row,
             display_title=event.title or event.category,
-            source_id=event.source_id,
+            source_id=source_id,
             metadata={
                 "category": event.category,
                 "score": round(float(event.score or 0.0), 3),
             },
+            trigger_key="anomaly_event_trigger",
+            delivery_target_ids=delivery_target_ids,
         )
 
     # Update Functions
@@ -1024,6 +1157,11 @@ class DatabaseWorker:
         self.queue_trigger_notifications(
             incident_row,
             source_id=self.get_source_template_id_for_camera(incident.cam_id),
+            trigger_key="loitering_trigger",
+            delivery_target_ids=self.resolve_trigger_delivery_target_ids(
+                trigger_key="loitering_trigger",
+                source_id=self.get_source_template_id_for_camera(incident.cam_id),
+            ),
         )
 
     def publish_loitering_incidents(self, incidents: list) -> None:

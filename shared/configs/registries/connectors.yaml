@@ -33,6 +33,28 @@ apple_messages:
     - text
     - async
 
+claude_api:
+  label: Third-party API (Claude)
+  description: Send trigger events to an external API server using Claude-style JSON message payloads.
+  category: integrations
+  enabled: true
+  requirements:
+    - base-url
+  fields:
+    - key: base_url
+      label: Base URL
+    - key: auth_token
+      label: Auth token or secret
+      secret: true
+    - key: timeout_seconds
+      label: Timeout seconds
+    - key: retry_count
+      label: Retry count
+  delivery_capabilities:
+    - json
+    - sync
+    - retry
+
 webhook:
   label: Webhook
   description: Post trigger payloads to an HTTP endpoint.

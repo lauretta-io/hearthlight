@@ -41,6 +41,8 @@ from ...shared.models.APIModels import (
     AlertRuleOptionCatalog,
     ConnectorEndpoint,
     ConnectorZooEntry,
+    ClaudeApiConnectorEndpoint,
+    ClaudeApiConnectorTestResponse,
     AlgorithmEntityFeedItem,
     AlgorithmFeed,
     AssetReference as APIAssetReference,
@@ -56,6 +58,8 @@ from ...shared.models.APIModels import (
     ModelOptionCatalog,
     ModelResultLogPage,
     ModelRegistration,
+    DemoTriggerFireRequest,
+    DemoTriggerFireResponse,
     PluginBundleRecord,
     PluginComponentRecord,
     MountedModelStage,
@@ -96,8 +100,16 @@ from ...shared.utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     send_test_apple_message_trigger_message,
 )
+from ...shared.utils.claude_api_connector import (
+    build_claude_trigger_payload,
+    ensure_claude_api_connector_tables,
+    send_claude_api_payload,
+    validate_claude_api_config,
+)
+from ...shared.utils.connector_delivery_log import list_connector_delivery_events
 from ...shared.utils.connector_endpoints import (
     CONNECTOR_KEY_APPLE_MESSAGES,
+    CONNECTOR_KEY_CLAUDE_API,
     CONNECTOR_KEY_TELEGRAM,
     ensure_connector_endpoint_tables,
     get_connector_delivery_capabilities,
@@ -2150,15 +2162,21 @@ def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint])
             row = SQLModels.ConnectorEndpoint()
             db.add(row)
         existing_config = get_connector_endpoint_config(row)
+        merged_config = merge_connector_endpoint_secret_config(
+            existing_config,
+            dict(endpoint.config or {}),
+        )
+        if endpoint.connector_key == CONNECTOR_KEY_CLAUDE_API:
+            try:
+                validate_claude_api_config(merged_config)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
         set_connector_endpoint_payload(
             row,
             connector_key=endpoint.connector_key,
             label=endpoint.label,
             enabled=endpoint.enabled,
-            config=merge_connector_endpoint_secret_config(
-                existing_config,
-                dict(endpoint.config or {}),
-            ),
+            config=merged_config,
             delivery_capabilities=list(endpoint.delivery_capabilities),
         )
         persisted_rows.append(row)
@@ -2312,6 +2330,83 @@ def replace_apple_message_trigger_subscriptions(
             row.deleted_at = datetime.utcnow()
     db.commit()
     return build_apple_message_trigger_subscription_responses(db)
+
+
+def get_claude_api_connector_rows(db: Session):
+    ensure_claude_api_connector_tables()
+    return get_connector_endpoint_rows(db, CONNECTOR_KEY_CLAUDE_API)
+
+
+def build_claude_api_connector_responses(db: Session):
+    return [
+        ClaudeApiConnectorEndpoint(
+            id=row.id,
+            enabled=row.enabled,
+            connector_label=row.label,
+            base_url=str(get_connector_endpoint_config(row).get("base_url", "") or ""),
+            auth_token=(
+                MASKED_SECRET_VALUE
+                if str(get_connector_endpoint_config(row).get("auth_token", "") or "").strip()
+                else ""
+            ),
+            timeout_seconds=int(get_connector_endpoint_config(row).get("timeout_seconds", 10) or 10),
+            retry_count=int(get_connector_endpoint_config(row).get("retry_count", 1) or 1),
+            created_at=row.created_at.isoformat() if row.created_at is not None else None,
+            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+        )
+        for row in get_claude_api_connector_rows(db)
+    ]
+
+
+def replace_claude_api_connectors(
+    db: Session,
+    endpoints: list[ClaudeApiConnectorEndpoint],
+):
+    ensure_claude_api_connector_tables()
+    existing_rows = get_claude_api_connector_rows(db)
+    existing_by_id = {row.id: row for row in existing_rows}
+
+    seen_ids = set()
+    persisted_rows = []
+    for endpoint in endpoints:
+        row = existing_by_id.get(endpoint.id) if endpoint.id is not None else None
+        if row is None:
+            row = SQLModels.ConnectorEndpoint()
+            db.add(row)
+        existing_config = get_connector_endpoint_config(row)
+        config = merge_connector_endpoint_secret_config(
+            existing_config,
+            {
+                "base_url": endpoint.base_url,
+                "auth_token": endpoint.auth_token,
+                "timeout_seconds": endpoint.timeout_seconds,
+                "retry_count": endpoint.retry_count,
+            },
+        )
+        try:
+            validate_claude_api_config(config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        set_connector_endpoint_payload(
+            row,
+            connector_key=CONNECTOR_KEY_CLAUDE_API,
+            label=endpoint.connector_label,
+            enabled=endpoint.enabled,
+            config=config,
+            delivery_capabilities=["json", "sync", "retry"],
+        )
+        persisted_rows.append(row)
+        if row.id is not None:
+            seen_ids.add(row.id)
+
+    db.flush()
+    seen_ids.update(row.id for row in persisted_rows if row.id is not None)
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_claude_api_connector_responses(db)
 
 
 async def store_uploaded_source_video(
@@ -3379,6 +3474,106 @@ def test_settings_apple_message_trigger_subscription(
     )
 
 
+@external_router.get(
+    "/settings/claude-api-connectors",
+    response_model=list[ClaudeApiConnectorEndpoint],
+)
+def get_settings_claude_api_connectors(db: Session = Depends(get_db)):
+    return build_claude_api_connector_responses(db)
+
+
+@external_router.put(
+    "/settings/claude-api-connectors",
+    response_model=list[ClaudeApiConnectorEndpoint],
+)
+def update_settings_claude_api_connectors(
+    endpoints: list[ClaudeApiConnectorEndpoint],
+    db: Session = Depends(get_db),
+):
+    return replace_claude_api_connectors(db, endpoints)
+
+
+@external_router.post(
+    "/settings/claude-api-connectors/test",
+    response_model=ClaudeApiConnectorTestResponse,
+)
+def test_settings_claude_api_connector(endpoint: ClaudeApiConnectorEndpoint):
+    config = {
+        "base_url": endpoint.base_url,
+        "auth_token": endpoint.auth_token,
+        "timeout_seconds": endpoint.timeout_seconds,
+        "retry_count": endpoint.retry_count,
+    }
+    if endpoint.id is not None:
+        with SessionLocal() as db:
+            existing_row = (
+                db.query(SQLModels.ConnectorEndpoint)
+                .filter_by(
+                    id=endpoint.id,
+                    connector_key=CONNECTOR_KEY_CLAUDE_API,
+                    is_deleted=False,
+                )
+                .first()
+            )
+            if existing_row is not None:
+                config = merge_connector_endpoint_secret_config(
+                    get_connector_endpoint_config(existing_row),
+                    config,
+                )
+    row = SQLModels.ConnectorEndpoint(
+        connector_key=CONNECTOR_KEY_CLAUDE_API,
+        enabled=endpoint.enabled,
+        label=endpoint.connector_label,
+        config_json=json.dumps(config),
+        delivery_capabilities_json=json.dumps(["json", "sync", "retry"]),
+    )
+    try:
+        payload = build_claude_trigger_payload(
+            trigger_id="TEST-TRIGGER",
+            trigger_type="MANUAL",
+            trigger_text="Hearthlight test trigger payload",
+            display_title="Connector Test",
+            alert_level="Low",
+            metadata={"purpose": "claude api connector test"},
+        )
+        send_claude_api_payload(row, payload)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ClaudeApiConnectorTestResponse(
+        status="sent",
+        detail="Third-party API test payload sent.",
+    )
+
+
+@external_router.post("/demo/triggers/fire", response_model=DemoTriggerFireResponse)
+def fire_demo_trigger(
+    payload: DemoTriggerFireRequest,
+    db: Session = Depends(get_db),
+):
+    from ...shared.database.database_worker import DatabaseWorker
+
+    worker = DatabaseWorker()
+    worker.db = db
+    worker.queue_trigger_notifications(
+        SQLModels.Incident(
+            id=0,
+            incident_type=payload.trigger_key.replace("_trigger", "").upper(),
+            status="DEMO",
+            camera_id=None,
+            zone_id=None,
+            timestamp=time.time(),
+            created_at=datetime.utcnow(),
+        ),
+        display_title=payload.display_title,
+        source_id=payload.source_id,
+        alert_level=payload.alert_level.title(),
+        metadata={"demo": True, **dict(payload.metadata or {})},
+        trigger_key=payload.trigger_key,
+        delivery_target_ids=payload.delivery_target_ids,
+    )
+    return DemoTriggerFireResponse(status="sent", detail="Demo trigger queued.")
+
+
 @external_router.get("/sources/{source_id}/preview.mjpeg")
 async def get_source_preview(source_id: int, request: Request, db: Session = Depends(get_db)):
     source_row = get_source_row_by_id(source_id, db)
@@ -3742,7 +3937,13 @@ def get_monitoring_overview(
         latest_incidents=build_incident_feed_items(db, selected_run, limit=limit),
         latest_entities=build_entity_feed_items(db, selected_run, limit=limit),
         latest_anomalies=build_anomaly_feed_items(db, selected_run, limit=limit),
-        recent_events=build_resource_event_records(db, limit),
+        recent_events=[
+            ResourceEventRecord.model_validate(item)
+            for item in (
+                list_connector_delivery_events(limit)
+                + [event.model_dump() for event in build_resource_event_records(db, limit)]
+            )[: (limit or 20)]
+        ],
         feed_endpoints=[
             FeedEndpoint.model_validate(item) for item in build_feed_endpoint_catalog()
         ],

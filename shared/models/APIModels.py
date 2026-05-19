@@ -50,6 +50,7 @@ ALERT_LEVELS = {
 CONNECTOR_KEYS = {
     "telegram",
     "apple_messages",
+    "claude_api",
     "webhook",
     "slack",
 }
@@ -634,6 +635,13 @@ class TriggerRule(BaseModel):
                 )
                 if self.anomaly_cutoff is None:
                     raise ValueError("anomaly_cutoff is required for anomaly rules")
+        else:
+            if self.trigger_key != "manual_trigger" and not self.source_ids:
+                raise ValueError("source_ids is required for this trigger")
+            if self.signal_family is None:
+                self.signal_family = "detector"
+            if self.target_key is None:
+                self.target_key = self.trigger_key
         if self.signal_family is None:
             raise ValueError("signal_family is required")
         return self
@@ -821,6 +829,69 @@ class AppleMessageTriggerSubscription(BaseModel):
 
 
 class AppleMessageTriggerTestResponse(BaseModel):
+    status: str
+    detail: str | None = None
+
+
+class ClaudeApiConnectorEndpoint(BaseModel):
+    id: int | None = None
+    enabled: bool = True
+    connector_label: str | None = Field(default=None, max_length=255)
+    base_url: str
+    auth_token: str = ""
+    timeout_seconds: int = Field(default=10, ge=1, le=120)
+    retry_count: int = Field(default=1, ge=0, le=5)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("connector_label")
+    def validate_claude_connector_label(cls, value):
+        if value is None:
+            return value
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("base_url")
+    def validate_claude_base_url(cls, value):
+        normalized = validate_non_empty_string(value, "base_url")
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return normalized
+
+    @field_validator("auth_token")
+    def validate_claude_auth_token(cls, value):
+        return str(value or "").strip()
+
+
+class ClaudeApiConnectorTestResponse(BaseModel):
+    status: str
+    detail: str | None = None
+
+
+class DemoTriggerFireRequest(BaseModel):
+    trigger_key: str = "manual_trigger"
+    display_title: str = "Manual Demo Trigger"
+    alert_level: str = "medium"
+    source_id: int | None = None
+    delivery_target_ids: list[int] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+    @field_validator("trigger_key")
+    def validate_demo_trigger_key(cls, value):
+        normalized = validate_non_empty_string(value, "trigger_key").lower()
+        if normalized not in TRIGGER_RULE_KEYS:
+            raise ValueError("unsupported trigger_key")
+        return normalized
+
+    @field_validator("alert_level")
+    def validate_demo_alert_level(cls, value):
+        normalized = validate_non_empty_string(value, "alert_level").lower()
+        if normalized not in ALERT_LEVELS:
+            raise ValueError("alert_level must be one of low, medium, high")
+        return normalized
+
+
+class DemoTriggerFireResponse(BaseModel):
     status: str
     detail: str | None = None
 

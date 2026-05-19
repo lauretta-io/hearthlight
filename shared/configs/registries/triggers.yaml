@@ -51,6 +51,7 @@ unattended_bag_trigger:
       label: Alert level
   delivery_capabilities:
     - notifications
+    - connectors
 
 loitering_trigger:
   label: Loitering Trigger
@@ -65,17 +66,19 @@ loitering_trigger:
       label: Alert level
   delivery_capabilities:
     - notifications
+    - connectors
 
 manual_trigger:
   label: Manual Trigger
-  description: Reserved for operator-initiated triggers and future workflows.
-  category: future
-  enabled: false
+  description: Operator-initiated trigger for demos, tests, and future workflows.
+  category: demo
+  enabled: true
   requirements:
     - delivery-targets
   fields: []
   delivery_capabilities:
     - notifications
+    - connectors
 
 system_trigger:
   label: System Trigger
