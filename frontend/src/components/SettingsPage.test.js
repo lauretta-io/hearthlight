@@ -204,6 +204,23 @@ beforeEach(() => {
         },
       ]);
     }
+    if (url.endsWith('/settings/action-connectors') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([
+        {
+          id: 71,
+          enabled: true,
+          action_type: 'philips_hue',
+          connector_label: 'Demo Hue',
+          base_url: 'http://localhost:8790/actions',
+          auth_token: '********',
+          command: 'flash_scene',
+          target: 'lobby-light',
+          parameters: { color: 'red' },
+          timeout_seconds: 10,
+          retry_count: 1,
+        },
+      ]);
+    }
     if (url.endsWith('/settings/apple-message-trigger-subscriptions') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
         {
@@ -305,6 +322,29 @@ beforeEach(() => {
       return buildJsonResponse({
         status: 'sent',
         detail: 'Third-party API test payload sent.',
+      });
+    }
+    if (url.endsWith('/settings/action-connectors') && options.method === 'PUT') {
+      return buildJsonResponse([
+        {
+          id: 71,
+          enabled: true,
+          action_type: 'philips_hue',
+          connector_label: 'Demo Hue',
+          base_url: 'http://localhost:8790/actions',
+          auth_token: '********',
+          command: 'flash_scene',
+          target: 'lobby-light',
+          parameters: { color: 'red' },
+          timeout_seconds: 10,
+          retry_count: 1,
+        },
+      ]);
+    }
+    if (url.endsWith('/settings/action-connectors/test') && options.method === 'POST') {
+      return buildJsonResponse({
+        status: 'sent',
+        detail: 'Action connector test payload sent.',
       });
     }
     if (url.endsWith('/settings/apple-message-trigger-subscriptions') && options.method === 'PUT') {
@@ -491,6 +531,9 @@ test('renders connectors tab and saves both connector subscription types', async
   expect(screen.getByDisplayValue('+15551234567')).toBeTruthy();
   expect(screen.getByDisplayValue('Local Claude Demo')).toBeTruthy();
   expect(screen.getByDisplayValue('http://localhost:8787/v1/messages')).toBeTruthy();
+  expect(screen.getByText('Action Connectors')).toBeTruthy();
+  expect(screen.getByDisplayValue('Demo Hue')).toBeTruthy();
+  expect(screen.getByDisplayValue('http://localhost:8790/actions')).toBeTruthy();
 
   await act(async () => {
     fireEvent.click(screen.getByText('Save Telegram Subscriptions'));
@@ -524,6 +567,20 @@ test('renders connectors tab and saves both connector subscription types', async
       expect.objectContaining({ method: 'PUT' }),
     );
   });
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Save Action Connectors'));
+  });
+
+  await waitFor(() => {
+    const saveCall = global.fetch.mock.calls.find(([url, options]) => (
+      url.endsWith('/settings/action-connectors') && options?.method === 'PUT'
+    ));
+    expect(saveCall).toBeTruthy();
+    const body = JSON.parse(saveCall[1].body);
+    expect(body[0].action_type).toBe('philips_hue');
+    expect(body[0].parameters).toEqual({ color: 'red' });
+  });
 });
 
 test('loads demo trigger presets and serializes selected delivery targets', async () => {
@@ -547,7 +604,7 @@ test('loads demo trigger presets and serializes selected delivery targets', asyn
   expect(screen.getAllByText('Manual Trigger').length).toBeGreaterThan(0);
 
   await act(async () => {
-    fireEvent.click(screen.getAllByLabelText('Ops Chat').at(-1));
+    fireEvent.click(screen.getAllByLabelText('Notification: Ops Chat').at(-1));
     fireEvent.click(screen.getAllByText('Fire Demo Trigger').at(-1));
   });
 
@@ -558,7 +615,7 @@ test('loads demo trigger presets and serializes selected delivery targets', asyn
     expect(fireCall).toBeTruthy();
     const body = JSON.parse(fireCall[1].body);
     expect(body.trigger_key).toBe('manual_trigger');
-    expect(body.delivery_target_ids).toEqual([61]);
+    expect(body.delivery_target_ids).toEqual([61, 71]);
   });
 });
 
@@ -680,6 +737,12 @@ test('shows a helpful tip when no saved sources exist for alert rules', async ()
       return buildJsonResponse([]);
     }
     if (url.endsWith('/settings/apple-message-trigger-subscriptions') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/claude-api-connectors') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/action-connectors') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([]);
     }
     return buildJsonResponse({});

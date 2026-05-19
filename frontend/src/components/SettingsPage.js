@@ -48,6 +48,11 @@ const DEMO_TRIGGER_OPTIONS = [
   { value: 'loitering_trigger', label: 'Loitering Compatibility', severity: 'medium' },
   { value: 'manual_trigger', label: 'Manual Trigger', severity: 'low' },
 ];
+const ACTION_CONNECTOR_OPTIONS = [
+  { value: 'philips_hue', label: 'Philips Hue', defaultCommand: 'flash_scene', defaultTarget: 'demo-light' },
+  { value: 'music_api', label: 'Music API', defaultCommand: 'play_alert', defaultTarget: 'demo-speaker' },
+  { value: 'robot_action', label: 'Robot Action', defaultCommand: 'move_to_zone', defaultTarget: 'demo-zone' },
+];
 const MODEL_LIBRARY_SUB_TABS = [
   { key: 'inventory', label: 'Model Inventory' },
   { key: 'library', label: 'Model Library' },
@@ -277,6 +282,41 @@ const hydrateClaudeApiConnector = (connector, fallbackIndex = 0) => ({
   retry_count: connector.retry_count ?? 1,
 });
 
+const createActionConnectorDraft = (actionType = 'robot_action') => {
+  const option = ACTION_CONNECTOR_OPTIONS.find((candidate) => candidate.value === actionType) || ACTION_CONNECTOR_OPTIONS[2];
+  return {
+    clientKey: `settings-action-connector-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    id: null,
+    enabled: true,
+    action_type: option.value,
+    connector_label: '',
+    base_url: 'http://localhost:8790/actions',
+    auth_token: '',
+    command: option.defaultCommand,
+    target: option.defaultTarget,
+    parameters_text: JSON.stringify({ intensity: 'demo' }, null, 2),
+    timeout_seconds: 10,
+    retry_count: 1,
+  };
+};
+
+const hydrateActionConnector = (connector, fallbackIndex = 0) => ({
+  clientKey: connector.id
+    ? `settings-action-connector-${connector.id}`
+    : `settings-action-connector-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+  id: connector.id ?? null,
+  enabled: connector.enabled ?? true,
+  action_type: connector.action_type ?? 'robot_action',
+  connector_label: connector.connector_label ?? '',
+  base_url: connector.base_url ?? '',
+  auth_token: connector.auth_token ?? '',
+  command: connector.command ?? 'trigger',
+  target: connector.target ?? '',
+  parameters_text: JSON.stringify(connector.parameters || {}, null, 2),
+  timeout_seconds: connector.timeout_seconds ?? 10,
+  retry_count: connector.retry_count ?? 1,
+});
+
 const sanitizeSourcesForApi = (sources) =>
   sources.map((source, index) => ({
     id: source.id ?? undefined,
@@ -340,6 +380,27 @@ const sanitizeClaudeApiConnectorsForApi = (connectors) =>
     connector_label: connector.connector_label?.trim() || null,
     base_url: connector.base_url.trim(),
     auth_token: connector.auth_token.trim(),
+    timeout_seconds: Number(connector.timeout_seconds) || 10,
+    retry_count: Number(connector.retry_count) || 0,
+  }));
+
+const parseActionConnectorParameters = (connector) => {
+  const raw = connector.parameters_text?.trim();
+  if (!raw) return {};
+  return JSON.parse(raw);
+};
+
+const sanitizeActionConnectorsForApi = (connectors) =>
+  connectors.map((connector) => ({
+    id: connector.id ?? undefined,
+    enabled: connector.enabled,
+    action_type: connector.action_type,
+    connector_label: connector.connector_label?.trim() || null,
+    base_url: connector.base_url.trim(),
+    auth_token: connector.auth_token.trim(),
+    command: connector.command.trim(),
+    target: connector.target.trim(),
+    parameters: parseActionConnectorParameters(connector),
     timeout_seconds: Number(connector.timeout_seconds) || 10,
     retry_count: Number(connector.retry_count) || 0,
   }));
@@ -552,6 +613,7 @@ const SettingsPage = ({
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
   const [isSavingClaudeApiConnectors, setIsSavingClaudeApiConnectors] = useState(false);
+  const [isSavingActionConnectors, setIsSavingActionConnectors] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
   const [rowErrors, setRowErrors] = useState({});
@@ -559,11 +621,13 @@ const SettingsPage = ({
   const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
   const [appleMessageSubscriptionErrors, setAppleMessageSubscriptionErrors] = useState({});
   const [claudeApiConnectorErrors, setClaudeApiConnectorErrors] = useState({});
+  const [actionConnectorErrors, setActionConnectorErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
   const [busyClaudeApiTests, setBusyClaudeApiTests] = useState({});
+  const [busyActionConnectorTests, setBusyActionConnectorTests] = useState({});
   const [busyDemoTriggers, setBusyDemoTriggers] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
@@ -571,6 +635,7 @@ const SettingsPage = ({
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
   const [claudeApiConnectors, setClaudeApiConnectors] = useState([]);
+  const [actionConnectors, setActionConnectors] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
   const [triggerZoo, setTriggerZoo] = useState([]);
@@ -724,6 +789,22 @@ const SettingsPage = ({
     setClaudeApiConnectors((Array.isArray(data) ? data : []).map((connector, index) => hydrateClaudeApiConnector(connector, index)));
   };
 
+  const reloadActionConnectorState = async () => {
+    const response = await fetch(`${BaseURL}/settings/action-connectors`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load action connectors');
+    }
+    const data = await response.json();
+    setActionConnectors((Array.isArray(data) ? data : []).map((connector, index) => hydrateActionConnector(connector, index)));
+  };
+
   useEffect(() => {
     const loadSources = async () => {
       try {
@@ -764,6 +845,7 @@ const SettingsPage = ({
         await reloadTelegramSubscriptionState();
         await reloadAppleMessageSubscriptionState();
         await reloadClaudeApiConnectorState();
+        await reloadActionConnectorState();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
         });
@@ -1017,17 +1099,71 @@ const SettingsPage = ({
     );
   };
 
+  const addActionConnector = (actionType = 'robot_action') => {
+    setActionConnectors((previous) => [
+      ...previous,
+      createActionConnectorDraft(actionType),
+    ]);
+  };
+
+  const removeActionConnector = (clientKey) => {
+    setActionConnectors((previous) =>
+      previous.filter((connector) => connector.clientKey !== clientKey)
+    );
+    setActionConnectorErrors((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+  };
+
+  const setActionConnectorField = (clientKey, field, value) => {
+    setActionConnectors((previous) =>
+      previous.map((connector) => {
+        if (connector.clientKey !== clientKey) {
+          return connector;
+        }
+        if (field === 'action_type') {
+          const previousOption = ACTION_CONNECTOR_OPTIONS.find((candidate) => candidate.value === connector.action_type);
+          const nextOption = ACTION_CONNECTOR_OPTIONS.find((candidate) => candidate.value === value);
+          const shouldUseNextCommand = !connector.command.trim() || connector.command === previousOption?.defaultCommand;
+          const shouldUseNextTarget = !connector.target.trim() || connector.target === previousOption?.defaultTarget;
+          return {
+            ...connector,
+            action_type: value,
+            command: shouldUseNextCommand ? (nextOption?.defaultCommand || connector.command) : connector.command,
+            target: shouldUseNextTarget ? (nextOption?.defaultTarget || connector.target) : connector.target,
+          };
+        }
+        return {
+          ...connector,
+          [field]: value,
+        };
+      })
+    );
+  };
+
   const availableDeliveryTargets = [
     ...telegramSubscriptions.map((subscription, index) => ({
       id: subscription.id,
       label: subscription.subscription_label?.trim() || `Telegram ${index + 1}`,
       connectorKey: 'telegram',
+      group: 'Notification',
       enabled: subscription.enabled,
     })),
     ...claudeApiConnectors.map((connector, index) => ({
       id: connector.id,
       label: connector.connector_label?.trim() || `Third-party API ${index + 1}`,
       connectorKey: 'claude_api',
+      group: 'Notification',
+      enabled: connector.enabled,
+    })),
+    ...actionConnectors.map((connector, index) => ({
+      id: connector.id,
+      label: connector.connector_label?.trim()
+        || `${ACTION_CONNECTOR_OPTIONS.find((option) => option.value === connector.action_type)?.label || 'Action'} ${index + 1}`,
+      connectorKey: connector.action_type,
+      group: 'Action',
       enabled: connector.enabled,
     })),
   ].filter((target) => target.id);
@@ -1209,6 +1345,33 @@ const SettingsPage = ({
       }
     });
     setClaudeApiConnectorErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const validateActionConnectors = () => {
+    const nextErrors = {};
+    actionConnectors.forEach((connector) => {
+      if (!connector.base_url.trim()) {
+        nextErrors[connector.clientKey] = 'Action URL is required.';
+      } else if (!/^https?:\/\//i.test(connector.base_url.trim())) {
+        nextErrors[connector.clientKey] = 'Action URL must start with http:// or https://.';
+      } else if (!connector.command.trim()) {
+        nextErrors[connector.clientKey] = 'Command is required.';
+      } else if (connector.auth_token.trim() === MASKED_SECRET_VALUE && !connector.id) {
+        nextErrors[connector.clientKey] = 'Paste the new auth token value before saving.';
+      } else if (Number(connector.timeout_seconds) < 1 || Number(connector.timeout_seconds) > 120) {
+        nextErrors[connector.clientKey] = 'Timeout must be between 1 and 120 seconds.';
+      } else if (Number(connector.retry_count) < 0 || Number(connector.retry_count) > 5) {
+        nextErrors[connector.clientKey] = 'Retry count must be between 0 and 5.';
+      } else {
+        try {
+          parseActionConnectorParameters(connector);
+        } catch (error) {
+          nextErrors[connector.clientKey] = 'Parameters must be valid JSON.';
+        }
+      }
+    });
+    setActionConnectorErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
@@ -1765,6 +1928,87 @@ const SettingsPage = ({
     }
   };
 
+  const saveActionConnectors = async () => {
+    if (!validateActionConnectors()) {
+      setBanner({ kind: 'error', text: 'Fix the action connector rows first.' });
+      return;
+    }
+    setIsSavingActionConnectors(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/action-connectors`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeActionConnectorsForApi(actionConnectors)),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save action connectors');
+      }
+      setActionConnectors((data || []).map((connector, index) => hydrateActionConnector(connector, index)));
+      setActionConnectorErrors({});
+      setBanner({ kind: 'success', text: 'Action connectors saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingActionConnectors(false);
+    }
+  };
+
+  const sendActionConnectorTest = async (connector) => {
+    if (!connector.base_url.trim()) {
+      setActionConnectorErrors((previous) => ({
+        ...previous,
+        [connector.clientKey]: 'Action URL is required.',
+      }));
+      setBanner({ kind: 'error', text: 'Action URL is required for an action connector test payload.' });
+      return;
+    }
+    let parameters = {};
+    try {
+      parameters = parseActionConnectorParameters(connector);
+    } catch (error) {
+      setActionConnectorErrors((previous) => ({
+        ...previous,
+        [connector.clientKey]: 'Parameters must be valid JSON.',
+      }));
+      setBanner({ kind: 'error', text: 'Parameters must be valid JSON for an action connector test payload.' });
+      return;
+    }
+    setBusyActionConnectorTests((previous) => ({ ...previous, [connector.clientKey]: true }));
+    try {
+      const response = await fetch(`${BaseURL}/settings/action-connectors/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          id: connector.id ?? undefined,
+          enabled: connector.enabled,
+          action_type: connector.action_type,
+          connector_label: connector.connector_label?.trim() || null,
+          base_url: connector.base_url.trim(),
+          auth_token: connector.auth_token.trim(),
+          command: connector.command.trim(),
+          target: connector.target.trim(),
+          parameters,
+          timeout_seconds: Number(connector.timeout_seconds) || 10,
+          retry_count: Number(connector.retry_count) || 0,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send action connector test payload');
+      }
+      setBanner({ kind: 'success', text: data.detail || 'Action connector test payload sent.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyActionConnectorTests((previous) => ({ ...previous, [connector.clientKey]: false }));
+    }
+  };
+
   const fireDemoTrigger = async (rule) => {
     setBusyDemoTriggers((previous) => ({ ...previous, [rule.clientKey]: true }));
     try {
@@ -1838,6 +2082,9 @@ const SettingsPage = ({
   );
   const isClaudeApiConnectorConfigured = claudeApiConnectors.some(
     (connector) => connector.enabled && connector.base_url.trim(),
+  );
+  const isActionConnectorConfigured = actionConnectors.some(
+    (connector) => connector.enabled && connector.base_url.trim() && connector.command.trim(),
   );
   const stageLibraryEntries = MODEL_STAGE_OPTIONS.map((option) => {
     const stageOptions = modelOptionsByStage[option.stage] || [];
@@ -2642,7 +2889,7 @@ const SettingsPage = ({
                                               checked={(rule.delivery_target_ids || []).includes(target.id)}
                                               onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
                                             />
-                                            <span>{target.label}</span>
+                                            <span>{target.group ? `${target.group}: ${target.label}` : target.label}</span>
                                           </label>
                                         ))}
                                       </div>
@@ -2753,7 +3000,7 @@ const SettingsPage = ({
                                               checked={(rule.delivery_target_ids || []).includes(target.id)}
                                               onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
                                             />
-                                            <span>{target.label}</span>
+                                            <span>{target.group ? `${target.group}: ${target.label}` : target.label}</span>
                                           </label>
                                         ))}
                                       </div>
@@ -2838,7 +3085,7 @@ const SettingsPage = ({
                                               checked={(rule.delivery_target_ids || []).includes(target.id)}
                                               onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
                                             />
-                                            <span>{target.label}</span>
+                                            <span>{target.group ? `${target.group}: ${target.label}` : target.label}</span>
                                           </label>
                                         ))}
                                       </div>
@@ -3149,6 +3396,182 @@ const SettingsPage = ({
                       <div className="muted-text">GET/PUT {`${BaseURL}/settings/claude-api-connectors`}</div>
                       <div className="muted-text">POST {`${BaseURL}/settings/claude-api-connectors/test`}</div>
                       <div className="muted-text">Payload contract: Claude-style `messages` JSON plus `metadata` and `hearthlight` trigger context.</div>
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <div className="connector-header-line">
+                          <h3>Action Connectors</h3>
+                          <span className={`connector-status-badge ${isActionConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                            {isActionConnectorConfigured ? 'Configured' : 'Needs setup'}
+                          </span>
+                        </div>
+                        <p>Send trigger commands to Hue lights, music playback APIs, robot controllers, or localhost action demos.</p>
+                      </div>
+                      <div className="control-actions">
+                        {ACTION_CONNECTOR_OPTIONS.map((option) => (
+                          <button
+                            key={`add-${option.value}`}
+                            type="button"
+                            onClick={() => addActionConnector(option.value)}
+                            className="secondary-button"
+                          >
+                            Add {option.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {actionConnectors.length === 0 ? (
+                      <div className="empty-state">
+                        No action connectors saved yet.
+                      </div>
+                    ) : (
+                      <div className="source-list">
+                        {actionConnectors.map((connector, index) => (
+                          <div key={connector.clientKey} className="source-row">
+                            <div className="source-row-header">
+                              <strong>Action {index + 1}</strong>
+                              <button
+                                type="button"
+                                onClick={() => removeActionConnector(connector.clientKey)}
+                                className="ghost-button"
+                              >
+                                Remove
+                              </button>
+                            </div>
+
+                            <div className="model-binding-grid">
+                              <label>
+                                <span>Action Type</span>
+                                <select
+                                  value={connector.action_type}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'action_type', event.target.value)}
+                                >
+                                  {ACTION_CONNECTOR_OPTIONS.map((option) => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              </label>
+                              <label>
+                                <span>Label</span>
+                                <input
+                                  type="text"
+                                  value={connector.connector_label}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'connector_label', event.target.value)}
+                                  placeholder="Optional operator label"
+                                />
+                              </label>
+                              <label>
+                                <span>Action URL</span>
+                                <input
+                                  type="url"
+                                  value={connector.base_url}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'base_url', event.target.value)}
+                                  placeholder="http://localhost:8790/actions"
+                                />
+                              </label>
+                              <label>
+                                <span>Auth Token / Secret</span>
+                                <input
+                                  type="password"
+                                  value={connector.auth_token}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'auth_token', event.target.value)}
+                                  placeholder="Optional bearer token"
+                                />
+                              </label>
+                              <label>
+                                <span>Command</span>
+                                <input
+                                  type="text"
+                                  value={connector.command}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'command', event.target.value)}
+                                  placeholder="play_alert"
+                                />
+                              </label>
+                              <label>
+                                <span>Target</span>
+                                <input
+                                  type="text"
+                                  value={connector.target}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'target', event.target.value)}
+                                  placeholder="light, speaker, robot, or zone"
+                                />
+                              </label>
+                              <label>
+                                <span>Timeout Seconds</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="120"
+                                  value={connector.timeout_seconds}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'timeout_seconds', event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                <span>Retry Count</span>
+                                <input
+                                  type="number"
+                                  min="0"
+                                  max="5"
+                                  value={connector.retry_count}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'retry_count', event.target.value)}
+                                />
+                              </label>
+                              <label className="toggle-field">
+                                <span>Enabled</span>
+                                <input
+                                  type="checkbox"
+                                  checked={connector.enabled}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'enabled', event.target.checked)}
+                                />
+                              </label>
+                              <label>
+                                <span>Parameters JSON</span>
+                                <textarea
+                                  value={connector.parameters_text}
+                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'parameters_text', event.target.value)}
+                                  rows={4}
+                                  spellCheck="false"
+                                />
+                              </label>
+                            </div>
+
+                            <div className="control-actions">
+                              <button
+                                type="button"
+                                onClick={() => sendActionConnectorTest(connector)}
+                                className="ghost-button"
+                                disabled={Boolean(busyActionConnectorTests[connector.clientKey])}
+                              >
+                                {busyActionConnectorTests[connector.clientKey] ? 'Sending Test...' : 'Send Test Action'}
+                              </button>
+                            </div>
+
+                            {actionConnectorErrors[connector.clientKey] && (
+                              <div className="row-error">{actionConnectorErrors[connector.clientKey]}</div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={saveActionConnectors}
+                        className="secondary-button"
+                        disabled={isSavingActionConnectors}
+                      >
+                        {isSavingActionConnectors ? 'Saving...' : 'Save Action Connectors'}
+                      </button>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/action-connectors`}</div>
+                      <div className="muted-text">POST {`${BaseURL}/settings/action-connectors/test`}</div>
+                      <div className="muted-text">Payload contract: `hearthlight.action.v1` with action command, target, parameters, and trigger context.</div>
                     </div>
                   </div>
                   <div className="card">

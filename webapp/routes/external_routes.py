@@ -37,6 +37,8 @@ from ...shared.models.APIModels import (
     AppearanceSettings,
     AppleMessageTriggerSubscription,
     AppleMessageTriggerTestResponse,
+    ActionConnectorEndpoint,
+    ActionConnectorTestResponse,
     AlertRule,
     AlertRuleOptionCatalog,
     ConnectorEndpoint,
@@ -100,6 +102,11 @@ from ...shared.utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     send_test_apple_message_trigger_message,
 )
+from ...shared.utils.action_connectors import (
+    ensure_action_connector_tables,
+    send_test_action_connector_message,
+    validate_action_connector_config,
+)
 from ...shared.utils.claude_api_connector import (
     build_claude_trigger_payload,
     ensure_claude_api_connector_tables,
@@ -108,8 +115,10 @@ from ...shared.utils.claude_api_connector import (
 )
 from ...shared.utils.connector_delivery_log import list_connector_delivery_events
 from ...shared.utils.connector_endpoints import (
+    ACTION_CONNECTOR_KEYS,
     CONNECTOR_KEY_APPLE_MESSAGES,
     CONNECTOR_KEY_CLAUDE_API,
+    CONNECTOR_KEY_ROBOT_ACTION,
     CONNECTOR_KEY_TELEGRAM,
     ensure_connector_endpoint_tables,
     get_connector_delivery_capabilities,
@@ -2409,6 +2418,97 @@ def replace_claude_api_connectors(
     return build_claude_api_connector_responses(db)
 
 
+def get_action_connector_rows(db: Session):
+    ensure_action_connector_tables()
+    rows = []
+    for connector_key in sorted(ACTION_CONNECTOR_KEYS):
+        rows.extend(get_connector_endpoint_rows(db, connector_key))
+    return sorted(rows, key=lambda row: row.id or 0)
+
+
+def build_action_connector_responses(db: Session):
+    responses = []
+    for row in get_action_connector_rows(db):
+        config = get_connector_endpoint_config(row)
+        responses.append(
+            ActionConnectorEndpoint(
+                id=row.id,
+                enabled=row.enabled,
+                action_type=str(config.get("action_type") or row.connector_key or CONNECTOR_KEY_ROBOT_ACTION),
+                connector_label=row.label,
+                base_url=str(config.get("base_url", "") or ""),
+                auth_token=(
+                    MASKED_SECRET_VALUE
+                    if str(config.get("auth_token", "") or "").strip()
+                    else ""
+                ),
+                command=str(config.get("command", "trigger") or "trigger"),
+                target=str(config.get("target", "") or ""),
+                parameters=dict(config.get("parameters") or {}),
+                timeout_seconds=int(config.get("timeout_seconds", 10) or 10),
+                retry_count=int(config.get("retry_count", 1) or 1),
+                created_at=row.created_at.isoformat() if row.created_at is not None else None,
+                updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+            )
+        )
+    return responses
+
+
+def replace_action_connectors(
+    db: Session,
+    endpoints: list[ActionConnectorEndpoint],
+):
+    ensure_action_connector_tables()
+    existing_rows = get_action_connector_rows(db)
+    existing_by_id = {row.id: row for row in existing_rows}
+
+    seen_ids = set()
+    persisted_rows = []
+    for endpoint in endpoints:
+        row = existing_by_id.get(endpoint.id) if endpoint.id is not None else None
+        if row is None:
+            row = SQLModels.ConnectorEndpoint()
+            db.add(row)
+        existing_config = get_connector_endpoint_config(row)
+        config = merge_connector_endpoint_secret_config(
+            existing_config,
+            {
+                "action_type": endpoint.action_type,
+                "base_url": endpoint.base_url,
+                "auth_token": endpoint.auth_token,
+                "command": endpoint.command,
+                "target": endpoint.target,
+                "parameters": dict(endpoint.parameters or {}),
+                "timeout_seconds": endpoint.timeout_seconds,
+                "retry_count": endpoint.retry_count,
+            },
+        )
+        try:
+            config = validate_action_connector_config(config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        set_connector_endpoint_payload(
+            row,
+            connector_key=config["action_type"],
+            label=endpoint.connector_label,
+            enabled=endpoint.enabled,
+            config=config,
+            delivery_capabilities=["json", "action", "sync"],
+        )
+        persisted_rows.append(row)
+        if row.id is not None:
+            seen_ids.add(row.id)
+
+    db.flush()
+    seen_ids.update(row.id for row in persisted_rows if row.id is not None)
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_action_connector_responses(db)
+
+
 async def store_uploaded_source_video(
     file: UploadFile,
     db: Session,
@@ -3542,6 +3642,73 @@ def test_settings_claude_api_connector(endpoint: ClaudeApiConnectorEndpoint):
     return ClaudeApiConnectorTestResponse(
         status="sent",
         detail="Third-party API test payload sent.",
+    )
+
+
+@external_router.get(
+    "/settings/action-connectors",
+    response_model=list[ActionConnectorEndpoint],
+)
+def get_settings_action_connectors(db: Session = Depends(get_db)):
+    return build_action_connector_responses(db)
+
+
+@external_router.put(
+    "/settings/action-connectors",
+    response_model=list[ActionConnectorEndpoint],
+)
+def update_settings_action_connectors(
+    endpoints: list[ActionConnectorEndpoint],
+    db: Session = Depends(get_db),
+):
+    return replace_action_connectors(db, endpoints)
+
+
+@external_router.post(
+    "/settings/action-connectors/test",
+    response_model=ActionConnectorTestResponse,
+)
+def test_settings_action_connector(endpoint: ActionConnectorEndpoint):
+    config = {
+        "action_type": endpoint.action_type,
+        "base_url": endpoint.base_url,
+        "auth_token": endpoint.auth_token,
+        "command": endpoint.command,
+        "target": endpoint.target,
+        "parameters": dict(endpoint.parameters or {}),
+        "timeout_seconds": endpoint.timeout_seconds,
+        "retry_count": endpoint.retry_count,
+    }
+    if endpoint.id is not None:
+        with SessionLocal() as db:
+            existing_row = (
+                db.query(SQLModels.ConnectorEndpoint)
+                .filter(
+                    SQLModels.ConnectorEndpoint.id == endpoint.id,
+                    SQLModels.ConnectorEndpoint.connector_key.in_(list(ACTION_CONNECTOR_KEYS)),
+                    SQLModels.ConnectorEndpoint.is_deleted.is_(False),
+                )
+                .first()
+            )
+            if existing_row is not None:
+                config = merge_connector_endpoint_secret_config(
+                    get_connector_endpoint_config(existing_row),
+                    config,
+                )
+    row = SQLModels.ConnectorEndpoint(
+        connector_key=endpoint.action_type,
+        enabled=endpoint.enabled,
+        label=endpoint.connector_label,
+        config_json=json.dumps(config),
+        delivery_capabilities_json=json.dumps(["json", "action", "sync"]),
+    )
+    try:
+        send_test_action_connector_message(row)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ActionConnectorTestResponse(
+        status="sent",
+        detail="Action connector test payload sent.",
     )
 
 

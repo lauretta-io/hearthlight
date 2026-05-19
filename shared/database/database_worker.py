@@ -37,15 +37,23 @@ from ..utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     queue_apple_message_trigger_notifications,
 )
+from ..utils.action_connectors import (
+    build_action_trigger_payload,
+    ensure_action_connector_tables,
+    queue_action_trigger_notifications,
+    validate_action_connector_config,
+)
 from ..utils.claude_api_connector import (
     build_claude_trigger_payload,
     ensure_claude_api_connector_tables,
     queue_claude_api_trigger_notifications,
 )
 from ..utils.connector_endpoints import (
+    ACTION_CONNECTOR_KEYS,
     CONNECTOR_KEY_APPLE_MESSAGES,
     CONNECTOR_KEY_CLAUDE_API,
     CONNECTOR_KEY_TELEGRAM,
+    get_connector_endpoint_config,
     list_connector_endpoint_rows,
 )
 from ..utils.telegram_notifications import (
@@ -523,6 +531,19 @@ class DatabaseWorker:
             enabled_only=True,
         )
 
+    def get_enabled_action_connectors(self):
+        ensure_action_connector_tables()
+        rows = []
+        for connector_key in ACTION_CONNECTOR_KEYS:
+            rows.extend(
+                list_connector_endpoint_rows(
+                    self.db,
+                    connector_key=connector_key,
+                    enabled_only=True,
+                )
+            )
+        return sorted(rows, key=lambda row: row.id or 0)
+
     def filter_connector_rows_by_targets(self, rows, delivery_target_ids: list[int] | None):
         if delivery_target_ids is None:
             return rows
@@ -552,7 +573,16 @@ class DatabaseWorker:
             self.get_enabled_claude_api_connectors(),
             delivery_target_ids,
         )
-        if not telegram_subscriptions and not apple_message_subscriptions and not claude_api_connectors:
+        action_connectors = self.filter_connector_rows_by_targets(
+            self.get_enabled_action_connectors(),
+            delivery_target_ids,
+        )
+        if (
+            not telegram_subscriptions
+            and not apple_message_subscriptions
+            and not claude_api_connectors
+            and not action_connectors
+        ):
             return
         run_row = (
             self.db.query(SQLModels.Run)
@@ -592,6 +622,28 @@ class DatabaseWorker:
             occurred_at=occurred_at,
             metadata=metadata,
         )
+        action_payloads_by_id = {}
+        for row in action_connectors:
+            try:
+                config = validate_action_connector_config(get_connector_endpoint_config(row))
+            except ValueError as exc:
+                logger.warning("Skipping invalid action connector %s: %s", getattr(row, "id", None), exc)
+                continue
+            action_payloads_by_id[int(row.id)] = build_action_trigger_payload(
+                connector_key=str(getattr(row, "connector_key", config["action_type"])),
+                command=config["command"],
+                target=config["target"],
+                parameters=config["parameters"],
+                trigger_id=f"{incident_row.incident_type}-{incident_row.id}",
+                trigger_type=str(trigger_key or incident_row.incident_type),
+                display_title=display_title or str(incident_row.incident_type),
+                run_identifier=run_row.run_identifier if run_row is not None else None,
+                source_label=source_label,
+                camera_id=incident_row.camera_id,
+                alert_level=alert_level,
+                occurred_at=occurred_at,
+                metadata=metadata,
+            )
         if telegram_subscriptions:
             media = self.resolve_telegram_media(
                 run_identifier=run_row.run_identifier if run_row is not None else None,
@@ -612,6 +664,11 @@ class DatabaseWorker:
             queue_claude_api_trigger_notifications(
                 claude_api_connectors,
                 payload=claude_payload,
+            )
+        if action_payloads_by_id:
+            queue_action_trigger_notifications(
+                action_connectors,
+                payloads_by_id=action_payloads_by_id,
             )
 
     def resolve_telegram_media(
