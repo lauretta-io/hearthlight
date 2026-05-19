@@ -9,6 +9,8 @@ import sysconfig
 from dataclasses import dataclass
 from pathlib import Path
 
+from omegaconf import OmegaConf
+
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
 
 from .workspace import (
@@ -27,6 +29,36 @@ REQUIREMENT_PATHS = (
     Path("anomaly/requirements.txt"),
     Path("association/requirements.txt"),
 )
+
+MOUNTABLE_MODEL_STAGES = (
+    "detector",
+    "tracker",
+    "anomaly_stage_1",
+    "anomaly_stage_2",
+)
+
+WORKSPACE_REGISTRY_FILE_MAP = {
+    "detector": "detectors.yaml",
+    "tracker": "trackers.yaml",
+    "anomaly_stage_1": "anomaly_stage_1_models.yaml",
+    "anomaly_stage_2": "anomaly_stage_2_models.yaml",
+}
+
+THIRD_PARTY_MODEL_REQUIREMENTS = {
+    "chatgpt_api_stage_2": {
+        "OPENAI_API_KEY": "openai_api_key",
+        "OPENAI_MODEL_NAME": "openai_model_name",
+    },
+    "claude_api_stage_2": {
+        "ANTHROPIC_API_KEY": "anthropic_api_key",
+        "ANTHROPIC_MODEL_NAME": "anthropic_model_name",
+    },
+    "lauretta_api_stage_2": {
+        "LAURETTA_API_KEY": "lauretta_api_key",
+        "LAURETTA_API_BASE_URL": "lauretta_api_base_url",
+        "LAURETTA_MODEL_NAME": "lauretta_model_name",
+    },
+}
 
 
 @dataclass(frozen=True)
@@ -113,6 +145,16 @@ def _load_env_file(path: Path) -> list[str]:
     return path.read_text().splitlines()
 
 
+def _load_yaml(path: Path) -> dict[str, object]:
+    if not path.exists():
+        return {}
+    raw = OmegaConf.load(path)
+    if raw is None:
+        return {}
+    loaded = OmegaConf.to_container(raw, resolve=True)
+    return loaded if isinstance(loaded, dict) else {}
+
+
 def _load_env_assignments(path: Path) -> dict[str, str]:
     assignments: dict[str, str] = {}
     for line in _load_env_file(path):
@@ -172,6 +214,133 @@ def _prompt_text(question: str, *, default: str = "") -> str:
     if not raw:
         return default
     return raw
+
+
+def load_workspace_model_catalog(workspace: Path) -> dict[str, dict[str, dict[str, object]]]:
+    registries: dict[str, dict[str, dict[str, object]]] = {stage: {} for stage in MOUNTABLE_MODEL_STAGES}
+    registry_dir = workspace / "shared" / "configs" / "registries"
+    for stage, filename in WORKSPACE_REGISTRY_FILE_MAP.items():
+        raw = _load_yaml(registry_dir / filename)
+        normalized: dict[str, dict[str, object]] = {}
+        for model_key, registration in dict(raw or {}).items():
+            normalized[str(model_key)] = dict(registration or {})
+        registries[stage] = normalized
+    return registries
+
+
+def load_workspace_default_model_bindings(workspace: Path) -> dict[str, str]:
+    raw = _load_yaml(workspace / "shared" / "configs" / "model_bindings.yaml")
+    defaults = dict(raw.get("defaults") or {})
+    resolved: dict[str, str] = {}
+    for stage in MOUNTABLE_MODEL_STAGES:
+        value = defaults.get(stage)
+        if value is None:
+            continue
+        model_key = str(value).strip()
+        if model_key:
+            resolved[stage] = model_key
+    return resolved
+
+
+def persist_workspace_mounted_models(workspace: Path, mounted_models: dict[str, list[str]]) -> Path:
+    mounted_path = workspace / "shared" / "configs" / "mounted_models.yaml"
+    mounted_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "mounted": {
+            stage: list(mounted_models.get(stage) or [])
+            for stage in MOUNTABLE_MODEL_STAGES
+        }
+    }
+    OmegaConf.save(config=OmegaConf.create(payload), f=str(mounted_path))
+    return mounted_path
+
+
+def _resolve_mount_model_spec(
+    spec: str,
+    catalog: dict[str, dict[str, dict[str, object]]],
+) -> tuple[str, str]:
+    raw_spec = str(spec or "").strip()
+    if not raw_spec:
+        raise RuntimeError("mount model spec cannot be blank")
+    if ":" in raw_spec:
+        stage, model_key = raw_spec.split(":", 1)
+        stage = stage.strip()
+        model_key = model_key.strip()
+        if stage not in MOUNTABLE_MODEL_STAGES:
+            raise RuntimeError(f"unknown mountable model stage {stage}")
+        if model_key not in catalog.get(stage, {}):
+            raise RuntimeError(f"unknown {stage} model {model_key}")
+        return stage, model_key
+
+    matches: list[tuple[str, str]] = []
+    for stage in MOUNTABLE_MODEL_STAGES:
+        if raw_spec in catalog.get(stage, {}):
+            matches.append((stage, raw_spec))
+    if not matches:
+        raise RuntimeError(f"unknown model key {raw_spec}")
+    if len(matches) > 1:
+        stages = ", ".join(stage for stage, _ in matches)
+        raise RuntimeError(f"ambiguous model key {raw_spec}; use STAGE:MODEL_KEY (matches: {stages})")
+    return matches[0]
+
+
+def resolve_selected_mounted_models(workspace: Path, args) -> dict[str, list[str]] | None:
+    mount_specs = [str(spec).strip() for spec in list(getattr(args, "mount_model", []) or []) if str(spec).strip()]
+    mount_defaults = bool(getattr(args, "mount_default_models", False))
+    if not mount_defaults and not mount_specs:
+        return None
+
+    catalog = load_workspace_model_catalog(workspace)
+    selected: dict[str, list[str]] = {stage: [] for stage in MOUNTABLE_MODEL_STAGES}
+
+    if mount_defaults:
+        defaults = load_workspace_default_model_bindings(workspace)
+        for stage in MOUNTABLE_MODEL_STAGES:
+            model_key = defaults.get(stage)
+            if model_key and model_key in catalog.get(stage, {}):
+                selected[stage].append(model_key)
+
+    for spec in mount_specs:
+        stage, model_key = _resolve_mount_model_spec(spec, catalog)
+        if model_key not in selected[stage]:
+            selected[stage].append(model_key)
+    return selected
+
+
+def configure_selected_third_party_model_env(workspace: Path, mounted_models: dict[str, list[str]] | None, args) -> dict[str, str]:
+    if not mounted_models:
+        return {}
+    selected_keys = {
+        model_key
+        for model_keys in mounted_models.values()
+        for model_key in model_keys
+    }
+    if not selected_keys:
+        return {}
+
+    env_path = workspace / ".env"
+    existing_assignments = _load_env_assignments(env_path)
+    updates: dict[str, str] = {}
+
+    for model_key in sorted(selected_keys):
+        requirements = THIRD_PARTY_MODEL_REQUIREMENTS.get(model_key)
+        if not requirements:
+            continue
+        for env_name, arg_attr in requirements.items():
+            value = str(getattr(args, arg_attr, "") or "").strip()
+            if not value:
+                value = str(os.environ.get(env_name, "") or "").strip()
+            if not value:
+                value = str(existing_assignments.get(env_name, "") or "").strip()
+            if not value and not getattr(args, "yes", False):
+                prompt_label = env_name.replace("_", " ").title()
+                value = _prompt_text(f"   {prompt_label} for {model_key}")
+            if not value:
+                raise RuntimeError(
+                    f"{model_key} requires {env_name}. Provide it with --{arg_attr.replace('_', '-')} or set {env_name} before onboarding."
+                )
+            updates[env_name] = value
+    return updates
 
 
 def _python_headers_available() -> bool:
@@ -621,6 +790,15 @@ def run_onboarding(args, root_dir: Path) -> int:
     if not args.skip_notification_setup:
         configure_notification_env_interactively(workspace, assume_yes=args.yes)
         print("   Telegram and Apple Messages onboarding defaults are ready in .env")
+    selected_mounted_models = resolve_selected_mounted_models(workspace, args)
+    third_party_env_updates = configure_selected_third_party_model_env(
+        workspace,
+        selected_mounted_models,
+        args,
+    )
+    if third_party_env_updates:
+        _write_env_assignments(env_path, third_party_env_updates)
+        print("   Added third-party model credentials to .env")
     print("")
 
     active_config_path = workspace / "shared" / "configs" / "config.yaml"
@@ -640,6 +818,22 @@ def run_onboarding(args, root_dir: Path) -> int:
         if _prompt_yes_no("   Install Python requirements now?", default=True, assume_yes=args.yes):
             install_python_requirements(workspace, python_executable=str(python_path))
             print("   Python requirements installed.")
+        print("")
+
+    if selected_mounted_models is not None:
+        print("6b. Model inventory")
+        mounted_path = persist_workspace_mounted_models(workspace, selected_mounted_models)
+        mounted_summary = ", ".join(
+            f"{stage}: {', '.join(model_keys)}"
+            for stage, model_keys in selected_mounted_models.items()
+            if model_keys
+        )
+        if mounted_summary:
+            print(f"   Wrote mounted model inventory to {mounted_path}")
+            print(f"   Selected models: {mounted_summary}")
+        else:
+            print(f"   Wrote an empty mounted model inventory to {mounted_path}")
+            print("   No models were pre-mounted during onboarding.")
         print("")
 
     if not args.skip_cuda_detection:

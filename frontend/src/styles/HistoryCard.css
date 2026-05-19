@@ -167,14 +167,19 @@
 
 .resolve-button {
   margin-top: 12px;
-  padding: 8px 16px;
+  min-height: 44px;
+  padding: 10px 16px;
   background-color: color-mix(in srgb, var(--color-success-text) 84%, var(--color-primary) 16%);
   color: var(--color-bg-card-strong);
   border: none;
-  border-radius: 4px;
+  border-radius: 9px;
   cursor: pointer;
   font-weight: 500;
   transition: background-color 0.2s, transform 0.1s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
 }
 
 .resolve-button:hover {

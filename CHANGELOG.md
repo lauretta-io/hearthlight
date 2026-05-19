@@ -17,6 +17,7 @@
 - moved anomaly `1-10` trigger cutoffs out of Stage 2 prompt config and into anomaly detection rules
 - split Rules into separate detection and anomaly sections with multi-camera targeting
 - added processing-rate guidance in the model library and recent measured cadence in Model Logs
+- added third-party Stage 2 anomaly model entries for Chatgpt, Claude, and Lauretta-hosted OpenAI-compatible APIs, with env-based availability checks and provider model-name overrides
 - moved theme selection into `Settings > Appearance` and persisted it as a workspace-wide backend setting with cached startup restore
 - unified models, triggers, connectors, and rule-set templates under a restart-loaded plugin manifest system backed by persisted plugin bundle/component catalogs
 - removed stale frontend pages and assets from the retired Control, Entity, and POI flows

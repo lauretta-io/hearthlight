@@ -80,6 +80,7 @@ try:
         build_model_display_name,
         build_default_bindings,
         build_runtime_binding_block,
+        is_registration_available,
         load_registry_bundle,
         resolve_tracker_name,
         validate_source_bindings,
@@ -94,6 +95,7 @@ except ModuleNotFoundError:
     build_model_display_name = None
     build_default_bindings = None
     build_runtime_binding_block = None
+    is_registration_available = None
     load_registry_bundle = None
     resolve_tracker_name = None
     validate_source_bindings = None
@@ -941,6 +943,58 @@ class ModelRegistryTests(unittest.TestCase):
             ),
             "SmolVLM Stage 2 (MLX)",
         )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "chatgpt_api_stage_2",
+                {"artifact_ref": "openai-chatgpt-api", "adapter": "openai_compatible_stage_2", "runtime": {"provider": "openai"}},
+            ),
+            "Chatgpt",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "claude_api_stage_2",
+                {"artifact_ref": "anthropic-claude-api", "adapter": "claude_stage_2", "runtime": {"provider": "anthropic"}},
+            ),
+            "Claude",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "lauretta_api_stage_2",
+                {"artifact_ref": "lauretta-api", "adapter": "openai_compatible_stage_2", "runtime": {"provider": "lauretta"}},
+            ),
+            "Lauretta API",
+        )
+
+    @unittest.skipIf(is_registration_available is None, "omegaconf is not installed")
+    def test_is_registration_available_checks_required_env_vars(self):
+        with patch.dict(os.environ, {}, clear=False):
+            available, detail = is_registration_available(
+                {"healthcheck": {"required_env_vars": ["OPENAI_API_KEY", "LAURETTA_API_BASE_URL"]}}
+            )
+        self.assertFalse(available)
+        self.assertIn("OPENAI_API_KEY", detail)
+        self.assertIn("LAURETTA_API_BASE_URL", detail)
+
+        with patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "LAURETTA_API_BASE_URL": "https://api.lauretta.test/v1"},
+            clear=False,
+        ):
+            available, detail = is_registration_available(
+                {"healthcheck": {"required_env_vars": ["OPENAI_API_KEY", "LAURETTA_API_BASE_URL"]}}
+            )
+        self.assertTrue(available)
+        self.assertIsNone(detail)
+
+    @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
+    def test_registry_bundle_third_party_stage_two_defaults_use_expected_model_names(self):
+        bundle = load_registry_bundle()
+        stage_two = bundle["models"]["anomaly_stage_2"]
+        self.assertEqual(stage_two["chatgpt_api_stage_2"]["runtime"]["model_name"], "gpt-5.4-mini")
+        self.assertEqual(stage_two["claude_api_stage_2"]["runtime"]["model_name"], "claude-sonnet-4-6")
 
     @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")
     def test_build_model_option_catalog_enriches_detector_classes_from_model_zoo_artifacts(self):

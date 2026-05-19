@@ -102,6 +102,7 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
 - source-level AI overrides hide automatically when `Enable Video AI` is turned off
 - the Rules page is now split into `Detection Rules` and `Anomaly Detection Rules`, with multi-camera targeting and per-rule anomaly cutoff values
 - the model library now shows qualitative processing-rate guidance, and Model Logs surfaces recent measured cadence by model stage
+- anomaly detection Stage 2 now supports third-party API-backed model entries for `Chatgpt`, `Claude`, and a generic `Lauretta API` endpoint when their credentials are configured
 - theme selection now lives in `Settings > Appearance`, with a workspace-wide backend setting plus browser startup cache
 - the frontend now runs on Vite instead of `react-scripts`
 - anomaly Stage 1 and anomaly detection defaults now have local CPU/CUDA/MLX-safe registry fallbacks
@@ -114,6 +115,12 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
   inference
 - A populated runtime config at `shared/configs/config.yaml`
 - `.env` at the repository root
+
+Optional remote anomaly-model credentials:
+
+- `OPENAI_API_KEY` and optional `OPENAI_MODEL_NAME` for the `Chatgpt` model option
+- `ANTHROPIC_API_KEY` and optional `ANTHROPIC_MODEL_NAME` for the `Claude` model option
+- `LAURETTA_API_KEY` and `LAURETTA_API_BASE_URL` for the `Lauretta API` model option
 
 Minimum practical local tooling:
 
@@ -167,6 +174,8 @@ The onboarding flow can:
 - check platform dependencies such as `libpq-dev` and `python3-dev`
 - copy `shared/configs/example_config.yaml` to `shared/configs/config.yaml`
 - install service `requirements.txt` files
+- optionally seed the central mounted model inventory with `--mount-default-models` or repeated `--mount-model` flags
+- require API credentials during CLI onboarding when mounting `chatgpt_api_stage_2`, `claude_api_stage_2`, or `lauretta_api_stage_2`, and allow provider-specific model name strings
 - detect CUDA and write CPU/GPU launcher defaults
 - write `.env` notification defaults for Telegram and Apple Messages
 - seed Telegram and Apple Messages trigger subscriptions from `.env` after `reset-db`

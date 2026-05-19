@@ -453,6 +453,12 @@ test('renders connectors tab and saves both connector subscription types', async
   expect(screen.getByDisplayValue('+15551234567')).toBeTruthy();
 
   await act(async () => {
+    fireEvent.change(screen.getByPlaceholderText('123456:ABC...'), {
+      target: { value: '123456:replacement-token' },
+    });
+  });
+
+  await act(async () => {
     fireEvent.click(screen.getByText('Save Telegram Subscriptions'));
   });
 

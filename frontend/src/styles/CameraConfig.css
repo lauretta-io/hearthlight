@@ -388,11 +388,19 @@
 .ghost-button {
   border: none;
   border-radius: 9px;
-  padding: 12px 16px;
+  min-height: 44px;
+  padding: 10px 16px;
   font: inherit;
   cursor: pointer;
   transition: transform 0.15s ease, box-shadow 0.15s ease;
   min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  line-height: 1.2;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .start-button:hover,
@@ -422,7 +430,7 @@
 .ghost-button {
   background: transparent;
   color: var(--color-danger-text);
-  padding: 8px 10px;
+  padding: 10px 14px;
 }
 
 .banner,
@@ -591,6 +599,7 @@
 
 .control-actions button {
   flex: 1 1 11rem;
+  align-self: stretch;
 }
 
 .connectors-grid {

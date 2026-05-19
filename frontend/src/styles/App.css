@@ -41,13 +41,52 @@ nav {
 
 .brand-block {
   display: flex;
-  flex-direction: column;
-  gap: 0.12rem;
+  align-items: center;
+  gap: 0.8rem;
   padding: 0.55rem 0.9rem;
   border-radius: var(--surface-radius-md);
   background: color-mix(in srgb, var(--color-bg-card-strong) 86%, var(--color-primary) 14%);
   border: var(--surface-border-width) solid color-mix(in srgb, var(--color-border) 75%, var(--color-primary) 25%);
   box-shadow: 0 10px 28px var(--color-shadow-soft);
+}
+
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+}
+
+.brand-logo-shell {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 16px;
+  background: var(--brand-logo-backdrop);
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--brand-logo-shadow) 50%, transparent);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  object-fit: contain;
+  filter: var(--brand-logo-filter);
+  opacity: var(--brand-logo-opacity);
+  position: relative;
+  z-index: 1;
+}
+
+.brand-logo-tint {
+  position: absolute;
+  inset: 0;
+  background: var(--brand-logo-overlay);
+  mix-blend-mode: var(--brand-logo-overlay-mode);
+  opacity: var(--brand-logo-overlay-opacity);
+  z-index: 0;
 }
 
 .brand-mark {

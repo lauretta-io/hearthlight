@@ -46,6 +46,7 @@ describe('App routing shell', () => {
       'API Docs',
     ]);
     expect(screen.getByText('Hearthlight')).toBeTruthy();
+    expect(screen.getByAltText('Hearthlight logo')).toBeTruthy();
     expect(screen.queryByLabelText('Theme')).toBeNull();
   });
 

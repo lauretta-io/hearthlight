@@ -1,0 +1,101 @@
+- generic [ref=e3]:
+  - navigation [ref=e4]:
+    - generic [ref=e5]:
+      - img "Hearthlight logo" [ref=e8]
+      - generic [ref=e9]:
+        - generic [ref=e10]: Hearthlight
+        - generic [ref=e11]: Fidelity Light
+    - link "Triggers" [ref=e12] [cursor=pointer]:
+      - /url: /incidents
+    - link "Rules" [ref=e13] [cursor=pointer]:
+      - /url: /rules
+    - link "Model Logs" [ref=e14] [cursor=pointer]:
+      - /url: /model-logs
+    - link "Connectors" [ref=e15] [cursor=pointer]:
+      - /url: /connectors
+    - link "Live" [ref=e16] [cursor=pointer]:
+      - /url: /live
+    - link "Settings" [ref=e17] [cursor=pointer]:
+      - /url: /settings
+    - link "API Docs" [ref=e18] [cursor=pointer]:
+      - /url: /api-docs
+  - main [ref=e19]:
+    - generic [ref=e20]:
+      - generic [ref=e21]:
+        - generic [ref=e22]:
+          - generic [ref=e23]: "System: idle"
+          - generic [ref=e24]: No active run
+        - generic [ref=e25]:
+          - generic [ref=e26]: CPU 2.9%
+          - generic [ref=e27]: Memory 31.9%
+          - generic [ref=e28]: Admission blocked
+      - generic [ref=e129]:
+        - generic [ref=e130]: "INGESTOR: idle"
+        - generic [ref=e131]: "ANOMALY: idle"
+      - generic [ref=e132]:
+        - generic [ref=e133]: "database: ok"
+        - generic [ref=e134]: "rabbitmq: ok"
+        - generic [ref=e135]: "ffmpeg: ok"
+      - generic [ref=e136]: local worker process exited with code 1
+      - generic [ref=e137]: "Ingestor is idle because the pipeline has not started. Current blocker: local worker process exited with code 1"
+    - generic [ref=e30]:
+      - generic [ref=e32]:
+        - heading "Settings" [level=2] [ref=e33]
+        - paragraph [ref=e34]: Configure sources, run control, monitoring, and repository initialization from one workspace.
+      - tablist "Settings sections" [ref=e35]:
+        - tab "Sources" [ref=e36] [cursor=pointer]
+        - tab "Model Library" [ref=e37] [cursor=pointer]
+        - tab "Appearance" [selected] [ref=e38] [cursor=pointer]
+        - tab "Monitoring" [ref=e39] [cursor=pointer]
+        - tab "Initialization" [ref=e40] [cursor=pointer]
+      - generic [ref=e42]:
+        - generic [ref=e44]:
+          - generic [ref=e46]:
+            - heading "Workspace Theme" [level=3] [ref=e47]
+            - paragraph [ref=e48]: Choose the shared Hearthlight theme for this workspace. The selected theme is persisted in backend settings and restored after app or server restarts.
+          - generic [ref=e143]: Theme updated to Fidelity Light.
+          - generic [ref=e49]:
+            - generic [ref=e50]:
+              - strong [ref=e52]: Light Mode
+              - button "Fidelity Light Selected Professional teal light mode with the Maple and Oak primary palette." [ref=e141] [cursor=pointer]:
+                - generic [ref=e55]:
+                  - strong [ref=e56]: Fidelity Light
+                  - generic [ref=e57]: Selected
+                - paragraph [ref=e63]: Professional teal light mode with the Maple and Oak primary palette.
+            - generic [ref=e64]:
+              - strong [ref=e66]: Dark Mode
+              - button "Fidelity Dark Available Dark professional mode tuned for long monitoring sessions." [ref=e142] [cursor=pointer]:
+                - generic [ref=e69]:
+                  - strong [ref=e70]: Fidelity Dark
+                  - generic [ref=e71]: Available
+                - paragraph [ref=e77]: Dark professional mode tuned for long monitoring sessions.
+            - generic [ref=e78]:
+              - strong [ref=e80]: Accessible Mode
+              - button "Accessible Available High-contrast mode with stronger borders, larger contrast, and clearer focus states." [ref=e82] [cursor=pointer]:
+                - generic [ref=e83]:
+                  - strong [ref=e84]: Accessible
+                  - generic [ref=e85]: Available
+                - paragraph [ref=e91]: High-contrast mode with stronger borders, larger contrast, and clearer focus states.
+            - generic [ref=e92]:
+              - strong [ref=e94]: Core Color Themes
+              - generic [ref=e95]:
+                - button "Maple & Oak Available Warm grounded mode using the supplied maple, oak, and slate tones." [ref=e96] [cursor=pointer]:
+                  - generic [ref=e97]:
+                    - strong [ref=e98]: Maple & Oak
+                    - generic [ref=e99]: Available
+                  - paragraph [ref=e105]: Warm grounded mode using the supplied maple, oak, and slate tones.
+                - button "Industrial Slate Available Cool neutral operations mode with steel, graphite, and teal accents." [ref=e106] [cursor=pointer]:
+                  - generic [ref=e107]:
+                    - strong [ref=e108]: Industrial Slate
+                    - generic [ref=e109]: Available
+                  - paragraph [ref=e115]: Cool neutral operations mode with steel, graphite, and teal accents.
+          - button "Save Appearance" [ref=e117] [cursor=pointer]
+        - generic [ref=e119]:
+          - generic [ref=e121]:
+            - heading "Theme Behavior" [level=3] [ref=e122]
+            - paragraph [ref=e123]: Theme changes are shared across the workspace and applied consistently across the operator shell.
+          - generic [ref=e124]:
+            - strong [ref=e125]: GET/PUT /api/settings/appearance
+            - generic [ref=e126]: The backend stores the workspace theme as the source of truth.
+            - generic [ref=e127]: The browser keeps a local startup cache only to reduce theme flicker before the settings API responds.
+            - generic [ref=e128]: Accessible mode is intended for higher-contrast operation and clearer focus visibility.
