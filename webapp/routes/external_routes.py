@@ -3123,6 +3123,7 @@ async def stop(db: Session = Depends(get_db)):
 
 @external_router.get("/status", response_model=Status)
 def get_status(db: Session = Depends(get_db)):
+    global status
     current_status = refresh_runtime_status()
     snapshot = get_current_resource_snapshot(db)
     snapshot_module_status = merge_hybrid_operator_status(
@@ -3130,6 +3131,20 @@ def get_status(db: Session = Depends(get_db)):
         snapshot.get("dependency_status"),
         get_local_worker_health() if is_hybrid_local_cpu_runtime() else None,
     )
+    effective_statuses = [
+        normalize_module_status(
+            snapshot_module_status.get(
+                module_name,
+                module_status.get(module_name, DataModels.Status.IDLE),
+            )
+        )
+        for module_name in get_expected_module_names()
+    ]
+    reconciled_status, _ = derive_system_status(current_status, effective_statuses)
+    if reconciled_status != current_status:
+        with state_lock:
+            status = reconciled_status
+        current_status = reconciled_status
     effective_frame_id = frame_id
     if is_hybrid_local_cpu_runtime():
         db_frame_id = get_latest_run_frame_id(db)

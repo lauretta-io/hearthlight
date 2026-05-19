@@ -245,17 +245,24 @@ class FeatureExtractorThread(Thread):
 
             frame_id = frames.frame_id
             frame_list = frames.get_frames(self.task_cams)
+            if not frame_list:
+                continue
 
             timer.mark()
             dets = []
             crops = []
             for frame in frame_list:
-                assert frame.tracker_inputs is not None
+                if frame.tracker_inputs is None:
+                    # Detector output can be temporarily unavailable for a frame;
+                    # skip it instead of crashing the worker thread.
+                    continue
                 cam_crops = []
                 dets.append(frame.tracker_inputs)
                 for det in frame.tracker_inputs:
                     cam_crops.append(crop_image(det[0:4], frame.array))
                 crops.append(cam_crops)
+            if not dets:
+                continue
             timer.time("crop")
 
             features = self.feature_extractor.extract_frames(crops)
