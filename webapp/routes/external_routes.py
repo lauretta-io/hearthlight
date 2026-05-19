@@ -37,12 +37,16 @@ from ...shared.models.APIModels import (
     AppearanceSettings,
     AppleMessageTriggerSubscription,
     AppleMessageTriggerTestResponse,
+    ActionConnectorEndpoint,
+    ActionConnectorTestResponse,
     AlertRule,
     AlertRuleOptionCatalog,
     ConnectorEndpoint,
     ConnectorZooEntry,
     ClaudeApiConnectorEndpoint,
     ClaudeApiConnectorTestResponse,
+    ClaudeAnomalyModelSettings,
+    ClaudeAnomalyModelTestResponse,
     AlgorithmEntityFeedItem,
     AlgorithmFeed,
     AssetReference as APIAssetReference,
@@ -100,16 +104,33 @@ from ...shared.utils.apple_messages_notifications import (
     ensure_apple_message_subscription_tables,
     send_test_apple_message_trigger_message,
 )
+from ...shared.utils.action_connectors import (
+    ensure_action_connector_tables,
+    send_test_action_connector_message,
+    validate_action_connector_config,
+)
 from ...shared.utils.claude_api_connector import (
     build_claude_trigger_payload,
     ensure_claude_api_connector_tables,
     send_claude_api_payload,
     validate_claude_api_config,
 )
+from ...shared.utils.claude_anomaly_model import (
+    SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+    build_claude_anomaly_request,
+    default_claude_anomaly_model_config,
+    merge_claude_anomaly_model_secret_config,
+    parse_claude_anomaly_response,
+    redact_claude_anomaly_model_config,
+    send_claude_anomaly_request,
+    validate_claude_anomaly_model_config,
+)
 from ...shared.utils.connector_delivery_log import list_connector_delivery_events
 from ...shared.utils.connector_endpoints import (
+    ACTION_CONNECTOR_KEYS,
     CONNECTOR_KEY_APPLE_MESSAGES,
     CONNECTOR_KEY_CLAUDE_API,
+    CONNECTOR_KEY_ROBOT_ACTION,
     CONNECTOR_KEY_TELEGRAM,
     ensure_connector_endpoint_tables,
     get_connector_delivery_capabilities,
@@ -246,6 +267,13 @@ def get_expected_module_names() -> list[str]:
     ]
 
 
+def get_auxiliary_status_module_names() -> set[str]:
+    return {
+        ModuleNames.REID,
+        ModuleNames.ASSOCIATION,
+    }
+
+
 def build_default_appearance_settings() -> AppearanceSettings:
     return AppearanceSettings(theme_key="fidelity-light")
 
@@ -273,6 +301,43 @@ def write_appearance_settings(db: Session, payload: AppearanceSettings) -> Appea
     )
     db.commit()
     return read_appearance_settings(db)
+
+
+def read_claude_anomaly_model_settings(db: Session) -> ClaudeAnomalyModelSettings:
+    payload = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+        default=default_claude_anomaly_model_config(),
+    )
+    if not isinstance(payload, dict):
+        payload = default_claude_anomaly_model_config()
+    try:
+        redacted = redact_claude_anomaly_model_config(payload)
+    except Exception:
+        redacted = redact_claude_anomaly_model_config(default_claude_anomaly_model_config())
+    return ClaudeAnomalyModelSettings.model_validate(redacted)
+
+
+def write_claude_anomaly_model_settings(
+    db: Session,
+    payload: ClaudeAnomalyModelSettings,
+) -> ClaudeAnomalyModelSettings:
+    existing = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+        default=default_claude_anomaly_model_config(),
+    )
+    merged = merge_claude_anomaly_model_secret_config(
+        existing if isinstance(existing, dict) else {},
+        payload.model_dump(),
+    )
+    try:
+        normalized = validate_claude_anomaly_model_config(merged)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    set_workspace_setting_value(db, SETTING_KEY_CLAUDE_ANOMALY_MODEL, normalized)
+    db.commit()
+    return read_claude_anomaly_model_settings(db)
 
 
 def build_host_upload_path(upload_path: str | None) -> str | None:
@@ -2000,7 +2065,7 @@ def replace_alert_rules(db: Session, rules: list[AlertRule]):
         row.target_key = rule.target_key
         row.min_confidence = rule.min_confidence
         row.alert_level = rule.alert_level
-        row.delivery_target_ids_json = json.dumps([])
+        row.delivery_target_ids_json = None
         row.metadata_json = json.dumps({})
         row.is_deleted = False
         row.deleted_at = None
@@ -2409,6 +2474,97 @@ def replace_claude_api_connectors(
     return build_claude_api_connector_responses(db)
 
 
+def get_action_connector_rows(db: Session):
+    ensure_action_connector_tables()
+    rows = []
+    for connector_key in sorted(ACTION_CONNECTOR_KEYS):
+        rows.extend(get_connector_endpoint_rows(db, connector_key))
+    return sorted(rows, key=lambda row: row.id or 0)
+
+
+def build_action_connector_responses(db: Session):
+    responses = []
+    for row in get_action_connector_rows(db):
+        config = get_connector_endpoint_config(row)
+        responses.append(
+            ActionConnectorEndpoint(
+                id=row.id,
+                enabled=row.enabled,
+                action_type=str(config.get("action_type") or row.connector_key or CONNECTOR_KEY_ROBOT_ACTION),
+                connector_label=row.label,
+                base_url=str(config.get("base_url", "") or ""),
+                auth_token=(
+                    MASKED_SECRET_VALUE
+                    if str(config.get("auth_token", "") or "").strip()
+                    else ""
+                ),
+                command=str(config.get("command", "trigger") or "trigger"),
+                target=str(config.get("target", "") or ""),
+                parameters=dict(config.get("parameters") or {}),
+                timeout_seconds=int(config.get("timeout_seconds", 10) or 10),
+                retry_count=int(config.get("retry_count", 1) or 1),
+                created_at=row.created_at.isoformat() if row.created_at is not None else None,
+                updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+            )
+        )
+    return responses
+
+
+def replace_action_connectors(
+    db: Session,
+    endpoints: list[ActionConnectorEndpoint],
+):
+    ensure_action_connector_tables()
+    existing_rows = get_action_connector_rows(db)
+    existing_by_id = {row.id: row for row in existing_rows}
+
+    seen_ids = set()
+    persisted_rows = []
+    for endpoint in endpoints:
+        row = existing_by_id.get(endpoint.id) if endpoint.id is not None else None
+        if row is None:
+            row = SQLModels.ConnectorEndpoint()
+            db.add(row)
+        existing_config = get_connector_endpoint_config(row)
+        config = merge_connector_endpoint_secret_config(
+            existing_config,
+            {
+                "action_type": endpoint.action_type,
+                "base_url": endpoint.base_url,
+                "auth_token": endpoint.auth_token,
+                "command": endpoint.command,
+                "target": endpoint.target,
+                "parameters": dict(endpoint.parameters or {}),
+                "timeout_seconds": endpoint.timeout_seconds,
+                "retry_count": endpoint.retry_count,
+            },
+        )
+        try:
+            config = validate_action_connector_config(config)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        set_connector_endpoint_payload(
+            row,
+            connector_key=config["action_type"],
+            label=endpoint.connector_label,
+            enabled=endpoint.enabled,
+            config=config,
+            delivery_capabilities=["json", "action", "sync"],
+        )
+        persisted_rows.append(row)
+        if row.id is not None:
+            seen_ids.add(row.id)
+
+    db.flush()
+    seen_ids.update(row.id for row in persisted_rows if row.id is not None)
+    for row in existing_rows:
+        if row.id not in seen_ids:
+            row.is_deleted = True
+            row.deleted_at = datetime.utcnow()
+    db.commit()
+    return build_action_connector_responses(db)
+
+
 async def store_uploaded_source_video(
     file: UploadFile,
     db: Session,
@@ -2616,7 +2772,7 @@ def process_messages():
                     )
         if message.module in module_status:
             module_status[message.module] = message.status
-        else:
+        elif message.module not in get_auxiliary_status_module_names():
             logger.warning("Received status update for unknown module %s", message.module)
 
 
@@ -3363,6 +3519,74 @@ def update_settings_appearance(
     return write_appearance_settings(db, payload)
 
 
+@external_router.get(
+    "/settings/claude-anomaly-model",
+    response_model=ClaudeAnomalyModelSettings,
+)
+def get_settings_claude_anomaly_model(db: Session = Depends(get_db)):
+    return read_claude_anomaly_model_settings(db)
+
+
+@external_router.put(
+    "/settings/claude-anomaly-model",
+    response_model=ClaudeAnomalyModelSettings,
+)
+def update_settings_claude_anomaly_model(
+    payload: ClaudeAnomalyModelSettings,
+    db: Session = Depends(get_db),
+):
+    return write_claude_anomaly_model_settings(db, payload)
+
+
+@external_router.post(
+    "/settings/claude-anomaly-model/test",
+    response_model=ClaudeAnomalyModelTestResponse,
+)
+def test_settings_claude_anomaly_model(
+    payload: ClaudeAnomalyModelSettings,
+    db: Session = Depends(get_db),
+):
+    existing = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+        default=default_claude_anomaly_model_config(),
+    )
+    config = merge_claude_anomaly_model_secret_config(
+        existing if isinstance(existing, dict) else {},
+        payload.model_dump(),
+    )
+    try:
+        config = validate_claude_anomaly_model_config(config, require_base_url=True)
+        request_payload = build_claude_anomaly_request(
+            config=config,
+            event_id="TEST-ANOMALY-CANDIDATE",
+            run_id=None,
+            source_id=1,
+            camera_id=1,
+            frame_id=1,
+            stage_1_model_key="heuristic_presence_stage_1",
+            stage_2_model_key="claude_compatible_stage_2",
+            candidate_category="presence_resume",
+            candidate_score=0.72,
+            candidate_reasoning="Observed a person and bag after a quiet period.",
+            visible_items=["person", "bag"],
+            visible_activities=["presence resume"],
+            prompt_template=config.get("prompt_template"),
+            anomaly_object_list=["bag", "unattended object"],
+            anomaly_activity_list=["loitering", "unexpected activity"],
+            asset_references=[],
+        )
+        result = send_claude_anomaly_request(config, request_payload)
+        parse_claude_anomaly_response(result)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ClaudeAnomalyModelTestResponse(
+        status="sent",
+        detail="Claude-compatible anomaly model test request sent.",
+        result=result,
+    )
+
+
 @external_router.put("/settings/trigger-rules", response_model=list[TriggerRule])
 def update_settings_trigger_rules(
     rules: list[TriggerRule],
@@ -3542,6 +3766,73 @@ def test_settings_claude_api_connector(endpoint: ClaudeApiConnectorEndpoint):
     return ClaudeApiConnectorTestResponse(
         status="sent",
         detail="Third-party API test payload sent.",
+    )
+
+
+@external_router.get(
+    "/settings/action-connectors",
+    response_model=list[ActionConnectorEndpoint],
+)
+def get_settings_action_connectors(db: Session = Depends(get_db)):
+    return build_action_connector_responses(db)
+
+
+@external_router.put(
+    "/settings/action-connectors",
+    response_model=list[ActionConnectorEndpoint],
+)
+def update_settings_action_connectors(
+    endpoints: list[ActionConnectorEndpoint],
+    db: Session = Depends(get_db),
+):
+    return replace_action_connectors(db, endpoints)
+
+
+@external_router.post(
+    "/settings/action-connectors/test",
+    response_model=ActionConnectorTestResponse,
+)
+def test_settings_action_connector(endpoint: ActionConnectorEndpoint):
+    config = {
+        "action_type": endpoint.action_type,
+        "base_url": endpoint.base_url,
+        "auth_token": endpoint.auth_token,
+        "command": endpoint.command,
+        "target": endpoint.target,
+        "parameters": dict(endpoint.parameters or {}),
+        "timeout_seconds": endpoint.timeout_seconds,
+        "retry_count": endpoint.retry_count,
+    }
+    if endpoint.id is not None:
+        with SessionLocal() as db:
+            existing_row = (
+                db.query(SQLModels.ConnectorEndpoint)
+                .filter(
+                    SQLModels.ConnectorEndpoint.id == endpoint.id,
+                    SQLModels.ConnectorEndpoint.connector_key.in_(list(ACTION_CONNECTOR_KEYS)),
+                    SQLModels.ConnectorEndpoint.is_deleted.is_(False),
+                )
+                .first()
+            )
+            if existing_row is not None:
+                config = merge_connector_endpoint_secret_config(
+                    get_connector_endpoint_config(existing_row),
+                    config,
+                )
+    row = SQLModels.ConnectorEndpoint(
+        connector_key=endpoint.action_type,
+        enabled=endpoint.enabled,
+        label=endpoint.connector_label,
+        config_json=json.dumps(config),
+        delivery_capabilities_json=json.dumps(["json", "action", "sync"]),
+    )
+    try:
+        send_test_action_connector_message(row)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ActionConnectorTestResponse(
+        status="sent",
+        detail="Action connector test payload sent.",
     )
 
 
@@ -3809,9 +4100,13 @@ def get_model_bindings(db: Session = Depends(get_db)):
 
 @external_router.get("/mounted-models", response_model=list[MountedModelStage])
 def get_mounted_models(db: Session = Depends(get_db)):
-    source_rows = get_active_source_rows(db)
-    bundle = get_registry_bundle(db, source_rows=source_rows)
-    return build_mounted_model_stage_responses(bundle)
+    try:
+        source_rows = get_active_source_rows(db)
+        bundle = get_registry_bundle(db, source_rows=source_rows)
+        return build_mounted_model_stage_responses(bundle)
+    except Exception as exc:
+        logger.exception("Failed to load mounted model inventory")
+        raise HTTPException(status_code=500, detail=f"failed to load mounted models: {exc}") from exc
 
 
 @external_router.put("/model-bindings", response_model=list[ModelBinding])
@@ -3870,7 +4165,10 @@ def update_mounted_models(stages: list[MountedModelStage], db: Session = Depends
                     status_code=400,
                     detail=f"unknown {stage_entry.stage} model binding {model_key}",
                 )
-            ensure_mounted_model_key(bundle, mounted_models, stage_entry.stage, model_key)
+            try:
+                ensure_mounted_model_key(bundle, mounted_models, stage_entry.stage, model_key)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     defaults = build_default_bindings(bundle)
     required = collect_required_mounted_models(bundle, source_rows, defaults=defaults)
@@ -3889,9 +4187,17 @@ def update_mounted_models(stages: list[MountedModelStage], db: Session = Depends
             detail=f"cannot unmount models currently in use: {formatted}",
         )
 
-    persist_mounted_models(mounted_models)
-    refreshed_bundle = get_registry_bundle(db, source_rows=source_rows)
-    return build_mounted_model_stage_responses(refreshed_bundle)
+    try:
+        persist_mounted_models(mounted_models)
+    except Exception as exc:
+        logger.exception("Failed to persist mounted model inventory")
+        raise HTTPException(status_code=500, detail=f"failed to persist mounted models: {exc}") from exc
+    try:
+        refreshed_bundle = get_registry_bundle(db, source_rows=source_rows)
+        return build_mounted_model_stage_responses(refreshed_bundle)
+    except Exception as exc:
+        logger.exception("Failed to reload mounted model inventory")
+        raise HTTPException(status_code=500, detail=f"failed to reload mounted models: {exc}") from exc
 
 
 @external_router.get("/monitoring/runs", response_model=list[RunSummary])

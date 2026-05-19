@@ -29,6 +29,15 @@ const getIngestorExplanation = ({ moduleStatus, systemStatus, admission }) => {
   return 'Ingestor is not actively processing frames right now.';
 };
 
+const getPipelineBackpressureHint = (statusData) => {
+  const ingestorMetrics = statusData.resources?.module_metrics?.INGESTOR;
+  const queueDepth = Number(ingestorMetrics?.queue_depths?.frames_thread || 0);
+  if (statusData.status === 'running' && queueDepth >= 5) {
+    return `Detector is still working through queued frames (${queueDepth} waiting). On CPU localhost demos, use a smaller stream or CPU fallback image size if this stays high.`;
+  }
+  return null;
+};
+
 const Status = () => {
   const [statusData, setStatusData] = useState({
     status: 'loading',
@@ -75,6 +84,7 @@ const Status = () => {
     systemStatus: statusData.status,
     admission: statusData.admission,
   });
+  const backpressureHint = getPipelineBackpressureHint(statusData);
 
   return (
     <div className="status-container">
@@ -136,6 +146,10 @@ const Status = () => {
 
       {ingestorExplanation && (
         <div className="status-warning">{ingestorExplanation}</div>
+      )}
+
+      {backpressureHint && (
+        <div className="status-warning">{backpressureHint}</div>
       )}
 
       {statusData.frame_id !== null && (

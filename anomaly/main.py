@@ -211,7 +211,9 @@ class Anomaly(Thread):
                     run_id=self.run_identifier,
                 )
                 for candidate in stage_1_candidates:
-                    events.append(stage_2_adapter.build_event(candidate=candidate, prompts=prompts))
+                    event = stage_2_adapter.build_event(candidate=candidate, prompts=prompts)
+                    if event is not None:
+                        events.append(event)
 
             if events:
                 self.output_thread.queue.put((frame_id, events))

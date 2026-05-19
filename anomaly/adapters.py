@@ -10,7 +10,16 @@ from typing import Any
 
 from omegaconf import OmegaConf
 
+from ..shared.database.database import SessionLocal
 from ..shared.models.DataModels import AnomalyEvent, AssetReference
+from ..shared.utils.claude_anomaly_model import (
+    SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+    build_claude_anomaly_request,
+    default_claude_anomaly_model_config,
+    send_claude_anomaly_request,
+    validate_claude_anomaly_model_config,
+)
+from ..shared.utils.workspace_settings import get_workspace_setting_value
 
 logger = logging.getLogger(__name__)
 
@@ -312,6 +321,86 @@ class VLMAnomalyDemoStageTwoAdapter(PassThroughStageTwoAdapter):
         self.module = import_module(package_name)
 
 
+class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
+    def __init__(self, registration: dict):
+        runtime = registration.get("runtime") or {}
+        self.prompt_template = str(runtime.get("prompt_template") or "").strip() or None
+        self.fallback_on_failure = bool(runtime.get("fallback_on_failure", False))
+
+    def _load_config(self) -> dict[str, Any]:
+        with SessionLocal() as db:
+            loaded = get_workspace_setting_value(
+                db,
+                SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+                default=default_claude_anomaly_model_config(),
+            )
+        if not isinstance(loaded, dict):
+            loaded = default_claude_anomaly_model_config()
+        return validate_claude_anomaly_model_config(loaded, require_base_url=False)
+
+    def build_event(
+        self,
+        *,
+        candidate: StageOneCandidate,
+        prompts: PromptBundle,
+    ) -> AnomalyEvent | None:
+        try:
+            config = self._load_config()
+        except Exception:
+            logger.exception("Failed to load Claude-compatible anomaly model config")
+            return super().build_event(candidate=candidate, prompts=prompts) if self.fallback_on_failure else None
+
+        if not config.get("enabled") or not config.get("base_url"):
+            logger.warning("Claude-compatible anomaly model is selected but not configured")
+            return super().build_event(candidate=candidate, prompts=prompts) if self.fallback_on_failure else None
+
+        request_payload = build_claude_anomaly_request(
+            config=config,
+            event_id=candidate.event_id,
+            run_id=candidate.run_id,
+            source_id=candidate.source_id,
+            camera_id=candidate.camera_id,
+            frame_id=candidate.frame_id,
+            stage_1_model_key=candidate.stage_1_model_key,
+            stage_2_model_key=candidate.stage_2_model_key,
+            candidate_category=candidate.category,
+            candidate_score=candidate.score,
+            candidate_reasoning=candidate.reasoning,
+            visible_items=candidate.visible_items,
+            visible_activities=candidate.visible_activities,
+            prompt_template=self.prompt_template or prompts.template,
+            anomaly_object_list=prompts.anomaly_object_list,
+            anomaly_activity_list=prompts.anomaly_activity_list,
+            asset_references=candidate.asset_references,
+        )
+        try:
+            result = send_claude_anomaly_request(config, request_payload)
+        except Exception as exc:
+            logger.warning("Claude-compatible anomaly model request failed: %s", exc)
+            return super().build_event(candidate=candidate, prompts=prompts) if self.fallback_on_failure else None
+
+        if not result.get("promote", False):
+            return None
+
+        return AnomalyEvent(
+            event_id=candidate.event_id,
+            run_id=candidate.run_id,
+            source_id=candidate.source_id,
+            camera_id=candidate.camera_id,
+            frame_id=candidate.frame_id,
+            stage_1_model_key=candidate.stage_1_model_key,
+            stage_2_model_key=candidate.stage_2_model_key,
+            title=result.get("title") or result.get("category") or candidate.category,
+            model_key=candidate.stage_2_model_key,
+            category=result.get("category") or candidate.category,
+            score=float(result.get("score", candidate.score)),
+            reasoning=result.get("reasoning") or candidate.reasoning,
+            visible_items=result.get("visible_items") or candidate.visible_items,
+            visible_activities=result.get("visible_activities") or candidate.visible_activities,
+            asset_references=candidate.asset_references,
+        )
+
+
 STAGE_1_ADAPTERS = {
     "siglip_stage_1": SigLIPStageOneAdapter,
     "heuristic_presence_stage_1": HeuristicPresenceStageOneAdapter,
@@ -323,6 +412,7 @@ STAGE_2_ADAPTERS = {
     "prompt_rules_stage_2": PromptRulesStageTwoAdapter,
     "passthrough_stage_2": PassThroughStageTwoAdapter,
     "vlm_anomaly_demo_stage_2": VLMAnomalyDemoStageTwoAdapter,
+    "claude_compatible_stage_2": ClaudeCompatibleStageTwoAdapter,
 }
 
 

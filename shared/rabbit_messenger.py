@@ -8,7 +8,7 @@ from functools import partial
 from typing import TypeVar, Generic, Type, TypedDict, Iterable
 
 import pika
-from pika.exceptions import AMQPConnectionError
+from pika.exceptions import AMQPConnectionError, AMQPError
 
 from .models.DataModels import (
     SystemMessage,
@@ -131,10 +131,11 @@ class Consumer(Thread, Generic[M]):
     def run(self):
         self.logger.info(f"Starting {self.name}", extra={"task": self.task_name})
         self.process = True
-        self.connect()
         while self.process:
+            if self.channel is None or self.connection is None or self.connection.is_closed:
+                self.reconnect()
+                continue
             try:
-                assert self.channel is not None
                 for message in self.channel.consume(
                     queue=self.queue_name,
                     auto_ack=True,
@@ -143,13 +144,12 @@ class Consumer(Thread, Generic[M]):
                     if not all(message):
                         break
                     self.callback(message[2])
-            except AMQPConnectionError:
+            except (AMQPConnectionError, AMQPError, OSError):
                 self.logger.exception(
                     f"AMQP connection error, for {self.name}, reconnecting ...",
                     extra={"task": self.task_name},
                 )
-                self.disconnect()
-                self.connect()
+                self.reconnect()
         self.disconnect()
         self.logger.info(f"Stopped {self.name}", extra={"task": self.task_name})
 
@@ -157,6 +157,27 @@ class Consumer(Thread, Generic[M]):
         self.channel, self.connection = get_connection(
             self.queue_name, self.routing_key, True
         )
+
+    def reconnect(self):
+        try:
+            self.disconnect()
+        except Exception:
+            self.logger.warning(
+                f"Failed to disconnect stale AMQP connection for {self.name}",
+                exc_info=True,
+                extra={"task": self.task_name},
+            )
+        while self.process:
+            try:
+                self.connect()
+                return
+            except Exception:
+                self.logger.warning(
+                    f"Failed to connect {self.name}; retrying ...",
+                    exc_info=True,
+                    extra={"task": self.task_name},
+                )
+                time.sleep(1.0)
 
     def callback(self, body):
         try:
@@ -170,10 +191,16 @@ class Consumer(Thread, Generic[M]):
 
     @with_exponential_backoff(max_tries=RABBIT_MAX_TRIES)
     def disconnect(self):
-        if self.channel:
-            self.channel.stop_consuming()
-        if self.connection and self.connection.is_open:
-            self.connection.close()
+        try:
+            if self.channel and self.channel.is_open:
+                self.channel.stop_consuming()
+        finally:
+            self.channel = None
+        try:
+            if self.connection and self.connection.is_open:
+                self.connection.close()
+        finally:
+            self.connection = None
 
     def stop(self):
         self.logger.info(f"Stopping {self.name}", extra={"task": self.task_name})

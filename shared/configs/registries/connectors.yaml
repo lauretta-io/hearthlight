@@ -55,6 +55,72 @@ claude_api:
     - sync
     - retry
 
+philips_hue:
+  label: Philips Hue Action
+  description: Send trigger action payloads to a Philips Hue bridge, scene proxy, or localhost Hue demo receiver.
+  category: actions
+  enabled: true
+  requirements:
+    - base-url
+  fields:
+    - key: base_url
+      label: Action URL
+    - key: auth_token
+      label: Hue app key or bearer token
+      secret: true
+    - key: command
+      label: Command
+    - key: target
+      label: Light or scene target
+  delivery_capabilities:
+    - json
+    - action
+    - sync
+
+music_api:
+  label: Music API Action
+  description: Send trigger action payloads to a music playback API for alert sounds, playlists, or transport commands.
+  category: actions
+  enabled: true
+  requirements:
+    - base-url
+  fields:
+    - key: base_url
+      label: Action URL
+    - key: auth_token
+      label: Bearer token
+      secret: true
+    - key: command
+      label: Playback command
+    - key: target
+      label: Track, playlist, or device target
+  delivery_capabilities:
+    - json
+    - action
+    - sync
+
+robot_action:
+  label: Robot Action
+  description: Send structured movement or task commands to a local robot controller or simulator.
+  category: actions
+  enabled: true
+  requirements:
+    - base-url
+  fields:
+    - key: base_url
+      label: Controller URL
+    - key: auth_token
+      label: Bearer token
+      secret: true
+    - key: command
+      label: Robot command
+    - key: target
+      label: Robot or zone target
+  delivery_capabilities:
+    - json
+    - action
+    - sync
+
 webhook:
   label: Webhook
   description: Post trigger payloads to an HTTP endpoint.

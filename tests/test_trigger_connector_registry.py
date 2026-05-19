@@ -15,6 +15,9 @@ class TriggerConnectorRegistryTests(unittest.TestCase):
         keys = {entry["key"] for entry in connector_zoo}
         self.assertIn("telegram", keys)
         self.assertIn("apple_messages", keys)
+        self.assertIn("philips_hue", keys)
+        self.assertIn("music_api", keys)
+        self.assertIn("robot_action", keys)
         self.assertIn("webhook", keys)
 
 

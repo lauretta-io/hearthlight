@@ -51,8 +51,16 @@ CONNECTOR_KEYS = {
     "telegram",
     "apple_messages",
     "claude_api",
+    "philips_hue",
+    "music_api",
+    "robot_action",
     "webhook",
     "slack",
+}
+ACTION_CONNECTOR_KEYS = {
+    "philips_hue",
+    "music_api",
+    "robot_action",
 }
 APPEARANCE_THEME_KEYS = {
     "fidelity-light",
@@ -864,6 +872,95 @@ class ClaudeApiConnectorEndpoint(BaseModel):
 
 
 class ClaudeApiConnectorTestResponse(BaseModel):
+    status: str
+    detail: str | None = None
+
+
+class ClaudeAnomalyModelSettings(BaseModel):
+    enabled: bool = False
+    base_url: str = ""
+    auth_token: str = ""
+    model_name: str = "claude-compatible-anomaly"
+    timeout_seconds: int = Field(default=10, ge=1, le=120)
+    retry_count: int = Field(default=1, ge=0, le=5)
+    prompt_template: str = ""
+
+    @field_validator("base_url")
+    def validate_claude_anomaly_base_url(cls, value):
+        normalized = str(value or "").strip()
+        if normalized and not normalized.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return normalized
+
+    @field_validator("auth_token")
+    def validate_claude_anomaly_auth_token(cls, value):
+        return str(value or "").strip()
+
+    @field_validator("model_name")
+    def validate_claude_anomaly_model_name(cls, value):
+        return validate_non_empty_string(value, "model_name")
+
+    @field_validator("prompt_template")
+    def validate_claude_anomaly_prompt_template(cls, value):
+        return str(value or "").strip()
+
+
+class ClaudeAnomalyModelTestResponse(BaseModel):
+    status: str
+    detail: str | None = None
+    result: dict | None = None
+
+
+class ActionConnectorEndpoint(BaseModel):
+    id: int | None = None
+    enabled: bool = True
+    action_type: str = "robot_action"
+    connector_label: str | None = Field(default=None, max_length=255)
+    base_url: str
+    auth_token: str = ""
+    command: str = "trigger"
+    target: str = ""
+    parameters: dict = Field(default_factory=dict)
+    timeout_seconds: int = Field(default=10, ge=1, le=120)
+    retry_count: int = Field(default=1, ge=0, le=5)
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @field_validator("action_type")
+    def validate_action_type(cls, value):
+        normalized = validate_non_empty_string(value, "action_type").lower()
+        if normalized not in ACTION_CONNECTOR_KEYS:
+            raise ValueError("action_type must be one of philips_hue, music_api, robot_action")
+        return normalized
+
+    @field_validator("connector_label")
+    def validate_action_connector_label(cls, value):
+        if value is None:
+            return value
+        stripped = value.strip()
+        return stripped or None
+
+    @field_validator("base_url")
+    def validate_action_base_url(cls, value):
+        normalized = validate_non_empty_string(value, "base_url")
+        if not normalized.startswith(("http://", "https://")):
+            raise ValueError("base_url must start with http:// or https://")
+        return normalized
+
+    @field_validator("auth_token")
+    def validate_action_auth_token(cls, value):
+        return str(value or "").strip()
+
+    @field_validator("command")
+    def validate_action_command(cls, value):
+        return validate_non_empty_string(value, "command")
+
+    @field_validator("target")
+    def validate_action_target(cls, value):
+        return str(value or "").strip()
+
+
+class ActionConnectorTestResponse(BaseModel):
     status: str
     detail: str | None = None
 

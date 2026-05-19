@@ -219,3 +219,54 @@ class DatabaseWorkerAlertRuleTests(unittest.TestCase):
         self.worker.maybe_create_detector_alerts(track)
 
         self.worker.create_alert_incident.assert_not_called()
+
+    def test_trigger_delivery_targets_none_preserves_legacy_fanout(self):
+        self.worker.get_enabled_trigger_rules = Mock(
+            return_value=[
+                SimpleNamespace(delivery_target_ids_json=None),
+            ]
+        )
+
+        target_ids = self.worker.resolve_trigger_delivery_target_ids(
+            trigger_key="unattended_bag_trigger",
+            source_id=12,
+        )
+
+        self.assertIsNone(target_ids)
+
+    def test_trigger_delivery_targets_empty_list_means_no_selected_connectors(self):
+        self.worker.get_enabled_trigger_rules = Mock(
+            return_value=[
+                SimpleNamespace(delivery_target_ids_json="[]"),
+            ]
+        )
+
+        target_ids = self.worker.resolve_trigger_delivery_target_ids(
+            trigger_key="manual_trigger",
+            source_id=None,
+        )
+
+        self.assertEqual(target_ids, [])
+
+    def test_trigger_delivery_targets_can_select_multiple_connectors(self):
+        self.worker.get_enabled_trigger_rules = Mock(
+            return_value=[
+                SimpleNamespace(delivery_target_ids_json="[41, 61]"),
+                SimpleNamespace(delivery_target_ids_json="[61, 72]"),
+            ]
+        )
+
+        target_ids = self.worker.resolve_trigger_delivery_target_ids(
+            trigger_key="anomaly_event_trigger",
+            source_id=12,
+        )
+
+        self.assertEqual(target_ids, [41, 61, 72])
+
+    def test_filter_connector_rows_by_targets_respects_unchecked_telegram(self):
+        telegram = SimpleNamespace(id=41, connector_key="telegram")
+        claude = SimpleNamespace(id=61, connector_key="claude_api")
+
+        selected = self.worker.filter_connector_rows_by_targets([telegram, claude], [61])
+
+        self.assertEqual(selected, [claude])
