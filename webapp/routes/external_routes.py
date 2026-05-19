@@ -2000,7 +2000,7 @@ def replace_alert_rules(db: Session, rules: list[AlertRule]):
         row.target_key = rule.target_key
         row.min_confidence = rule.min_confidence
         row.alert_level = rule.alert_level
-        row.delivery_target_ids_json = json.dumps([])
+        row.delivery_target_ids_json = None
         row.metadata_json = json.dumps({})
         row.is_deleted = False
         row.deleted_at = None

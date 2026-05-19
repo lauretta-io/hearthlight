@@ -191,6 +191,19 @@ beforeEach(() => {
         },
       ]);
     }
+    if (url.endsWith('/settings/claude-api-connectors') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([
+        {
+          id: 61,
+          enabled: true,
+          connector_label: 'Local Claude Demo',
+          base_url: 'http://localhost:8787/v1/messages',
+          auth_token: '********',
+          timeout_seconds: 10,
+          retry_count: 1,
+        },
+      ]);
+    }
     if (url.endsWith('/settings/apple-message-trigger-subscriptions') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
         {
@@ -275,6 +288,25 @@ beforeEach(() => {
         detail: 'Telegram test message sent.',
       });
     }
+    if (url.endsWith('/settings/claude-api-connectors') && options.method === 'PUT') {
+      return buildJsonResponse([
+        {
+          id: 61,
+          enabled: true,
+          connector_label: 'Local Claude Demo',
+          base_url: 'http://localhost:8787/v1/messages',
+          auth_token: '********',
+          timeout_seconds: 10,
+          retry_count: 1,
+        },
+      ]);
+    }
+    if (url.endsWith('/settings/claude-api-connectors/test') && options.method === 'POST') {
+      return buildJsonResponse({
+        status: 'sent',
+        detail: 'Third-party API test payload sent.',
+      });
+    }
     if (url.endsWith('/settings/apple-message-trigger-subscriptions') && options.method === 'PUT') {
       return buildJsonResponse([
         {
@@ -303,6 +335,12 @@ beforeEach(() => {
     if (url.endsWith('/settings/appearance') && options.method === 'PUT') {
       return buildJsonResponse({
         theme_key: 'fidelity-dark',
+      });
+    }
+    if (url.endsWith('/demo/triggers/fire') && options.method === 'POST') {
+      return buildJsonResponse({
+        status: 'sent',
+        detail: 'Demo trigger queued.',
       });
     }
     return buildJsonResponse({});
@@ -447,10 +485,12 @@ test('renders connectors tab and saves both connector subscription types', async
   expect(screen.getAllByText('Configured').length).toBeGreaterThan(0);
   expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
   expect(screen.getByDisplayValue('Ops Chat')).toBeTruthy();
-  expect(screen.getByDisplayValue('********')).toBeTruthy();
+  expect(screen.getAllByDisplayValue('********').length).toBeGreaterThan(0);
   expect(screen.getByDisplayValue('-1001234567890')).toBeTruthy();
   expect(screen.getByDisplayValue('Ops iMessage')).toBeTruthy();
   expect(screen.getByDisplayValue('+15551234567')).toBeTruthy();
+  expect(screen.getByDisplayValue('Local Claude Demo')).toBeTruthy();
+  expect(screen.getByDisplayValue('http://localhost:8787/v1/messages')).toBeTruthy();
 
   await act(async () => {
     fireEvent.click(screen.getByText('Save Telegram Subscriptions'));
@@ -472,6 +512,53 @@ test('renders connectors tab and saves both connector subscription types', async
       expect.stringMatching(/\/settings\/apple-message-trigger-subscriptions$/),
       expect.objectContaining({ method: 'PUT' }),
     );
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Save Third-party API Connectors'));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/claude-api-connectors$/),
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+});
+
+test('loads demo trigger presets and serializes selected delivery targets', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/rules']}>
+        <SettingsPage forcedTab="rules" hideTabBar pageTitle="Rules" />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByRole('heading', { name: 'Rules', level: 2 })).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Load Demo Presets'));
+  });
+
+  expect((await screen.findAllByText('Anomaly Event')).length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Unattended Bag').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Loitering Compatibility').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Manual Trigger').length).toBeGreaterThan(0);
+
+  await act(async () => {
+    fireEvent.click(screen.getAllByLabelText('Ops Chat').at(-1));
+    fireEvent.click(screen.getAllByText('Fire Demo Trigger').at(-1));
+  });
+
+  await waitFor(() => {
+    const fireCall = global.fetch.mock.calls.find(([url, options]) => (
+      url.endsWith('/demo/triggers/fire') && options.method === 'POST'
+    ));
+    expect(fireCall).toBeTruthy();
+    const body = JSON.parse(fireCall[1].body);
+    expect(body.trigger_key).toBe('manual_trigger');
+    expect(body.delivery_target_ids).toEqual([61]);
   });
 });
 

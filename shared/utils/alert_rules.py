@@ -64,14 +64,24 @@ def ensure_alert_rule_tables() -> None:
         for column in inspector.get_columns("trigger_rule", schema="control")
     }
     alterations: list[str] = []
+    if "trigger_key" not in column_names:
+        alterations.append("ADD COLUMN trigger_key VARCHAR(128) NOT NULL DEFAULT 'alert_rule_trigger'")
     if "source_ids_json" not in column_names:
         alterations.append("ADD COLUMN source_ids_json TEXT")
+    if "sort_order" not in column_names:
+        alterations.append("ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
+    if "rule_label" not in column_names:
+        alterations.append("ADD COLUMN rule_label VARCHAR(255)")
     if "rule_kind" not in column_names:
         alterations.append("ADD COLUMN rule_kind VARCHAR(32) NOT NULL DEFAULT 'detector'")
     if "anomaly_target_kind" not in column_names:
         alterations.append("ADD COLUMN anomaly_target_kind VARCHAR(32)")
     if "anomaly_cutoff" not in column_names:
         alterations.append("ADD COLUMN anomaly_cutoff INTEGER")
+    if "delivery_target_ids_json" not in column_names:
+        alterations.append("ADD COLUMN delivery_target_ids_json TEXT")
+    if "metadata_json" not in column_names:
+        alterations.append("ADD COLUMN metadata_json TEXT")
     if alterations:
         with engine.begin() as conn:
             for alteration in alterations:

@@ -378,13 +378,20 @@ class DatabaseWorker:
             return None
         target_ids: list[int] = []
         seen: set[int] = set()
+        has_explicit_delivery_targets = False
         for row in rows:
-            for target_id in parse_serialized_json(getattr(row, "delivery_target_ids_json", None), []):
+            raw_target_ids = getattr(row, "delivery_target_ids_json", None)
+            if raw_target_ids is None:
+                continue
+            has_explicit_delivery_targets = True
+            for target_id in parse_serialized_json(raw_target_ids, []):
                 target_id = int(target_id)
                 if target_id in seen:
                     continue
                 seen.add(target_id)
                 target_ids.append(target_id)
+        if not has_explicit_delivery_targets:
+            return None
         return target_ids
 
     def resolve_source_delivery_target_ids(self, source_id: int | None) -> list[int] | None:
@@ -471,8 +478,8 @@ class DatabaseWorker:
             trigger_rule = self.db.query(SQLModels.TriggerRule).filter_by(id=alert_rule_id).first()
             delivery_target_ids = parse_serialized_json(
                 getattr(trigger_rule, "delivery_target_ids_json", None),
-                [],
-            ) if trigger_rule is not None else []
+                None,
+            ) if trigger_rule is not None else None
             self.queue_trigger_notifications(
                 incident_model,
                 display_title=alert_model.title,

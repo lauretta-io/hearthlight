@@ -54,7 +54,41 @@ Trigger rules:
 - `PUT /settings/trigger-rules`
 - `POST /demo/triggers/fire`
 
-Trigger rules use `delivery_target_ids` to route each trigger to one or more saved connector endpoints. An empty `delivery_target_ids` list preserves the existing fan-out behavior to all enabled connectors.
+Trigger rules use `delivery_target_ids` to route each trigger to one or more saved connector endpoints. For the new trigger-rules API, an empty list means no connector is selected. Legacy/default alert-rule flows that do not set `delivery_target_ids` keep the existing fan-out behavior to all enabled connectors.
+
+Example trigger rule:
+
+```json
+{
+  "trigger_key": "unattended_bag_trigger",
+  "source_ids": [1],
+  "enabled": true,
+  "rule_label": "Lobby bag demo",
+  "rule_kind": "detector",
+  "signal_family": "detector",
+  "target_key": "unattended_bag_trigger",
+  "min_confidence": 0.5,
+  "anomaly_cutoff": null,
+  "alert_level": "high",
+  "delivery_target_ids": [41, 61],
+  "metadata": {}
+}
+```
+
+Manual fire request:
+
+```json
+{
+  "trigger_key": "manual_trigger",
+  "display_title": "Manual Demo Trigger",
+  "alert_level": "low",
+  "source_id": null,
+  "delivery_target_ids": [61],
+  "metadata": {
+    "operator": "localhost-demo"
+  }
+}
+```
 
 Third-party API payload shape:
 
