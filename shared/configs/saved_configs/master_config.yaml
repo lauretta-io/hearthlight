@@ -137,6 +137,7 @@ rtdetr:
   img_size:
   - 640
   - 640
+  local_cpu_img_size: 640
   model_name: yolox-s
   conf_thresh:
     person: 0.5

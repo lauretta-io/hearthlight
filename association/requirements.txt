@@ -55,8 +55,8 @@ threadpoolctl==3.5.0
 tomli==2.0.2
 torch==2.7.0
 tqdm==4.64.1
-triton==3.3.0
-typing_extensions==4.12.2
+triton==3.3.0; platform_machine != "aarch64"
+typing_extensions==4.14.1
 tzdata==2024.2
 urllib3==1.26.20
 yacs==0.1.8

@@ -4,7 +4,7 @@ This runbook covers the localhost demo path for routing Hearthlight triggers to 
 
 ## Localhost Steps
 
-1. Start Hearthlight locally and open the frontend, for example `http://localhost:3000` or `http://localhost:5173`.
+1. Start Hearthlight locally and open the frontend at `http://localhost:3000`.
 2. Start a local action receiver in another terminal:
 
 ```bash
@@ -57,6 +57,9 @@ Connector config:
 - `GET /settings/action-connectors`
 - `PUT /settings/action-connectors`
 - `POST /settings/action-connectors/test`
+- `GET /settings/claude-anomaly-model`
+- `PUT /settings/claude-anomaly-model`
+- `POST /settings/claude-anomaly-model/test`
 
 `PUT /settings/claude-api-connectors` accepts:
 
@@ -215,3 +218,137 @@ Third-party API payload shape:
   }
 }
 ```
+
+## Claude-Compatible Anomaly Model
+
+The third-party API connector above is a trigger delivery target. The Claude-compatible anomaly model is different: it is selected as an `anomaly_stage_2` model and called before an anomaly event is produced.
+
+Local mock server:
+
+```bash
+python3 - <<'PY'
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Handler(BaseHTTPRequestHandler):
+    def do_POST(self):
+        length = int(self.headers.get("content-length", "0"))
+        body = self.rfile.read(length).decode("utf-8")
+        print(f"\n{self.path}\n{body}\n")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps({
+            "content": [{
+                "type": "text",
+                "text": json.dumps({
+                    "schema": "hearthlight.anomaly_response.v1",
+                    "promote": True,
+                    "category": "anomaly_event",
+                    "title": "Mock Claude Anomaly",
+                    "score": 0.91,
+                    "reasoning": "The mock server promoted the candidate for localhost verification.",
+                    "visible_items": ["person", "bag"],
+                    "visible_activities": ["unexpected activity"]
+                })
+            }]
+        }).encode("utf-8"))
+
+HTTPServer(("localhost", 8788), Handler).serve_forever()
+PY
+```
+
+Exact localhost verification:
+
+1. Start the mock server above.
+2. Open `http://localhost:3000`, then open `Connectors`.
+3. In `Claude-Compatible Anomaly Model`, set `Base URL` to `http://localhost:8788/v1/messages`, set any model name, enable it, and click `Send Test Anomaly Request`.
+4. Click `Save Anomaly Model API`.
+5. Open `Model Library`, mount `Claude-Compatible Anomaly API` under `Anomaly Detection` if it is not already mounted.
+6. Open `Sources` or `Model Bindings` and select `Claude-Compatible Anomaly API` for `Anomaly Detection`.
+7. Start the runtime with a saved source. When stage 1 emits a candidate, the anomaly worker posts to the mock server. A response with `"promote": true` is converted to a Hearthlight anomaly event.
+
+Config payload:
+
+```json
+{
+  "enabled": true,
+  "base_url": "http://localhost:8788/v1/messages",
+  "auth_token": "optional-secret",
+  "model_name": "claude-compatible-anomaly",
+  "timeout_seconds": 10,
+  "retry_count": 1,
+  "prompt_template": "Evaluate the Hearthlight anomaly candidate and return JSON."
+}
+```
+
+Anomaly request payload:
+
+```json
+{
+  "model": "claude-compatible-anomaly",
+  "max_tokens": 512,
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "Prompt text plus Candidate context JSON"
+        }
+      ]
+    }
+  ],
+  "metadata": {
+    "source": "hearthlight",
+    "purpose": "anomaly_detection",
+    "schema": "hearthlight.anomaly_request.v1",
+    "event_id": "heuristic_presence_stage_1:1:42:presence_resume",
+    "source_id": 1,
+    "camera_id": 0,
+    "frame_id": 42,
+    "candidate_category": "presence_resume"
+  },
+  "hearthlight": {
+    "schema": "hearthlight.anomaly_request.v1",
+    "source": "hearthlight",
+    "candidate": {
+      "event_id": "heuristic_presence_stage_1:1:42:presence_resume",
+      "run_id": "run-123",
+      "source_id": 1,
+      "camera_id": 0,
+      "frame_id": 42,
+      "stage_1_model_key": "heuristic_presence_stage_1",
+      "stage_2_model_key": "claude_compatible_stage_2",
+      "category": "presence_resume",
+      "score": 0.72,
+      "reasoning": "Observed tracked objects after inactivity.",
+      "visible_items": ["person", "bag"],
+      "visible_activities": ["presence resume"],
+      "asset_references": []
+    },
+    "prompt": {
+      "template": "Evaluate the Hearthlight anomaly candidate and return JSON.",
+      "anomaly_object_list": ["bag"],
+      "anomaly_activity_list": ["loitering"]
+    }
+  }
+}
+```
+
+Expected anomaly response:
+
+```json
+{
+  "schema": "hearthlight.anomaly_response.v1",
+  "promote": true,
+  "category": "unattended_bag",
+  "title": "Unattended Bag",
+  "score": 0.91,
+  "reasoning": "A bag remains visible without an owner nearby.",
+  "visible_items": ["bag"],
+  "visible_activities": ["standing nearby"]
+}
+```
+
+Claude-style responses are also accepted when the JSON object is returned inside `content[].text`. If `promote` is false, no anomaly event is emitted. Timeouts and request failures are logged and skipped so one failed external model call does not crash the anomaly pipeline.

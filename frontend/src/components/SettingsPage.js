@@ -61,6 +61,21 @@ const EMPTY_PROMPT_SETTINGS = {
   anomaly_items: [],
   anomaly_behaviors: [],
 };
+
+const readResponseJson = async (response, fallbackMessage = 'Request failed') => {
+  const text = await response.text();
+  if (!text) {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch (error) {
+    return {
+      detail: response.ok ? text : `${fallbackMessage}: ${text}`,
+    };
+  }
+};
+
 const SETTINGS_TABS = [
   { key: 'sources', label: 'Sources' },
   { key: 'model-library', label: 'Model Library' },
@@ -269,6 +284,26 @@ const createClaudeApiConnectorDraft = () => ({
   retry_count: 1,
 });
 
+const DEFAULT_CLAUDE_ANOMALY_PROMPT = 'Evaluate the Hearthlight anomaly candidate and return JSON with promote, category, title, score, reasoning, visible_items, and visible_activities.';
+
+const createClaudeAnomalyModelSettings = () => ({
+  enabled: false,
+  base_url: 'http://localhost:8788/v1/messages',
+  auth_token: '',
+  model_name: 'claude-compatible-anomaly',
+  timeout_seconds: 10,
+  retry_count: 1,
+  prompt_template: DEFAULT_CLAUDE_ANOMALY_PROMPT,
+});
+
+const hydrateClaudeAnomalyModelSettings = (settings = {}) => ({
+  ...createClaudeAnomalyModelSettings(),
+  ...settings,
+  enabled: Boolean(settings.enabled),
+  auth_token: settings.auth_token ?? '',
+  prompt_template: settings.prompt_template || DEFAULT_CLAUDE_ANOMALY_PROMPT,
+});
+
 const hydrateClaudeApiConnector = (connector, fallbackIndex = 0) => ({
   clientKey: connector.id
     ? `settings-claude-api-connector-${connector.id}`
@@ -383,6 +418,16 @@ const sanitizeClaudeApiConnectorsForApi = (connectors) =>
     timeout_seconds: Number(connector.timeout_seconds) || 10,
     retry_count: Number(connector.retry_count) || 0,
   }));
+
+const sanitizeClaudeAnomalyModelForApi = (settings) => ({
+  enabled: Boolean(settings.enabled),
+  base_url: settings.base_url.trim(),
+  auth_token: settings.auth_token.trim(),
+  model_name: settings.model_name.trim(),
+  timeout_seconds: Number(settings.timeout_seconds) || 10,
+  retry_count: Number(settings.retry_count) || 0,
+  prompt_template: settings.prompt_template.trim(),
+});
 
 const parseActionConnectorParameters = (connector) => {
   const raw = connector.parameters_text?.trim();
@@ -553,6 +598,9 @@ const describeModelOption = (option) => {
       if (adapter === 'passthrough_stage_2') {
         return `${name} keeps Stage 1 anomaly events moving without adding prompt-based interpretation.`;
       }
+      if (adapter === 'claude_compatible_stage_2') {
+        return `${name} calls a configured Claude-compatible API as the anomaly reasoning model.`;
+      }
       return `${name} is used as the second anomaly pass to interpret or enrich anomaly events.`;
     default:
       return `${name} is available in the current model library.`;
@@ -577,6 +625,9 @@ const describeModelFit = (option) => {
   }
   if (option.stage === 'anomaly_stage_2' && option.adapter === 'passthrough_stage_2') {
     return 'Best when you want to keep the anomaly lane simple and skip prompt interpretation.';
+  }
+  if (option.stage === 'anomaly_stage_2' && option.adapter === 'claude_compatible_stage_2') {
+    return 'Best when you want localhost or third-party anomaly reasoning through an HTTP model API.';
   }
   return 'Available for specialized or compatibility use.';
 };
@@ -613,6 +664,7 @@ const SettingsPage = ({
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
   const [isSavingClaudeApiConnectors, setIsSavingClaudeApiConnectors] = useState(false);
+  const [isSavingClaudeAnomalyModel, setIsSavingClaudeAnomalyModel] = useState(false);
   const [isSavingActionConnectors, setIsSavingActionConnectors] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
@@ -627,6 +679,7 @@ const SettingsPage = ({
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
   const [busyClaudeApiTests, setBusyClaudeApiTests] = useState({});
+  const [isTestingClaudeAnomalyModel, setIsTestingClaudeAnomalyModel] = useState(false);
   const [busyActionConnectorTests, setBusyActionConnectorTests] = useState({});
   const [busyDemoTriggers, setBusyDemoTriggers] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
@@ -635,6 +688,7 @@ const SettingsPage = ({
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
   const [claudeApiConnectors, setClaudeApiConnectors] = useState([]);
+  const [claudeAnomalyModel, setClaudeAnomalyModel] = useState(createClaudeAnomalyModelSettings);
   const [actionConnectors, setActionConnectors] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
@@ -789,6 +843,22 @@ const SettingsPage = ({
     setClaudeApiConnectors((Array.isArray(data) ? data : []).map((connector, index) => hydrateClaudeApiConnector(connector, index)));
   };
 
+  const reloadClaudeAnomalyModelState = async () => {
+    const response = await fetch(`${BaseURL}/settings/claude-anomaly-model`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load Claude-compatible anomaly model settings');
+    }
+    const data = await response.json();
+    setClaudeAnomalyModel(hydrateClaudeAnomalyModelSettings(data || {}));
+  };
+
   const reloadActionConnectorState = async () => {
     const response = await fetch(`${BaseURL}/settings/action-connectors`);
     if (!response.ok) {
@@ -845,6 +915,7 @@ const SettingsPage = ({
         await reloadTelegramSubscriptionState();
         await reloadAppleMessageSubscriptionState();
         await reloadClaudeApiConnectorState();
+        await reloadClaudeAnomalyModelState();
         await reloadActionConnectorState();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
@@ -1099,6 +1170,13 @@ const SettingsPage = ({
     );
   };
 
+  const setClaudeAnomalyModelField = (field, value) => {
+    setClaudeAnomalyModel((previous) => ({
+      ...previous,
+      [field]: value,
+    }));
+  };
+
   const addActionConnector = (actionType = 'robot_action') => {
     setActionConnectors((previous) => [
       ...previous,
@@ -1187,6 +1265,68 @@ const SettingsPage = ({
             .map((target) => target.id),
         };
       })
+    );
+  };
+
+  const renderDeliveryTargetSelector = (rule, keyPrefix) => {
+    const selectedTargetIds = new Set(rule.delivery_target_ids || []);
+    const selectedCount = availableDeliveryTargets.filter((target) => selectedTargetIds.has(target.id)).length;
+    const groupedTargets = availableDeliveryTargets.reduce((groups, target) => {
+      const group = target.group || 'Other';
+      if (!groups[group]) {
+        groups[group] = [];
+      }
+      groups[group].push(target);
+      return groups;
+    }, {});
+    const groupOrder = ['Notification', 'Action', 'Other'].filter((group) => groupedTargets[group]?.length);
+
+    return (
+      <div className="delivery-target-selector">
+        <div className="delivery-target-header">
+          <span>Delivery Targets</span>
+          <span className="delivery-target-count">
+            {selectedCount === 0 ? 'None selected' : `${selectedCount} selected`}
+          </span>
+        </div>
+        {availableDeliveryTargets.length === 0 ? (
+          <div className="delivery-target-empty">
+            Save a notification connector or action connector before routing this trigger.
+          </div>
+        ) : (
+          <div className="delivery-target-groups">
+            {groupOrder.map((group) => (
+              <div key={`${keyPrefix}-${group}`} className="delivery-target-group">
+                <div className="delivery-target-group-title">{group}</div>
+                <div className="delivery-target-options">
+                  {groupedTargets[group].map((target) => {
+                    const checked = selectedTargetIds.has(target.id);
+                    return (
+                      <label
+                        key={`${keyPrefix}-target-${target.id}`}
+                        className={`delivery-target-option ${checked ? 'delivery-target-option-selected' : ''}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
+                        />
+                        <span className="delivery-target-option-main">
+                          <strong>{target.label}</strong>
+                          <span>{target.connectorKey.replace(/_/g, ' ')}</span>
+                        </span>
+                        <span className={`delivery-target-state ${target.enabled ? 'delivery-target-state-enabled' : 'delivery-target-state-disabled'}`}>
+                          {target.enabled ? 'Enabled' : 'Disabled'}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -1346,6 +1486,37 @@ const SettingsPage = ({
     });
     setClaudeApiConnectorErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
+  };
+
+  const validateClaudeAnomalyModel = () => {
+    if (!claudeAnomalyModel.enabled) {
+      return true;
+    }
+    if (!claudeAnomalyModel.base_url.trim()) {
+      setBanner({ kind: 'error', text: 'Claude anomaly model base URL is required.' });
+      return false;
+    }
+    if (!/^https?:\/\//i.test(claudeAnomalyModel.base_url.trim())) {
+      setBanner({ kind: 'error', text: 'Claude anomaly model base URL must start with http:// or https://.' });
+      return false;
+    }
+    if (!claudeAnomalyModel.model_name.trim()) {
+      setBanner({ kind: 'error', text: 'Claude anomaly model name is required.' });
+      return false;
+    }
+    if (claudeAnomalyModel.auth_token.trim() === MASKED_SECRET_VALUE && !claudeAnomalyModel.base_url.trim()) {
+      setBanner({ kind: 'error', text: 'Paste the new auth token value before saving.' });
+      return false;
+    }
+    if (Number(claudeAnomalyModel.timeout_seconds) < 1 || Number(claudeAnomalyModel.timeout_seconds) > 120) {
+      setBanner({ kind: 'error', text: 'Claude anomaly timeout must be between 1 and 120 seconds.' });
+      return false;
+    }
+    if (Number(claudeAnomalyModel.retry_count) < 0 || Number(claudeAnomalyModel.retry_count) > 5) {
+      setBanner({ kind: 'error', text: 'Claude anomaly retry count must be between 0 and 5.' });
+      return false;
+    }
+    return true;
   };
 
   const validateActionConnectors = () => {
@@ -1595,7 +1766,7 @@ const SettingsPage = ({
         },
         body: JSON.stringify(payload),
       });
-      const data = await response.json();
+      const data = await readResponseJson(response, 'Failed to save mounted models');
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save mounted models');
       }
@@ -1928,6 +2099,64 @@ const SettingsPage = ({
     }
   };
 
+  const saveClaudeAnomalyModel = async () => {
+    if (!validateClaudeAnomalyModel()) {
+      return;
+    }
+    setIsSavingClaudeAnomalyModel(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/claude-anomaly-model`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeClaudeAnomalyModelForApi(claudeAnomalyModel)),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save Claude-compatible anomaly model settings');
+      }
+      setClaudeAnomalyModel(hydrateClaudeAnomalyModelSettings(data || {}));
+      setBanner({ kind: 'success', text: 'Claude-compatible anomaly model settings saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingClaudeAnomalyModel(false);
+    }
+  };
+
+  const sendClaudeAnomalyModelTest = async () => {
+    if (!validateClaudeAnomalyModel()) {
+      return;
+    }
+    if (!claudeAnomalyModel.base_url.trim()) {
+      setBanner({ kind: 'error', text: 'Base URL is required for a Claude anomaly test request.' });
+      return;
+    }
+    setIsTestingClaudeAnomalyModel(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/claude-anomaly-model/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ...sanitizeClaudeAnomalyModelForApi(claudeAnomalyModel),
+          enabled: true,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send Claude-compatible anomaly model test request');
+      }
+      setBanner({ kind: 'success', text: data.detail || 'Claude-compatible anomaly model test request sent.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsTestingClaudeAnomalyModel(false);
+    }
+  };
+
   const saveActionConnectors = async () => {
     if (!validateActionConnectors()) {
       setBanner({ kind: 'error', text: 'Fix the action connector rows first.' });
@@ -2082,6 +2311,11 @@ const SettingsPage = ({
   );
   const isClaudeApiConnectorConfigured = claudeApiConnectors.some(
     (connector) => connector.enabled && connector.base_url.trim(),
+  );
+  const isClaudeAnomalyModelConfigured = Boolean(
+    claudeAnomalyModel.enabled
+      && claudeAnomalyModel.base_url.trim()
+      && claudeAnomalyModel.model_name.trim(),
   );
   const isActionConnectorConfigured = actionConnectors.some(
     (connector) => connector.enabled && connector.base_url.trim() && connector.command.trim(),
@@ -2877,23 +3111,7 @@ const SettingsPage = ({
                                       <span>Enabled</span>
                                       <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
                                     </label>
-                                    <div className="camera-rule-selector">
-                                      <span>Delivery Targets</span>
-                                      <div className="camera-checkbox-grid">
-                                        {availableDeliveryTargets.length === 0 ? (
-                                          <span className="muted-text">Save Telegram or third-party API connectors first.</span>
-                                        ) : availableDeliveryTargets.map((target) => (
-                                          <label key={`${rule.clientKey}-target-${target.id}`} className="model-mount-toggle">
-                                            <input
-                                              type="checkbox"
-                                              checked={(rule.delivery_target_ids || []).includes(target.id)}
-                                              onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
-                                            />
-                                            <span>{target.group ? `${target.group}: ${target.label}` : target.label}</span>
-                                          </label>
-                                        ))}
-                                      </div>
-                                    </div>
+                                    {renderDeliveryTargetSelector(rule, `${rule.clientKey}-detector`)}
                                   </div>
                                   {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
                                 </div>
@@ -2988,23 +3206,7 @@ const SettingsPage = ({
                                       <span>Enabled</span>
                                       <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
                                     </label>
-                                    <div className="camera-rule-selector">
-                                      <span>Delivery Targets</span>
-                                      <div className="camera-checkbox-grid">
-                                        {availableDeliveryTargets.length === 0 ? (
-                                          <span className="muted-text">Save Telegram or third-party API connectors first.</span>
-                                        ) : availableDeliveryTargets.map((target) => (
-                                          <label key={`${rule.clientKey}-target-${target.id}`} className="model-mount-toggle">
-                                            <input
-                                              type="checkbox"
-                                              checked={(rule.delivery_target_ids || []).includes(target.id)}
-                                              onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
-                                            />
-                                            <span>{target.group ? `${target.group}: ${target.label}` : target.label}</span>
-                                          </label>
-                                        ))}
-                                      </div>
-                                    </div>
+                                    {renderDeliveryTargetSelector(rule, `${rule.clientKey}-anomaly`)}
                                   </div>
                                   {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
                                 </div>
@@ -3073,23 +3275,7 @@ const SettingsPage = ({
                                         ))}
                                       </div>
                                     </div>
-                                    <div className="camera-rule-selector">
-                                      <span>Delivery Targets</span>
-                                      <div className="camera-checkbox-grid">
-                                        {availableDeliveryTargets.length === 0 ? (
-                                          <span className="muted-text">Save Telegram or third-party API connectors first.</span>
-                                        ) : availableDeliveryTargets.map((target) => (
-                                          <label key={`${rule.clientKey}-demo-target-${target.id}`} className="model-mount-toggle">
-                                            <input
-                                              type="checkbox"
-                                              checked={(rule.delivery_target_ids || []).includes(target.id)}
-                                              onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
-                                            />
-                                            <span>{target.group ? `${target.group}: ${target.label}` : target.label}</span>
-                                          </label>
-                                        ))}
-                                      </div>
-                                    </div>
+                                    {renderDeliveryTargetSelector(rule, `${rule.clientKey}-demo`)}
                                     <label className="toggle-field">
                                       <span>Enabled</span>
                                       <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
@@ -3396,6 +3582,112 @@ const SettingsPage = ({
                       <div className="muted-text">GET/PUT {`${BaseURL}/settings/claude-api-connectors`}</div>
                       <div className="muted-text">POST {`${BaseURL}/settings/claude-api-connectors/test`}</div>
                       <div className="muted-text">Payload contract: Claude-style `messages` JSON plus `metadata` and `hearthlight` trigger context.</div>
+                    </div>
+                  </div>
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <div className="connector-header-line">
+                          <h3>Claude-Compatible Anomaly Model</h3>
+                          <span className={`connector-status-badge ${isClaudeAnomalyModelConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                            {isClaudeAnomalyModelConfigured ? 'Configured' : 'Needs setup'}
+                          </span>
+                        </div>
+                        <p>Use a Claude-compatible API server inside anomaly detection stage 2, separate from trigger delivery connectors.</p>
+                      </div>
+                    </div>
+
+                    <div className="source-row">
+                      <div className="model-binding-grid">
+                        <label className="toggle-field">
+                          <span>Enabled</span>
+                          <input
+                            type="checkbox"
+                            checked={claudeAnomalyModel.enabled}
+                            onChange={(event) => setClaudeAnomalyModelField('enabled', event.target.checked)}
+                          />
+                        </label>
+                        <label>
+                          <span>Base URL</span>
+                          <input
+                            type="url"
+                            value={claudeAnomalyModel.base_url}
+                            onChange={(event) => setClaudeAnomalyModelField('base_url', event.target.value)}
+                            placeholder="http://localhost:8788/v1/messages"
+                          />
+                        </label>
+                        <label>
+                          <span>Model Name</span>
+                          <input
+                            type="text"
+                            value={claudeAnomalyModel.model_name}
+                            onChange={(event) => setClaudeAnomalyModelField('model_name', event.target.value)}
+                            placeholder="claude-compatible-anomaly"
+                          />
+                        </label>
+                        <label>
+                          <span>Auth Token / Secret</span>
+                          <input
+                            type="password"
+                            value={claudeAnomalyModel.auth_token}
+                            onChange={(event) => setClaudeAnomalyModelField('auth_token', event.target.value)}
+                            placeholder="Optional bearer token"
+                          />
+                        </label>
+                        <label>
+                          <span>Timeout Seconds</span>
+                          <input
+                            type="number"
+                            min="1"
+                            max="120"
+                            value={claudeAnomalyModel.timeout_seconds}
+                            onChange={(event) => setClaudeAnomalyModelField('timeout_seconds', event.target.value)}
+                          />
+                        </label>
+                        <label>
+                          <span>Retry Count</span>
+                          <input
+                            type="number"
+                            min="0"
+                            max="5"
+                            value={claudeAnomalyModel.retry_count}
+                            onChange={(event) => setClaudeAnomalyModelField('retry_count', event.target.value)}
+                          />
+                        </label>
+                        <label className="full-width-field">
+                          <span>Prompt Template</span>
+                          <textarea
+                            value={claudeAnomalyModel.prompt_template}
+                            onChange={(event) => setClaudeAnomalyModelField('prompt_template', event.target.value)}
+                            rows={4}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="control-actions">
+                        <button
+                          type="button"
+                          onClick={sendClaudeAnomalyModelTest}
+                          className="ghost-button"
+                          disabled={isTestingClaudeAnomalyModel}
+                        >
+                          {isTestingClaudeAnomalyModel ? 'Sending Test...' : 'Send Test Anomaly Request'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={saveClaudeAnomalyModel}
+                          className="secondary-button"
+                          disabled={isSavingClaudeAnomalyModel}
+                        >
+                          {isSavingClaudeAnomalyModel ? 'Saving...' : 'Save Anomaly Model API'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/claude-anomaly-model`}</div>
+                      <div className="muted-text">POST {`${BaseURL}/settings/claude-anomaly-model/test`}</div>
+                      <div className="muted-text">Select `Claude-Compatible Anomaly API` as an Anomaly Detection model in Sources or Model Bindings to use it in stage 2.</div>
                     </div>
                   </div>
                   <div className="card">

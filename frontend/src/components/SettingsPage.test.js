@@ -92,6 +92,7 @@ beforeEach(() => {
             stage: 'anomaly_stage_2',
             options: [
               { model_key: 'prompt_rules_stage_2', display_name: 'Prompt Rules Stage 2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2', is_mounted: true },
+              { model_key: 'claude_compatible_stage_2', display_name: 'Claude-Compatible Anomaly API', stage: 'anomaly_stage_2', adapter: 'claude_compatible_stage_2', is_mounted: false },
             ],
           },
         ],
@@ -203,6 +204,17 @@ beforeEach(() => {
           retry_count: 1,
         },
       ]);
+    }
+    if (url.endsWith('/settings/claude-anomaly-model') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({
+        enabled: true,
+        base_url: 'http://localhost:8788/v1/messages',
+        auth_token: '********',
+        model_name: 'demo-anomaly-model',
+        timeout_seconds: 10,
+        retry_count: 1,
+        prompt_template: 'Return Hearthlight anomaly JSON.',
+      });
     }
     if (url.endsWith('/settings/action-connectors') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
@@ -322,6 +334,24 @@ beforeEach(() => {
       return buildJsonResponse({
         status: 'sent',
         detail: 'Third-party API test payload sent.',
+      });
+    }
+    if (url.endsWith('/settings/claude-anomaly-model') && options.method === 'PUT') {
+      return buildJsonResponse({
+        enabled: true,
+        base_url: 'http://localhost:8788/v1/messages',
+        auth_token: '********',
+        model_name: 'demo-anomaly-model',
+        timeout_seconds: 10,
+        retry_count: 1,
+        prompt_template: 'Return Hearthlight anomaly JSON.',
+      });
+    }
+    if (url.endsWith('/settings/claude-anomaly-model/test') && options.method === 'POST') {
+      return buildJsonResponse({
+        status: 'sent',
+        detail: 'Claude-compatible anomaly model test request sent.',
+        result: { promote: true, category: 'anomaly_event', score: 0.9 },
       });
     }
     if (url.endsWith('/settings/action-connectors') && options.method === 'PUT') {
@@ -531,6 +561,9 @@ test('renders connectors tab and saves both connector subscription types', async
   expect(screen.getByDisplayValue('+15551234567')).toBeTruthy();
   expect(screen.getByDisplayValue('Local Claude Demo')).toBeTruthy();
   expect(screen.getByDisplayValue('http://localhost:8787/v1/messages')).toBeTruthy();
+  expect(screen.getByText('Claude-Compatible Anomaly Model')).toBeTruthy();
+  expect(screen.getByDisplayValue('http://localhost:8788/v1/messages')).toBeTruthy();
+  expect(screen.getByDisplayValue('demo-anomaly-model')).toBeTruthy();
   expect(screen.getByText('Action Connectors')).toBeTruthy();
   expect(screen.getByDisplayValue('Demo Hue')).toBeTruthy();
   expect(screen.getByDisplayValue('http://localhost:8790/actions')).toBeTruthy();
@@ -569,6 +602,31 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   await act(async () => {
+    fireEvent.click(screen.getByText('Save Anomaly Model API'));
+  });
+
+  await waitFor(() => {
+    const saveCall = global.fetch.mock.calls.find(([url, options]) => (
+      url.endsWith('/settings/claude-anomaly-model') && options?.method === 'PUT'
+    ));
+    expect(saveCall).toBeTruthy();
+    const body = JSON.parse(saveCall[1].body);
+    expect(body.model_name).toBe('demo-anomaly-model');
+    expect(body.base_url).toBe('http://localhost:8788/v1/messages');
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Send Test Anomaly Request'));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/claude-anomaly-model\/test$/),
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  await act(async () => {
     fireEvent.click(screen.getByText('Save Action Connectors'));
   });
 
@@ -602,9 +660,12 @@ test('loads demo trigger presets and serializes selected delivery targets', asyn
   expect(screen.getAllByText('Unattended Bag').length).toBeGreaterThan(0);
   expect(screen.getAllByText('Loitering Compatibility').length).toBeGreaterThan(0);
   expect(screen.getAllByText('Manual Trigger').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Delivery Targets').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Notification').length).toBeGreaterThan(0);
+  expect(screen.getAllByText('Action').length).toBeGreaterThan(0);
 
   await act(async () => {
-    fireEvent.click(screen.getAllByLabelText('Notification: Ops Chat').at(-1));
+    fireEvent.click(screen.getAllByLabelText(/Ops Chat/).at(-1));
     fireEvent.click(screen.getAllByText('Fire Demo Trigger').at(-1));
   });
 
@@ -741,6 +802,17 @@ test('shows a helpful tip when no saved sources exist for alert rules', async ()
     }
     if (url.endsWith('/settings/claude-api-connectors') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/claude-anomaly-model') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse({
+        enabled: false,
+        base_url: '',
+        auth_token: '',
+        model_name: 'claude-compatible-anomaly',
+        timeout_seconds: 10,
+        retry_count: 1,
+        prompt_template: '',
+      });
     }
     if (url.endsWith('/settings/action-connectors') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([]);

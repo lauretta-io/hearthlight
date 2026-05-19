@@ -304,10 +304,14 @@ def collect_required_mounted_models(
         stage: set() for stage in OPERATOR_MODEL_STAGES
     }
     for stage, model_key in resolved_defaults.items():
+        if stage not in required:
+            continue
         if model_key:
             required[stage].add(model_key)
     for source_row in source_rows:
         for stage, model_key in build_source_binding_overrides(source_row).items():
+            if stage not in required:
+                continue
             if model_key:
                 required[stage].add(model_key)
     return required
@@ -502,6 +506,8 @@ def build_model_display_name(stage: str, model_key: str, registration: dict[str,
             return "Pass-Through Stage 2"
         if adapter == "vlm_anomaly_demo_stage_2":
             return "VLM Anomaly Demo Stage 2"
+        if adapter == "claude_compatible_stage_2":
+            return "Claude-Compatible Anomaly API"
 
     cleaned_key = model_key.removeprefix("builtin_").replace("-", " ").replace("_", " ")
     parts = [part for part in cleaned_key.split() if part]

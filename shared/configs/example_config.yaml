@@ -94,6 +94,8 @@ rtdetr:
   img_size:
     - 1280
     - 1280
+  # Used only by the Ultralytics CPU fallback when the model-zoo detector is a stub.
+  local_cpu_img_size: 640
   model_name: yolox-s
   conf_thresh:
     person: 0.6

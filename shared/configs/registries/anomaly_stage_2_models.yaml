@@ -111,6 +111,30 @@ passthrough_stage_2:
   resource_profile:
     cpu_cores: 1
 
+claude_compatible_stage_2:
+  stage: anomaly_stage_2
+  adapter: claude_compatible_stage_2
+  artifact_ref: external_claude_compatible_api
+  runtime:
+    backend: http
+    prompt_mode: external-json
+    fallback_on_failure: false
+  capabilities:
+    prompt_support: true
+    runtime_targets:
+      - http
+      - localhost
+    tasks:
+      - PERSON
+      - BAG
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 1
+
 vlm_anomaly_demo_stage_2:
   stage: anomaly_stage_2
   adapter: vlm_anomaly_demo_stage_2

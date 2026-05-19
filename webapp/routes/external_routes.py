@@ -45,6 +45,8 @@ from ...shared.models.APIModels import (
     ConnectorZooEntry,
     ClaudeApiConnectorEndpoint,
     ClaudeApiConnectorTestResponse,
+    ClaudeAnomalyModelSettings,
+    ClaudeAnomalyModelTestResponse,
     AlgorithmEntityFeedItem,
     AlgorithmFeed,
     AssetReference as APIAssetReference,
@@ -112,6 +114,16 @@ from ...shared.utils.claude_api_connector import (
     ensure_claude_api_connector_tables,
     send_claude_api_payload,
     validate_claude_api_config,
+)
+from ...shared.utils.claude_anomaly_model import (
+    SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+    build_claude_anomaly_request,
+    default_claude_anomaly_model_config,
+    merge_claude_anomaly_model_secret_config,
+    parse_claude_anomaly_response,
+    redact_claude_anomaly_model_config,
+    send_claude_anomaly_request,
+    validate_claude_anomaly_model_config,
 )
 from ...shared.utils.connector_delivery_log import list_connector_delivery_events
 from ...shared.utils.connector_endpoints import (
@@ -255,6 +267,13 @@ def get_expected_module_names() -> list[str]:
     ]
 
 
+def get_auxiliary_status_module_names() -> set[str]:
+    return {
+        ModuleNames.REID,
+        ModuleNames.ASSOCIATION,
+    }
+
+
 def build_default_appearance_settings() -> AppearanceSettings:
     return AppearanceSettings(theme_key="fidelity-light")
 
@@ -282,6 +301,43 @@ def write_appearance_settings(db: Session, payload: AppearanceSettings) -> Appea
     )
     db.commit()
     return read_appearance_settings(db)
+
+
+def read_claude_anomaly_model_settings(db: Session) -> ClaudeAnomalyModelSettings:
+    payload = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+        default=default_claude_anomaly_model_config(),
+    )
+    if not isinstance(payload, dict):
+        payload = default_claude_anomaly_model_config()
+    try:
+        redacted = redact_claude_anomaly_model_config(payload)
+    except Exception:
+        redacted = redact_claude_anomaly_model_config(default_claude_anomaly_model_config())
+    return ClaudeAnomalyModelSettings.model_validate(redacted)
+
+
+def write_claude_anomaly_model_settings(
+    db: Session,
+    payload: ClaudeAnomalyModelSettings,
+) -> ClaudeAnomalyModelSettings:
+    existing = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+        default=default_claude_anomaly_model_config(),
+    )
+    merged = merge_claude_anomaly_model_secret_config(
+        existing if isinstance(existing, dict) else {},
+        payload.model_dump(),
+    )
+    try:
+        normalized = validate_claude_anomaly_model_config(merged)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    set_workspace_setting_value(db, SETTING_KEY_CLAUDE_ANOMALY_MODEL, normalized)
+    db.commit()
+    return read_claude_anomaly_model_settings(db)
 
 
 def build_host_upload_path(upload_path: str | None) -> str | None:
@@ -2716,7 +2772,7 @@ def process_messages():
                     )
         if message.module in module_status:
             module_status[message.module] = message.status
-        else:
+        elif message.module not in get_auxiliary_status_module_names():
             logger.warning("Received status update for unknown module %s", message.module)
 
 
@@ -3463,6 +3519,74 @@ def update_settings_appearance(
     return write_appearance_settings(db, payload)
 
 
+@external_router.get(
+    "/settings/claude-anomaly-model",
+    response_model=ClaudeAnomalyModelSettings,
+)
+def get_settings_claude_anomaly_model(db: Session = Depends(get_db)):
+    return read_claude_anomaly_model_settings(db)
+
+
+@external_router.put(
+    "/settings/claude-anomaly-model",
+    response_model=ClaudeAnomalyModelSettings,
+)
+def update_settings_claude_anomaly_model(
+    payload: ClaudeAnomalyModelSettings,
+    db: Session = Depends(get_db),
+):
+    return write_claude_anomaly_model_settings(db, payload)
+
+
+@external_router.post(
+    "/settings/claude-anomaly-model/test",
+    response_model=ClaudeAnomalyModelTestResponse,
+)
+def test_settings_claude_anomaly_model(
+    payload: ClaudeAnomalyModelSettings,
+    db: Session = Depends(get_db),
+):
+    existing = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CLAUDE_ANOMALY_MODEL,
+        default=default_claude_anomaly_model_config(),
+    )
+    config = merge_claude_anomaly_model_secret_config(
+        existing if isinstance(existing, dict) else {},
+        payload.model_dump(),
+    )
+    try:
+        config = validate_claude_anomaly_model_config(config, require_base_url=True)
+        request_payload = build_claude_anomaly_request(
+            config=config,
+            event_id="TEST-ANOMALY-CANDIDATE",
+            run_id=None,
+            source_id=1,
+            camera_id=1,
+            frame_id=1,
+            stage_1_model_key="heuristic_presence_stage_1",
+            stage_2_model_key="claude_compatible_stage_2",
+            candidate_category="presence_resume",
+            candidate_score=0.72,
+            candidate_reasoning="Observed a person and bag after a quiet period.",
+            visible_items=["person", "bag"],
+            visible_activities=["presence resume"],
+            prompt_template=config.get("prompt_template"),
+            anomaly_object_list=["bag", "unattended object"],
+            anomaly_activity_list=["loitering", "unexpected activity"],
+            asset_references=[],
+        )
+        result = send_claude_anomaly_request(config, request_payload)
+        parse_claude_anomaly_response(result)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return ClaudeAnomalyModelTestResponse(
+        status="sent",
+        detail="Claude-compatible anomaly model test request sent.",
+        result=result,
+    )
+
+
 @external_router.put("/settings/trigger-rules", response_model=list[TriggerRule])
 def update_settings_trigger_rules(
     rules: list[TriggerRule],
@@ -3976,9 +4100,13 @@ def get_model_bindings(db: Session = Depends(get_db)):
 
 @external_router.get("/mounted-models", response_model=list[MountedModelStage])
 def get_mounted_models(db: Session = Depends(get_db)):
-    source_rows = get_active_source_rows(db)
-    bundle = get_registry_bundle(db, source_rows=source_rows)
-    return build_mounted_model_stage_responses(bundle)
+    try:
+        source_rows = get_active_source_rows(db)
+        bundle = get_registry_bundle(db, source_rows=source_rows)
+        return build_mounted_model_stage_responses(bundle)
+    except Exception as exc:
+        logger.exception("Failed to load mounted model inventory")
+        raise HTTPException(status_code=500, detail=f"failed to load mounted models: {exc}") from exc
 
 
 @external_router.put("/model-bindings", response_model=list[ModelBinding])
@@ -4037,7 +4165,10 @@ def update_mounted_models(stages: list[MountedModelStage], db: Session = Depends
                     status_code=400,
                     detail=f"unknown {stage_entry.stage} model binding {model_key}",
                 )
-            ensure_mounted_model_key(bundle, mounted_models, stage_entry.stage, model_key)
+            try:
+                ensure_mounted_model_key(bundle, mounted_models, stage_entry.stage, model_key)
+            except ValueError as exc:
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     defaults = build_default_bindings(bundle)
     required = collect_required_mounted_models(bundle, source_rows, defaults=defaults)
@@ -4056,9 +4187,17 @@ def update_mounted_models(stages: list[MountedModelStage], db: Session = Depends
             detail=f"cannot unmount models currently in use: {formatted}",
         )
 
-    persist_mounted_models(mounted_models)
-    refreshed_bundle = get_registry_bundle(db, source_rows=source_rows)
-    return build_mounted_model_stage_responses(refreshed_bundle)
+    try:
+        persist_mounted_models(mounted_models)
+    except Exception as exc:
+        logger.exception("Failed to persist mounted model inventory")
+        raise HTTPException(status_code=500, detail=f"failed to persist mounted models: {exc}") from exc
+    try:
+        refreshed_bundle = get_registry_bundle(db, source_rows=source_rows)
+        return build_mounted_model_stage_responses(refreshed_bundle)
+    except Exception as exc:
+        logger.exception("Failed to reload mounted model inventory")
+        raise HTTPException(status_code=500, detail=f"failed to reload mounted models: {exc}") from exc
 
 
 @external_router.get("/monitoring/runs", response_model=list[RunSummary])

@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # COCO class ids used by YOLOv8 when falling back from the stub model-zoo detector.
 _YOLO_PERSON_CLASS_ID = 0
 _YOLO_BAG_CLASS_IDS = {24, 26, 28}
+_YOLO_NMS_IOU_THRESHOLD = 0.45
 
 
 def _model_zoo_detector_is_stub(model) -> bool:
@@ -32,6 +33,103 @@ def _model_zoo_detector_is_stub(model) -> bool:
         return True
     output = np.asarray(result[0])
     return output.size == 0
+
+
+def _nms_numpy(boxes, scores, iou_threshold=_YOLO_NMS_IOU_THRESHOLD):
+    if len(boxes) == 0:
+        return np.empty((0,), dtype=np.int64)
+
+    boxes = np.asarray(boxes, dtype=np.float32)
+    scores = np.asarray(scores, dtype=np.float32)
+    x1, y1, x2, y2 = boxes.T
+    areas = np.maximum(0.0, x2 - x1) * np.maximum(0.0, y2 - y1)
+    order = scores.argsort()[::-1]
+    keep = []
+
+    while order.size:
+        current = order[0]
+        keep.append(current)
+        if order.size == 1:
+            break
+
+        remaining = order[1:]
+        xx1 = np.maximum(x1[current], x1[remaining])
+        yy1 = np.maximum(y1[current], y1[remaining])
+        xx2 = np.minimum(x2[current], x2[remaining])
+        yy2 = np.minimum(y2[current], y2[remaining])
+        inter = np.maximum(0.0, xx2 - xx1) * np.maximum(0.0, yy2 - yy1)
+        union = areas[current] + areas[remaining] - inter
+        iou = np.divide(inter, union, out=np.zeros_like(inter), where=union > 0)
+        order = remaining[iou <= iou_threshold]
+
+    return np.asarray(keep, dtype=np.int64)
+
+
+def _normalize_yolo_prediction(prediction):
+    prediction = np.asarray(prediction, dtype=np.float32)
+    if prediction.ndim == 3:
+        prediction = prediction[0]
+    if prediction.ndim != 2 or prediction.size == 0:
+        return np.zeros((0, 0), dtype=np.float32)
+    if 5 <= prediction.shape[0] <= 128 and prediction.shape[1] > 128:
+        prediction = prediction.T
+    return prediction
+
+
+def _filter_yolo_prediction_rows(
+    prediction,
+    frame_shape,
+    model_size,
+    person_threshold,
+    bag_threshold,
+):
+    prediction = _normalize_yolo_prediction(prediction)
+    if prediction.shape[1] <= 4:
+        return np.zeros((0, 6), dtype=np.float32)
+
+    frame_h, frame_w = frame_shape[:2]
+    scale_x = frame_w / float(model_size)
+    scale_y = frame_h / float(model_size)
+    rows = []
+
+    for item in prediction:
+        cx, cy, width, height = item[:4]
+        class_scores = item[4:]
+        if class_scores.size <= _YOLO_PERSON_CLASS_ID:
+            continue
+
+        candidates = [(_YOLO_PERSON_CLASS_ID, 0, person_threshold)]
+        candidates.extend((class_id, 1, bag_threshold) for class_id in _YOLO_BAG_CLASS_IDS)
+        for coco_class_id, hearthlight_class_id, threshold in candidates:
+            if coco_class_id >= class_scores.size:
+                continue
+            confidence = float(class_scores[coco_class_id])
+            if confidence < threshold:
+                continue
+            x1 = max(0.0, (cx - width / 2.0) * scale_x)
+            y1 = max(0.0, (cy - height / 2.0) * scale_y)
+            x2 = min(float(frame_w), (cx + width / 2.0) * scale_x)
+            y2 = min(float(frame_h), (cy + height / 2.0) * scale_y)
+            if x2 <= x1 or y2 <= y1:
+                continue
+            rows.append([x1, y1, x2, y2, confidence, hearthlight_class_id])
+
+    if not rows:
+        return np.zeros((0, 6), dtype=np.float32)
+
+    detections = np.asarray(rows, dtype=np.float32)
+    keep_indices = []
+    for class_id in (0, 1):
+        class_indices = np.flatnonzero(detections[:, 5] == class_id)
+        keep = _nms_numpy(
+            detections[class_indices, :4],
+            detections[class_indices, 4],
+            _YOLO_NMS_IOU_THRESHOLD,
+        )
+        keep_indices.extend(class_indices[keep].tolist())
+    if not keep_indices:
+        return np.zeros((0, 6), dtype=np.float32)
+    return detections[np.asarray(keep_indices, dtype=np.int64)]
 
 
 class RTDetrDetectorAdapter:
@@ -68,6 +166,11 @@ class RTDetrDetectorAdapter:
                 "using ultralytics YOLOv8n fallback for local detection",
             )
             self._ultralytics_model = YOLO("yolov8n.pt")
+            configured_size = cfg.rtdetr.get("local_cpu_img_size", 640)
+            try:
+                self._ultralytics_img_size = max(320, min(int(configured_size), 960))
+            except (TypeError, ValueError):
+                self._ultralytics_img_size = 640
 
     def _frame_array(self, frame):
         return frame.array if hasattr(frame, "array") else frame
@@ -77,42 +180,45 @@ class RTDetrDetectorAdapter:
         person_threshold = float(self.conf_dict.get(0, 0.35))
         bag_threshold = float(self.conf_dict.get(1, 0.35))
         for frame in frames:
-            results = self._ultralytics_model(self._frame_array(frame), verbose=False)
-            rows = []
-            if results:
-                boxes = results[0].boxes
-                if boxes is not None and len(boxes):
-                    for box in boxes:
-                        class_id = int(box.cls.item())
-                        confidence = float(box.conf.item())
-                        if class_id == _YOLO_PERSON_CLASS_ID:
-                            if confidence < person_threshold:
-                                continue
-                            rows.append(
-                                [
-                                    float(box.xyxy[0][0]),
-                                    float(box.xyxy[0][1]),
-                                    float(box.xyxy[0][2]),
-                                    float(box.xyxy[0][3]),
-                                    confidence,
-                                    0,
-                                ]
-                            )
-                        elif class_id in _YOLO_BAG_CLASS_IDS:
-                            if confidence < bag_threshold:
-                                continue
-                            rows.append(
-                                [
-                                    float(box.xyxy[0][0]),
-                                    float(box.xyxy[0][1]),
-                                    float(box.xyxy[0][2]),
-                                    float(box.xyxy[0][3]),
-                                    confidence,
-                                    1,
-                                ]
-                            )
-            outputs.append(np.asarray(rows, dtype=np.float32).reshape(-1, 6))
+            outputs.append(
+                self._infer_ultralytics_frame(
+                    self._frame_array(frame),
+                    person_threshold,
+                    bag_threshold,
+                )
+            )
         return outputs
+
+    def _infer_ultralytics_frame(self, frame, person_threshold, bag_threshold):
+        try:
+            return self._infer_ultralytics_direct(frame, person_threshold, bag_threshold)
+        except Exception:
+            logger.exception("Ultralytics CPU fallback failed; returning empty detections")
+            return np.zeros((0, 6), dtype=np.float32)
+
+    def _infer_ultralytics_direct(self, frame, person_threshold, bag_threshold):
+        import cv2
+        import torch
+
+        resized = cv2.resize(frame, (self._ultralytics_img_size, self._ultralytics_img_size))
+        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+        tensor = torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1))).float()
+        tensor = tensor.unsqueeze(0) / 255.0
+        model = self._ultralytics_model.model
+        model.eval()
+        with torch.inference_mode():
+            prediction = model(tensor)
+        if isinstance(prediction, (list, tuple)):
+            prediction = prediction[0]
+        if hasattr(prediction, "detach"):
+            prediction = prediction.detach().cpu().numpy()
+        return _filter_yolo_prediction_rows(
+            prediction,
+            frame.shape,
+            self._ultralytics_img_size,
+            person_threshold,
+            bag_threshold,
+        )
 
     def infer(self, frames):
         if self._ultralytics_model is not None:

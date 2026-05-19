@@ -80,6 +80,7 @@ try:
         build_model_display_name,
         build_default_bindings,
         build_runtime_binding_block,
+        collect_required_mounted_models,
         load_registry_bundle,
         resolve_tracker_name,
         validate_source_bindings,
@@ -94,6 +95,7 @@ except ModuleNotFoundError:
     build_model_display_name = None
     build_default_bindings = None
     build_runtime_binding_block = None
+    collect_required_mounted_models = None
     load_registry_bundle = None
     resolve_tracker_name = None
     validate_source_bindings = None
@@ -827,7 +829,10 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertIn(MODEL_STAGE_TRACKER, defaults)
         self.assertEqual(defaults[MODEL_STAGE_DETECTOR], "builtin_yolox_s_cpu")
         self.assertEqual(defaults[MODEL_STAGE_ANOMALY_STAGE_1], "siglip_stage_1_cpu")
-        self.assertEqual(defaults[MODEL_STAGE_ANOMALY_STAGE_2], "smolvlm_stage_2_cpu")
+        self.assertIn(
+            defaults[MODEL_STAGE_ANOMALY_STAGE_2],
+            bundle["models"][MODEL_STAGE_ANOMALY_STAGE_2],
+        )
         self.assertEqual(
             bundle["models"]["anomaly_stage_1"]["heuristic_presence_stage_1"]["healthcheck"]["import_path"],
             "hearthlight_model_zoo.anomaly_detectors",
@@ -979,6 +984,24 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertIn("builtin_yolox_s_cpu", mounted["detector"])
         self.assertIn("builtin_bytetrack", mounted["tracker"])
         self.assertNotIn("reid", mounted)
+
+    @unittest.skipIf(collect_required_mounted_models is None, "omegaconf is not installed")
+    def test_collect_required_mounted_models_ignores_internal_reid_default(self):
+        bundle = {
+            "bindings": {
+                "defaults": {
+                    "detector": "builtin_yolox_s_cpu",
+                    "tracker": "builtin_bytetrack",
+                    "reid": None,
+                    "anomaly_stage_1": "heuristic_presence_stage_1",
+                    "anomaly_stage_2": "claude_compatible_stage_2",
+                }
+            }
+        }
+        required = collect_required_mounted_models(bundle, [])
+
+        self.assertNotIn("reid", required)
+        self.assertEqual(required["anomaly_stage_2"], {"claude_compatible_stage_2"})
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_load_model_registries_merges_upstream_master_with_local_entries(self):
