@@ -101,6 +101,10 @@ def _extract_hostname(header_value: str | None) -> str | None:
 
 
 def request_is_local_only(request: Request) -> bool:
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    if not _is_loopback_host(client_host):
+        return False
+
     origin_host = _extract_hostname(request.headers.get("origin"))
     host_header = request.headers.get("host")
     host_name = _extract_hostname(host_header)
@@ -108,9 +112,7 @@ def request_is_local_only(request: Request) -> bool:
     explicit_hosts = [host for host in (origin_host, host_name) if host]
     if explicit_hosts:
         return all(_is_loopback_host(host) for host in explicit_hosts)
-
-    client_host = getattr(getattr(request, "client", None), "host", None)
-    return _is_loopback_host(client_host)
+    return True
 
 
 @app.middleware("http")

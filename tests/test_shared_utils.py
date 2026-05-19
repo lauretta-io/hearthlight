@@ -1,6 +1,8 @@
 import os
+import sys
 import tempfile
 import unittest
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread
@@ -61,6 +63,7 @@ from shared.utils.timer import LoopTimer
 from shared.constants import IncidentStatus
 from shared.utils.system_state import derive_system_status, get_error_modules, SystemStatus
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
+from shared.utils.download_weights import get_model_weights
 from shared.utils.threading import collect_live_thread_names
 from shared.utils.time_utils import seconds_since_datetime
 
@@ -538,6 +541,36 @@ class InputSourceUtilsTests(unittest.TestCase):
         )
 
         self.assertEqual(error, "source opened but did not yield a frame")
+
+
+class DownloadWeightsTests(unittest.TestCase):
+    def test_get_model_weights_blocks_zip_slip_paths(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir_path = Path(temp_dir)
+            weights_path = temp_dir_path / "weights" / "model.pth"
+            outside_path = temp_dir_path / "escaped.pth"
+
+            def fake_download(*, url, output, fuzzy, quiet):
+                del url, fuzzy, quiet
+                output_path = Path(output)
+                with zipfile.ZipFile(output_path, "w") as archive:
+                    archive.writestr("../../escaped.txt", b"owned")
+                    archive.writestr("nested/model.pth", b"safe-weights")
+                return str(output_path)
+
+            with patch(
+                "shared.utils.download_weights.MODEL_REGISTRY",
+                {"test-model": {"url": "https://example.invalid/model.zip", "path": str(weights_path)}},
+            ), patch.dict(
+                sys.modules,
+                {"gdown": SimpleNamespace(download=fake_download)},
+            ):
+                resolved = get_model_weights("test-model")
+
+            self.assertEqual(resolved, str(weights_path))
+            self.assertTrue(weights_path.exists())
+            self.assertEqual(weights_path.read_bytes(), b"safe-weights")
+            self.assertFalse(outside_path.exists())
 
     def test_probe_source_connection_accepts_valid_source(self):
         class FakeCapture:

@@ -2,7 +2,6 @@ import os
 import zipfile
 import shutil
 from pathlib import Path
-import gdown
 
 """
 to add a model, add a key that can be used in the config to identify it, a link to download the model
@@ -61,6 +60,13 @@ def get_model_weights(model_name):
 
     print(f"specified path {path} does not exist. downloading model to {path}")
 
+    try:
+        import gdown
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "gdown is required to download model weights"
+        ) from exc
+
     url = MODEL_REGISTRY[model_name]["url"]
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.parent / f"temp_{model_name}{path.suffix}"
@@ -82,7 +88,7 @@ def get_model_weights(model_name):
                         "download failed: likely received HTML page instead of weights file."
                     )
 
-        if zipfile.is_zipfile(temp_path) and temp_path.suffix == ".zip":
+        if zipfile.is_zipfile(temp_path):
             expected_extension = path.suffix
             with zipfile.ZipFile(temp_path) as zf:
                 weight_file = None
@@ -96,17 +102,10 @@ def get_model_weights(model_name):
                         f"download failed: could not find {expected_extension} file in zip"
                     )
 
-                zf.extract(weight_file, path.parent)
-                extracted_path = path.parent / weight_file
-                shutil.move(extracted_path, path)
+                with zf.open(weight_file) as source, path.open("wb") as destination:
+                    shutil.copyfileobj(source, destination)
 
                 temp_path.unlink()
-                for dirpath, dirnames, _ in os.walk(path.parent, topdown=False):
-                    for dirname in dirnames:
-                        try:
-                            os.rmdir(os.path.join(dirpath, dirname))
-                        except OSError:
-                            pass
         else:
             shutil.move(temp_path, path)
 
