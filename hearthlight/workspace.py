@@ -80,3 +80,15 @@ def workspace_python_path(workspace: Path) -> Path:
     if os.name == "nt":
         return workspace / ".venv" / "Scripts" / "python.exe"
     return workspace / ".venv" / "bin" / "python"
+
+
+def resolve_project_python(root_dir: Path, *, fallback: str | None = None) -> str:
+    """Prefer the workspace virtualenv for host-side worker processes."""
+    venv_python = workspace_python_path(root_dir)
+    if venv_python.exists():
+        return str(venv_python)
+    if fallback is not None:
+        return fallback
+    import sys
+
+    return sys.executable

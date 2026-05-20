@@ -52,6 +52,20 @@ class LauncherHelpersTests(unittest.TestCase):
         updated = set_nested_scalar(text, ["feature_extractor"], "device", "cpu")
         self.assertEqual(get_nested_scalar(updated, ["feature_extractor"], "device"), "cpu")
 
+    def test_set_nested_scalar_inserts_before_mapping_children(self):
+        text = (
+            "tracking:\n"
+            "  tracker: bytetrack\n"
+            "  classes:\n"
+            "    0: person\n"
+            "    1: bag\n"
+        )
+        updated = set_nested_scalar(text, ["tracking"], "track_method", "bytetrack")
+        self.assertIn(
+            "  track_method: bytetrack\n  classes:\n    0: person",
+            updated,
+        )
+
     def test_list_config_templates_includes_example(self):
         templates = list_config_templates()
         self.assertIn("example", templates)

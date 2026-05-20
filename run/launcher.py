@@ -33,6 +33,7 @@ except ModuleNotFoundError:  # pragma: no cover - launcher fallback in thin test
     load_registry_bundle = None
 from hearthlight.runtime import run_local_reset_db
 from hearthlight.runtime import resolve_start_defaults
+from hearthlight.workspace import resolve_project_python
 
 try:
     from hearthlight_model_zoo.catalog import load_master_catalog
@@ -439,9 +440,14 @@ def set_nested_scalar(text: str, path: list[str], key: str, value: str | bool | 
         return "\n".join(lines) + "\n"
 
     section_index, parent_indent, section_end = section_info
-    key_pattern = re.compile(rf"^\s{{{parent_indent + 2}}}{re.escape(key)}:\s*")
-    replacement = " " * (parent_indent + 2) + f"{key}: {_render_yaml_scalar(value)}"
-    insert_index = section_end
+    child_indent = parent_indent + 2
+    key_pattern = re.compile(rf"^\s{{{child_indent}}}{re.escape(key)}:\s*")
+    # A scalar key must have a real value token after ":", not only an inline comment.
+    scalar_key_pattern = re.compile(rf"^\s{{{child_indent}}}(\w+):\s*[^#\s]\S*")
+    mapping_key_pattern = re.compile(rf"^\s{{{child_indent}}}(\w+):\s*(?:#.*)?$")
+    replacement = " " * child_indent + f"{key}: {_render_yaml_scalar(value)}"
+    last_scalar_index: int | None = None
+    first_mapping_index: int | None = None
 
     for index in range(section_index + 1, section_end):
         raw = lines[index]
@@ -449,11 +455,22 @@ def set_nested_scalar(text: str, path: list[str], key: str, value: str | bool | 
         if not stripped:
             continue
         indent = len(raw) - len(raw.lstrip(" "))
-        if indent == parent_indent + 2 and key_pattern.match(raw):
+        if indent != child_indent:
+            continue
+        if key_pattern.match(raw):
             lines[index] = replacement
             return "\n".join(lines) + "\n"
-        if indent == parent_indent + 2:
-            insert_index = index + 1
+        if scalar_key_pattern.match(raw):
+            last_scalar_index = index
+        elif mapping_key_pattern.match(raw) and first_mapping_index is None:
+            first_mapping_index = index
+
+    if last_scalar_index is not None:
+        insert_index = last_scalar_index + 1
+    elif first_mapping_index is not None:
+        insert_index = first_mapping_index
+    else:
+        insert_index = section_end
 
     lines.insert(insert_index, replacement)
     return "\n".join(lines) + "\n"
@@ -601,8 +618,9 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
 
     if selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU:
         subprocess.run(command + ["up", "-d", *CORE_SERVICES], cwd=ROOT_DIR, env=env, check=True)
+        local_python = resolve_project_python(ROOT_DIR)
         return subprocess.call(
-            [sys.executable, "-m", "hearthlight.local_workers", "start"],
+            [local_python, "-m", "hearthlight.local_workers", "start"],
             cwd=ROOT_DIR,
             env=env,
         )
@@ -616,16 +634,24 @@ def _wait_and_open_dashboard():
 
 
 def stop_stack(use_cuda: bool = False) -> int:
-    subprocess.call(
-        [sys.executable, "-m", "hearthlight.local_workers", "stop"],
-        cwd=ROOT_DIR,
-        env=os.environ.copy(),
-    )
+    local_python = resolve_project_python(ROOT_DIR)
+    try:
+        subprocess.run(
+            [local_python, "-m", "hearthlight.local_workers", "stop"],
+            cwd=ROOT_DIR,
+            env=os.environ.copy(),
+            check=False,
+            timeout=15,
+        )
+    except subprocess.TimeoutExpired:
+        # Keep stop responsive for demos even if the supervisor is wedged.
+        if platform.system() != "Windows":
+            subprocess.call(["pkill", "-f", "hearthlight.local_workers"])
     docker_binary = find_docker_binary()
     if docker_binary is None:
         raise SystemExit("Docker CLI not found. Install Docker Desktop or add docker to PATH.")
     return subprocess.call(
-        compose_command(docker_binary, use_cuda) + ["down", "--remove-orphans"],
+        compose_command(docker_binary, use_cuda) + ["down", "--remove-orphans", "--timeout", "5"],
         cwd=ROOT_DIR,
         env=build_docker_env(docker_binary),
     )

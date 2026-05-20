@@ -8,6 +8,13 @@ siglip_stage_1_cpu:
     device: cpu
     model_size_tier: small
     precision: fp32
+    # Gating defaults are tuned for responsive feedback on short clips and
+    # demo videos. Real-time surveillance deployments can raise these via
+    # cfg.anomaly.* in config.yaml (which now overrides registry values).
+    eval_interval: 2
+    quiet_period_seconds: 5
+    min_track_count: 1
+    cooldown_seconds: 10
   capabilities:
     tasks:
       - PERSON
@@ -40,6 +47,10 @@ siglip_stage_1_cuda:
     device: cuda:0
     model_size_tier: small
     precision: fp16
+    eval_interval: 2
+    quiet_period_seconds: 5
+    min_track_count: 1
+    cooldown_seconds: 10
   capabilities:
     tasks:
       - PERSON
@@ -73,6 +84,10 @@ siglip_stage_1_mlx:
     device: mlx
     model_size_tier: small
     precision: fp16
+    eval_interval: 2
+    quiet_period_seconds: 5
+    min_track_count: 1
+    cooldown_seconds: 10
   capabilities:
     tasks:
       - PERSON
@@ -101,10 +116,10 @@ heuristic_presence_stage_1:
   adapter: heuristic_presence_stage_1
   artifact_ref: heuristic-presence
   runtime:
-    eval_interval: 16
-    quiet_period_seconds: 30
+    eval_interval: 2
+    quiet_period_seconds: 5
     min_track_count: 1
-    cooldown_seconds: 60
+    cooldown_seconds: 10
   capabilities:
     tasks:
       - PERSON

@@ -1292,12 +1292,16 @@ def derive_source_state(
     if status == SystemStatus.INITIALIZING:
         return "initializing"
     if status == SystemStatus.RUNNING:
+        known_total_frames = (
+            recording.total_frames
+            if recording is not None and recording.total_frames is not None and recording.total_frames > 0
+            else None
+        )
         if (
             source_row.kind == SOURCE_KIND_VIDEO_UPLOAD
-            and recording is not None
-            and recording.total_frames is not None
+            and known_total_frames is not None
             and frame_id is not None
-            and frame_id >= recording.total_frames
+            and frame_id >= known_total_frames
         ):
             return "completed"
         return "running"
@@ -1312,7 +1316,11 @@ def build_input_source_response(
     current_frame_override: int | None = None,
 ):
     current_frame = current_frame_override if current_frame_override is not None else frame_id
-    current_total = recording.total_frames if recording is not None else None
+    current_total = (
+        recording.total_frames
+        if recording is not None and recording.total_frames is not None and recording.total_frames > 0
+        else None
+    )
     effective_error = build_effective_source_error(source_row, upload_row)
     if (
         current_total is not None
@@ -2756,7 +2764,11 @@ def process_messages():
                 if "frame_id" in extra:
                     frame_id = extra.get("frame_id")
                 if "total_frames" in extra:
-                    total_frames = extra.get("total_frames")
+                    incoming_total_frames = extra.get("total_frames")
+                    if isinstance(incoming_total_frames, int) and incoming_total_frames > 0:
+                        total_frames = incoming_total_frames
+                    else:
+                        total_frames = None
             if message.status == DataModels.Status.INFO:
                 if message.module:
                     backpressure = extra.get("backpressure")
@@ -2778,6 +2790,7 @@ def process_messages():
 
 def refresh_runtime_status():
     global status
+    global run_id
 
     process_messages()
     relevant_statuses = [
@@ -2785,6 +2798,10 @@ def refresh_runtime_status():
         for module_name in get_expected_module_names()
     ]
     next_status, reset_frames = derive_system_status(status, relevant_statuses)
+    # In hybrid mode workers can be alive before a run is started. Avoid reporting
+    # system "running" until /start has assigned a run_id.
+    if run_id is None and next_status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}:
+        next_status = SystemStatus.IDLE
     with state_lock:
         status = next_status
         if reset_frames:

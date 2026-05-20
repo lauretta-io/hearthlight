@@ -115,7 +115,14 @@ feature_extractor:
 anomaly:
   text_embeddings_path: /app/src/shared/prompts/prompt.pt
   text_prompts_path: /app/src/shared/prompts
-  eval_interval: 10
+  # The keys below override the per-model registry runtime values for the
+  # stage-1 presence heuristic. Lower values mean faster / more frequent
+  # anomaly events; raise them for production surveillance to avoid noise.
+  eval_interval: 2          # seconds between stage-1 evaluations per camera
+  quiet_period_seconds: 5   # empty-frame quiet window before re-firing
+  cooldown_seconds: 10      # min gap between sustained-activity events
+  min_track_count: 1        # tracks needed in-frame to consider an event
+  frame_update_interval: 1  # min seconds between anomaly-state updates
   device: cuda:0
   threshold: 0.5
 vllm:

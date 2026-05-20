@@ -104,7 +104,11 @@ const RunSection = ({ embedded = false, pollingEnabled = true, showHeader = true
       return [createSourceDraft()];
     }
     try {
-      return JSON.parse(saved);
+      const parsed = JSON.parse(saved);
+      if (!Array.isArray(parsed) || parsed.length === 0) {
+        return [createSourceDraft()];
+      }
+      return parsed.map((source, index) => hydrateSource(source || {}, index));
     } catch (error) {
       return [createSourceDraft()];
     }

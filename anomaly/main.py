@@ -74,8 +74,15 @@ class Anomaly(Thread):
             self.stage_one_adapters = {}
             self.stage_two_adapters = {}
             self.prompt_catalog_by_stage_two_key: dict[str, PromptCatalog] = {}
+            # Pull any workspace-level overrides from `cfg.anomaly`. These are
+            # higher precedence than registry runtime defaults so operators can
+            # tune gating from config.yaml without re-publishing the registry.
+            anomaly_cfg = getattr(cfg, "anomaly", None) or {}
+            gating_overrides = self._extract_gating_overrides(anomaly_cfg)
             self.frame_update_interval = float(
-                getattr(getattr(cfg, "anomaly", {}), "frame_update_interval", FRAME_UPDATE_INTERVAL)
+                self._anomaly_cfg_get(
+                    anomaly_cfg, "frame_update_interval", FRAME_UPDATE_INTERVAL
+                )
             )
 
             for cam_id, camera_cfg in cfg.input.cameras.items():
@@ -100,6 +107,9 @@ class Anomaly(Thread):
                 )
                 if stage_1_registration is None:
                     raise ValueError(f"missing anomaly stage_1 registration {stage_1_model_key}")
+                stage_1_registration = self._apply_gating_overrides(
+                    stage_1_registration, gating_overrides
+                )
                 if stage_1_model_key not in self.stage_one_adapters:
                     self.stage_one_adapters[stage_1_model_key] = build_adapter(stage_1_registration)
                 self.camera_eval_interval[cam_id] = float(
@@ -126,6 +136,47 @@ class Anomaly(Thread):
         except Exception:
             logger.exception("Failed to initialize", extra={"task": self.name})
             raise
+
+    # Keys on `cfg.anomaly` that can override per-model registry runtime values
+    # used by the stage-1 heuristic / SigLIP adapters.
+    _GATING_OVERRIDE_KEYS = (
+        "eval_interval",
+        "quiet_period_seconds",
+        "cooldown_seconds",
+        "min_track_count",
+    )
+
+    @staticmethod
+    def _anomaly_cfg_get(anomaly_cfg, key, default=None):
+        """Read a key from `cfg.anomaly` regardless of whether it is an
+        OmegaConf `DictConfig` or a plain Python `dict`.
+        """
+        getter = getattr(anomaly_cfg, "get", None)
+        if callable(getter):
+            value = getter(key, default)
+            return default if value is None else value
+        return getattr(anomaly_cfg, key, default)
+
+    @classmethod
+    def _extract_gating_overrides(cls, anomaly_cfg) -> dict:
+        overrides: dict = {}
+        for key in cls._GATING_OVERRIDE_KEYS:
+            value = cls._anomaly_cfg_get(anomaly_cfg, key, None)
+            if value is not None:
+                overrides[key] = value
+        return overrides
+
+    @staticmethod
+    def _apply_gating_overrides(registration: dict, overrides: dict) -> dict:
+        if not overrides:
+            return registration
+        merged = dict(registration)
+        runtime = dict(merged.get("runtime") or {})
+        # cfg.anomaly is a workspace-level override that wins over the
+        # registry-provided model defaults.
+        runtime.update(overrides)
+        merged["runtime"] = runtime
+        return merged
 
     def run(self):
         logger.info("Starting", extra={"task": self.name})

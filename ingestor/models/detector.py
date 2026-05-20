@@ -197,28 +197,60 @@ class RTDetrDetectorAdapter:
             return np.zeros((0, 6), dtype=np.float32)
 
     def _infer_ultralytics_direct(self, frame, person_threshold, bag_threshold):
-        import cv2
-        import torch
-
-        resized = cv2.resize(frame, (self._ultralytics_img_size, self._ultralytics_img_size))
-        rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-        tensor = torch.from_numpy(np.ascontiguousarray(rgb.transpose(2, 0, 1))).float()
-        tensor = tensor.unsqueeze(0) / 255.0
-        model = self._ultralytics_model.model
-        model.eval()
-        with torch.inference_mode():
-            prediction = model(tensor)
-        if isinstance(prediction, (list, tuple)):
-            prediction = prediction[0]
-        if hasattr(prediction, "detach"):
-            prediction = prediction.detach().cpu().numpy()
-        return _filter_yolo_prediction_rows(
-            prediction,
-            frame.shape,
-            self._ultralytics_img_size,
-            person_threshold,
-            bag_threshold,
+        # Use the public Ultralytics predictor path; direct internal model calls
+        # can hang on some host/python/torch combinations in local CPU mode.
+        results = self._ultralytics_model.predict(
+            source=frame,
+            imgsz=self._ultralytics_img_size,
+            verbose=False,
+            iou=_YOLO_NMS_IOU_THRESHOLD,
+            device="cpu",
         )
+        if not results:
+            return np.zeros((0, 6), dtype=np.float32)
+
+        boxes = results[0].boxes
+        if boxes is None or boxes.xyxy is None or len(boxes.xyxy) == 0:
+            return np.zeros((0, 6), dtype=np.float32)
+
+        xyxy = boxes.xyxy.detach().cpu().numpy()
+        conf = boxes.conf.detach().cpu().numpy()
+        cls = boxes.cls.detach().cpu().numpy().astype(np.int64)
+
+        rows = []
+        for idx in range(len(cls)):
+            coco_class_id = int(cls[idx])
+            confidence = float(conf[idx])
+            if coco_class_id == _YOLO_PERSON_CLASS_ID:
+                if confidence < person_threshold:
+                    continue
+                hearthlight_class_id = 0
+            elif coco_class_id in _YOLO_BAG_CLASS_IDS:
+                if confidence < bag_threshold:
+                    continue
+                hearthlight_class_id = 1
+            else:
+                continue
+
+            x1, y1, x2, y2 = xyxy[idx].tolist()
+            rows.append([x1, y1, x2, y2, confidence, hearthlight_class_id])
+
+        if not rows:
+            return np.zeros((0, 6), dtype=np.float32)
+
+        detections = np.asarray(rows, dtype=np.float32)
+        keep_indices = []
+        for class_id in (0, 1):
+            class_indices = np.flatnonzero(detections[:, 5] == class_id)
+            keep = _nms_numpy(
+                detections[class_indices, :4],
+                detections[class_indices, 4],
+                _YOLO_NMS_IOU_THRESHOLD,
+            )
+            keep_indices.extend(class_indices[keep].tolist())
+        if not keep_indices:
+            return np.zeros((0, 6), dtype=np.float32)
+        return detections[np.asarray(keep_indices, dtype=np.int64)]
 
     def infer(self, frames):
         if self._ultralytics_model is not None:

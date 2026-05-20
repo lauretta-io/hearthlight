@@ -1,8 +1,10 @@
 import queue
 import time
+import os
 from threading import Thread
 import logging
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
 from omegaconf import DictConfig
 
@@ -83,11 +85,81 @@ class Ingestor(Thread):
             self.completed_normally = False
             self.no_frame_timeout = float(cfg.input.get("no_frame_timeout", 15.0))
             self.status_publisher = status_publisher
+            self.detector_timeout_seconds = float(
+                os.environ.get("HEARTHLIGHT_DETECTOR_TIMEOUT_SECONDS", "20")
+            )
+            self.detector_executor = ThreadPoolExecutor(
+                max_workers=1,
+                thread_name_prefix="IngestorDetector",
+            )
+            self.detector_disabled = False
         except Exception:
             logger.exception("Failed to initialize", extra={"task": self.name})
             raise
 
         logger.debug("Initialized", extra={"task": self.name})
+
+    def _empty_detector_outputs(self, frame_count: int):
+        return [None] * frame_count, [[] for _ in range(frame_count)]
+
+    def _publish_frame_status_if_due(self, last_frame_update: float) -> float:
+        """Heartbeat-publish the most recent frame_id so the dashboard keeps moving
+        even while a single frame is still draining through the detector / output
+        pipeline. Returns the updated timestamp of the last status publish.
+        """
+        if self.last_frame_id is None:
+            return last_frame_update
+        now = time.time()
+        if now - last_frame_update <= FRAME_UPDATE_INTERVAL:
+            return last_frame_update
+        self.status_publisher.publish(
+            StatusMessage(
+                status=Status.INFO,
+                module=ModuleNames.INGESTOR,
+                extra={
+                    "frame_id": self.last_frame_id,
+                    "total_frames": self.capture.total_frames,
+                },
+            )
+        )
+        return now
+
+    def _infer_with_timeout(self, subset_frames: Frames):
+        frame_count = len(subset_frames.frames)
+        if frame_count == 0:
+            return self._empty_detector_outputs(0)
+        if self.detector_disabled:
+            return self._empty_detector_outputs(frame_count)
+
+        future = self.detector_executor.submit(self.detector, subset_frames)
+        try:
+            return future.result(timeout=self.detector_timeout_seconds)
+        except FuturesTimeout:
+            self.detector_disabled = True
+            reason = (
+                "detector inference timed out; disabling detector to keep stream running"
+            )
+            logger.error(reason, extra={"task": self.name})
+            self.status_publisher.publish(
+                StatusMessage(
+                    status=Status.INFO,
+                    module=ModuleNames.INGESTOR,
+                    extra={"reason": reason},
+                )
+            )
+            return self._empty_detector_outputs(frame_count)
+        except Exception:
+            self.detector_disabled = True
+            reason = "detector inference failed; disabling detector to keep stream running"
+            logger.exception(reason, extra={"task": self.name})
+            self.status_publisher.publish(
+                StatusMessage(
+                    status=Status.INFO,
+                    module=ModuleNames.INGESTOR,
+                    extra={"reason": reason},
+                )
+            )
+            return self._empty_detector_outputs(frame_count)
 
     def run(self):
         logger.info("Starting", extra={"task": self.name})
@@ -194,18 +266,7 @@ class Ingestor(Thread):
                 logger.info("Activated run logging", extra={"task": self.name})
                 self.run_logging_activated = True
 
-            if time.time() - last_frame_update > FRAME_UPDATE_INTERVAL:
-                self.status_publisher.publish(
-                    StatusMessage(
-                        status=Status.INFO,
-                        module=ModuleNames.INGESTOR,
-                        extra={
-                            "frame_id": frames.frame_id,
-                            "total_frames": self.capture.total_frames,
-                        },
-                    )
-                )
-                last_frame_update = time.time()
+            last_frame_update = self._publish_frame_status_if_due(last_frame_update)
             current_time = time.time()
             if current_time - last_metrics_update > FRAME_UPDATE_INTERVAL:
                 self.status_publisher.publish(
@@ -244,7 +305,9 @@ class Ingestor(Thread):
                     frame.detections = []
             if frame_subset:
                 subset_frames = Frames(frame_id=frames.frame_id, frames=frame_subset)
-                subset_tracker_inputs, subset_detections = self.detector(subset_frames)
+                subset_tracker_inputs, subset_detections = self._infer_with_timeout(
+                    subset_frames
+                )
             else:
                 subset_tracker_inputs, subset_detections = [], []
             timer.time("detect")
@@ -263,7 +326,13 @@ class Ingestor(Thread):
             self.output_thread.queue.put(frames)
 
             timer.mark()
-            while self.output_thread.get_limiting_queue_length() > 5:
+            while self.output_thread.get_limiting_queue_length() > 5 and self.process:
+                # Keep the status heartbeat going while we're stalled on downstream
+                # backpressure, otherwise the dashboard appears stuck on the previous
+                # frame_id for the entire duration of a slow processing cycle.
+                last_frame_update = self._publish_frame_status_if_due(
+                    last_frame_update
+                )
                 time.sleep(SHORT_SLEEP)
             timer.time("wait")
 
@@ -275,6 +344,7 @@ class Ingestor(Thread):
         self.frames_thread.join()
         self.capture.join()
         self.output_thread.join()
+        self.detector_executor.shutdown(wait=False, cancel_futures=True)
         if torch is not None:
             try:
                 torch.cuda.empty_cache()

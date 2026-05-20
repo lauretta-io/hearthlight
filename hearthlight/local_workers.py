@@ -21,6 +21,7 @@ except ModuleNotFoundError:  # pragma: no cover - local dependency check at runt
     cv2 = None
 
 from hearthlight.runtime import assert_local_worker_dependencies_reachable, resolve_local_worker_env
+from hearthlight.workspace import resolve_project_python
 from shared.utils.input_sources import (
     SOURCE_KIND_VIDEO_UPLOAD,
     coerce_source_value,
@@ -82,10 +83,7 @@ class LocalWorkerSupervisor:
         self.poll_thread: threading.Thread | None = None
 
     def _python(self) -> str:
-        venv_python = self.root_dir / ".venv" / "bin" / "python"
-        if venv_python.exists():
-            return str(venv_python)
-        return sys.executable
+        return resolve_project_python(self.root_dir)
 
     def _worker_commands(self) -> dict[str, list[str]]:
         python = self._python()
@@ -314,9 +312,7 @@ def start_supervisor() -> int:
         if pid and _process_is_alive(pid):
             return 0
         _remove_pid()
-    python = str(ROOT_DIR / ".venv" / "bin" / "python")
-    if not Path(python).exists():
-        python = sys.executable
+    python = resolve_project_python(ROOT_DIR)
     with LOG_PATH.open("ab") as log_handle:
         process = subprocess.Popen(
             [python, "-m", "hearthlight.local_workers", "serve"],

@@ -130,8 +130,15 @@ class MultiCapture:
                         )
                         camera.set_start_timestamp(time.time())
                     capture = Capture(camera.cam_id, camera.source)
-                camera.width = capture.width
-                camera.height = capture.height
+                if self.resize:
+                    # Frames are resized in-place inside `get_frames`, so the camera
+                    # metadata (used for zone polygon scaling and DB persistence) must
+                    # reflect the post-resize dimensions, not the raw source size.
+                    camera.width = int(self.resize[0])
+                    camera.height = int(self.resize[1])
+                else:
+                    camera.width = capture.width
+                    camera.height = capture.height
                 if camera.camera_type == CameraType.VIDEO_FILE:
                     thread = VideoFile(capture, camera.start_timestamp)
                     camera.total_frames = capture.frame_count
@@ -168,8 +175,11 @@ class MultiCapture:
             connected, frame = thread.get_frame()
             if connected:
                 status = True
-            if self.resize:
-                frame.resized_array = cv2.resize(frame.array, self.resize)
+            if self.resize and not frame.empty:
+                # The downstream detector/tracker/feature-extractor/anomaly stages all
+                # read `frame.array`, so the configured `input.resize` must be applied
+                # in-place. Empty placeholder frames keep their tiny default array.
+                frame.array = cv2.resize(frame.array, tuple(self.resize))
             frames.append(frame)
         return status, frames
 

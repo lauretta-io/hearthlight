@@ -193,7 +193,6 @@ class Frame(BaseModel, arbitrary_types_allowed=True):
     timestamp: float
     time_delta: float
     array: np.ndarray
-    resized_array: np.ndarray | None = None
     status: bool = True
     empty: bool = True
     save_path: str | None = None
