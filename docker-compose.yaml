@@ -28,6 +28,7 @@ services:
       start_period: 10s
 
   rabbitmq:
+    image: ${HEARTHLIGHT_RABBITMQ_IMAGE:-hearthlight-rabbitmq:latest}
     build: ./rabbitmq
     networks:
       - mynetwork
@@ -44,6 +45,7 @@ services:
       start_period: 10s
 
   reset_db:
+    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
     build: ./webapp
     networks:
       - mynetwork
@@ -61,6 +63,7 @@ services:
       python -um src.shared.database.recreate_db'
 
   webapp:
+    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./webapp
@@ -105,7 +108,7 @@ services:
     command: >
       bash -c '
       cd /app/src/frontend &&
-      npm install &&
+      npm ci --no-audit --no-fund &&
       (npm start &) &&
       cd /app &&
       until nc -z rabbitmq 15672; do
@@ -133,6 +136,7 @@ services:
       start_period: 10s
 
   ingestor:
+    image: ${HEARTHLIGHT_INGESTOR_IMAGE:-hearthlight-ingestor:latest}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./ingestor
@@ -167,6 +171,7 @@ services:
       fi'
 
   reid:
+    image: ${HEARTHLIGHT_REID_IMAGE:-hearthlight-reid:latest}
     build: ./reid
     networks:
       - mynetwork
@@ -196,6 +201,7 @@ services:
       fi'
 
   association:
+    image: ${HEARTHLIGHT_ASSOCIATION_IMAGE:-hearthlight-association:latest}
     build: ./association
     networks:
       - mynetwork
@@ -226,6 +232,7 @@ services:
       fi'
 
   anomaly:
+    image: ${HEARTHLIGHT_ANOMALY_IMAGE:-hearthlight-anomaly:latest}
     build: ./anomaly
     networks:
       - mynetwork

@@ -7,6 +7,7 @@ Current release: `0.8.0`
 
 - release notes: [CHANGELOG.md](/Users/galvinwidjaja/code/cursor/hearthlight/CHANGELOG.md:1)
 - API, CLI, frontend package metadata, and macOS bundle metadata are aligned to `0.8.0`
+- published Docker images can now be selected by setting `HEARTHLIGHT_*_IMAGE` values in `.env`
 
 ## Repository Overview
 
@@ -103,6 +104,7 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
 - the Rules page is now split into `Detection Rules` and `Anomaly Detection Rules`, with multi-camera targeting and per-rule anomaly cutoff values
 - the model library now shows qualitative processing-rate guidance, and Model Logs surfaces recent measured cadence by model stage
 - anomaly detection Stage 2 now supports third-party API-backed model entries for `Chatgpt`, `Claude`, and a generic `Lauretta API` endpoint when their credentials are configured
+- the compose/CLI path can now pull published service images such as `your-namespace/hearthlight-webapp:0.8.0` instead of building locally when those image refs are configured
 - theme selection now lives in `Settings > Appearance`, with a workspace-wide backend setting plus browser startup cache
 - the frontend now runs on Vite instead of `react-scripts`
 - anomaly Stage 1 and anomaly detection defaults now have local CPU/CUDA/MLX-safe registry fallbacks
@@ -158,6 +160,12 @@ RABBITMQ_MANAGEMENT_HOST_PORT=15672
 RABBITMQ_EXCHANGE=test
 WEBAPP_API_HOST_PORT=8000
 WEBAPP_UI_HOST_PORT=3000
+WEBAPP_ALLOW_REMOTE_WITHOUT_API_KEY=false
+WEBAPP_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+WEBAPP_MAX_REQUEST_BYTES=5242880
+
+# Set a shared API key before exposing the control-plane API beyond localhost.
+# WEBAPP_API_KEY=replace-with-random-secret
 ```
 
 ## Runtime Config

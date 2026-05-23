@@ -32,7 +32,7 @@ except ModuleNotFoundError:  # pragma: no cover - launcher fallback in thin test
     build_model_display_name = None
     load_registry_bundle = None
 from hearthlight.runtime import run_local_reset_db
-from hearthlight.runtime import resolve_start_defaults
+from hearthlight.runtime import load_project_env_file, resolve_start_defaults
 
 try:
     from hearthlight_model_zoo.catalog import load_master_catalog
@@ -53,6 +53,14 @@ REGISTRY_STAGE_LABELS = {
     "reid": "Person ReID",
     "anomaly_stage_1": "Heuristic Filter",
     "anomaly_stage_2": "Anomaly Stage 2",
+}
+PUBLISHED_IMAGE_ENV_BY_SERVICE = {
+    "rabbitmq": "HEARTHLIGHT_RABBITMQ_IMAGE",
+    "webapp": "HEARTHLIGHT_WEBAPP_IMAGE",
+    "ingestor": "HEARTHLIGHT_INGESTOR_IMAGE",
+    "reid": "HEARTHLIGHT_REID_IMAGE",
+    "association": "HEARTHLIGHT_ASSOCIATION_IMAGE",
+    "anomaly": "HEARTHLIGHT_ANOMALY_IMAGE",
 }
 
 
@@ -538,6 +546,16 @@ def compose_environment(selection: LaunchSelection) -> dict[str, str]:
     return env
 
 
+def configured_published_services(services: Iterable[str]) -> list[str]:
+    env_file_values = load_project_env_file(ROOT_DIR)
+    configured: list[str] = []
+    for service in services:
+        image_var = PUBLISHED_IMAGE_ENV_BY_SERVICE.get(service)
+        if image_var and str(env_file_values.get(image_var, "")).strip():
+            configured.append(service)
+    return configured
+
+
 def wait_for_dashboard(timeout_seconds: float = 30.0) -> bool:
     import urllib.request
 
@@ -561,6 +579,7 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
     env = compose_environment(selection)
     docker_full_stack = selection.worker_runtime == WORKER_RUNTIME_DOCKER
     services = FULL_STACK_SERVICES if docker_full_stack else CORE_SERVICES
+    published_services = configured_published_services(services)
 
     print(f"Template: {selection.template_path}")
     print(
@@ -586,9 +605,14 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
         print(f"CUDA_VISIBLE_DEVICES={selection.cuda_visible_devices or 'all'}")
     else:
         print("Running in CPU mode")
+    if published_services:
+        print(f"Published images: {', '.join(published_services)}")
 
     if dry_run:
         return 0
+
+    if published_services:
+        subprocess.run(command + ["pull", *published_services], cwd=ROOT_DIR, env=env, check=True)
 
     subprocess.run(command + ["up", "-d", "db", "rabbitmq"], cwd=ROOT_DIR, env=env, check=True)
 

@@ -44,6 +44,47 @@ MISSING_FILE_HINTS = {
 }
 
 
+def parse_env_assignments(env_path: Path) -> dict[str, str]:
+    if not env_path.exists():
+        return {}
+    assignments: dict[str, str] = {}
+    for line in env_path.read_text().splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        assignments[key.strip()] = value.strip()
+    return assignments
+
+
+def parse_bool(value: str | None, *, default: bool = False) -> bool:
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def evaluate_env_security_warnings(assignments: dict[str, str]) -> list[str]:
+    warnings: list[str] = []
+    if parse_bool(assignments.get("WEBAPP_ALLOW_REMOTE_WITHOUT_API_KEY"), default=False):
+        warnings.append(
+            "WEBAPP_ALLOW_REMOTE_WITHOUT_API_KEY is enabled; remote clients can reach the control-plane API without a shared key."
+        )
+    if not assignments.get("WEBAPP_API_KEY", "").strip():
+        warnings.append(
+            "WEBAPP_API_KEY is not set; keep the API bound to localhost only or configure a shared key before remote exposure."
+        )
+    if "WEBAPP_ALLOWED_ORIGINS" not in assignments:
+        warnings.append(
+            "WEBAPP_ALLOWED_ORIGINS is not set; the wider built-in localhost allowlist will be used instead of an explicit deployment-specific list."
+        )
+    return warnings
+
+
 def check(condition: bool, message: str, failures: list[str], warnings: list[str], *, optional: bool = False) -> None:
     if condition:
         print(f"PASS: {message}")
@@ -118,6 +159,11 @@ def main() -> int:
         check(exists, f"{rel_path} exists", failures, warnings)
         if not exists and rel_path in MISSING_FILE_HINTS:
             print(f"INFO: {MISSING_FILE_HINTS[rel_path]}")
+
+    env_path = REPO_ROOT / ".env"
+    if env_path.exists():
+        for warning in evaluate_env_security_warnings(parse_env_assignments(env_path)):
+            check(False, warning, failures, warnings, optional=True)
 
     package_available = find_spec("hearthlight_model_zoo") is not None
     package_declared = requirements_declare_model_zoo()

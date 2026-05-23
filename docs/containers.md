@@ -64,6 +64,21 @@ hearthlight reset-db
 docker compose up webapp
 ```
 
+To use published `0.8.0` images instead of local builds, set the service image overrides in `.env`
+before running the CLI or compose directly:
+
+```bash
+HEARTHLIGHT_RABBITMQ_IMAGE=your-namespace/hearthlight-rabbitmq:0.8.0
+HEARTHLIGHT_WEBAPP_IMAGE=your-namespace/hearthlight-webapp:0.8.0
+HEARTHLIGHT_INGESTOR_IMAGE=your-namespace/hearthlight-ingestor:0.8.0
+HEARTHLIGHT_REID_IMAGE=your-namespace/hearthlight-reid:0.8.0
+HEARTHLIGHT_ASSOCIATION_IMAGE=your-namespace/hearthlight-association:0.8.0
+HEARTHLIGHT_ANOMALY_IMAGE=your-namespace/hearthlight-anomaly:0.8.0
+```
+
+When those values are set, `hearthlight start` pulls the published images first and then starts
+the same compose stack.
+
 Enable the full AI pipeline explicitly:
 
 ```bash

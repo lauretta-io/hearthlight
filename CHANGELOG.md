@@ -3,6 +3,7 @@
 ## 0.8.0 - 2026-05-15
 
 - bumped the project version to `0.8.0` across the Python package, frontend package metadata, macOS bundle metadata, and FastAPI OpenAPI metadata
+- added published-image support for the compose/CLI stack via `HEARTHLIGHT_*_IMAGE` env vars and a Docker publish helper script
 - widened the default YOLOX detector surface to COCO-trained classes and added extra YOLOX size options in the model zoo
 - migrated the frontend from `react-scripts` to Vite and rebuilt the frontend package lockfile
 - simplified source configuration defaults:
