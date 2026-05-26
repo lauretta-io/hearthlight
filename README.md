@@ -223,6 +223,19 @@ Models, triggers, connectors, and rule-set templates are all loaded from that pl
 restart, and missing plugin manifests are soft-disabled in the control-plane database rather than
 hard-deleted.
 
+The default core connector set stays intentionally small. Optional integrations can be exposed as
+non-core plugins through the Connector Zoo. For example, `shared/plugins/govee_light_connection/`
+adds the `Govee Light Connection` connector without making it part of the default built-in
+connector set. The current Govee v1 scope is light control only through the HTTP API:
+
+- validate API key
+- discover bound light-capable devices
+- read optional device state
+- send control actions such as power, brightness, RGB color, color temperature, and supported scenes
+
+If a valid Govee account has no bound devices, Hearthlight surfaces that as a clean empty discovery
+state rather than an authentication failure.
+
 ## Startup
 
 Initialize any required submodules first:

@@ -91,6 +91,19 @@ const normalizeBindingsPayload = (payload) => {
   return [];
 };
 
+const normalizeZooPayload = (payload, collectionKey) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.[collectionKey])) return payload[collectionKey];
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+};
+
+const normalizeListPayload = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+};
+
 const createSourceDraft = (kind = 'camera_url') => ({
   clientKey: `settings-source-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   id: null,
@@ -227,6 +240,47 @@ const hydrateAppleMessageSubscription = (subscription, fallbackIndex = 0) => ({
   service: subscription.service ?? 'iMessage',
 });
 
+const createGoveeEndpointDraft = () => ({
+  clientKey: `settings-govee-endpoint-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  id: null,
+  connector_key: 'govee',
+  label: '',
+  enabled: true,
+  api_key: '',
+  sku: '',
+  device: '',
+  device_name: '',
+  capability_key: '',
+  capability_type: '',
+  capability_instance: '',
+  capability_value: '',
+  capability_value_label: '',
+  input_kind: '',
+});
+
+const hydrateGoveeEndpoint = (endpoint, fallbackIndex = 0) => {
+  const config = endpoint.config || {};
+  return {
+    clientKey: endpoint.id
+      ? `settings-govee-endpoint-${endpoint.id}`
+      : `settings-govee-endpoint-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+    id: endpoint.id ?? null,
+    connector_key: endpoint.connector_key ?? 'govee',
+    label: endpoint.label ?? '',
+    enabled: endpoint.enabled ?? true,
+    api_key: config.api_key ?? '',
+    sku: config.sku ?? '',
+    device: config.device ?? '',
+    device_name: config.device_name ?? '',
+    capability_key: config.capability_key ?? '',
+    capability_type: config.capability_type ?? '',
+    capability_instance: config.capability_instance ?? '',
+    capability_value: config.capability_value ?? '',
+    capability_value_label: config.capability_value_label ?? '',
+    input_kind: config.input_kind ?? '',
+  };
+};
+
 const sanitizeSourcesForApi = (sources) =>
   sources.map((source, index) => ({
     id: source.id ?? undefined,
@@ -279,6 +333,27 @@ const sanitizeAppleMessageSubscriptionsForApi = (subscriptions) =>
     subscription_label: subscription.subscription_label?.trim() || null,
     recipient_handle: subscription.recipient_handle.trim(),
     service: subscription.service,
+  }));
+
+const sanitizeGoveeEndpointsForApi = (endpoints) =>
+  endpoints.map((endpoint) => ({
+    id: endpoint.id ?? undefined,
+    connector_key: 'govee',
+    label: endpoint.label?.trim() || endpoint.device_name || 'Govee Light Connection',
+    enabled: endpoint.enabled,
+    config: {
+      api_key: endpoint.api_key,
+      sku: endpoint.sku,
+      device: endpoint.device,
+      device_name: endpoint.device_name,
+      capability_key: endpoint.capability_key,
+      capability_type: endpoint.capability_type,
+      capability_instance: endpoint.capability_instance,
+      capability_value: endpoint.capability_value,
+      capability_value_label: endpoint.capability_value_label || null,
+      input_kind: endpoint.input_kind || null,
+    },
+    delivery_capabilities: ['light_control'],
   }));
 
 const buildAlertRuleSetupHint = (sources, errorDetail = null) => {
@@ -488,21 +563,26 @@ const SettingsPage = ({
   const [isSavingAlertRules, setIsSavingAlertRules] = useState(false);
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
+  const [isSavingGoveeEndpoints, setIsSavingGoveeEndpoints] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
   const [rowErrors, setRowErrors] = useState({});
   const [alertRuleErrors, setAlertRuleErrors] = useState({});
   const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
   const [appleMessageSubscriptionErrors, setAppleMessageSubscriptionErrors] = useState({});
+  const [goveeEndpointErrors, setGoveeEndpointErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
+  const [busyGoveeTests, setBusyGoveeTests] = useState({});
+  const [busyGoveeDiscovery, setBusyGoveeDiscovery] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
   const [alertRules, setAlertRules] = useState([]);
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
+  const [goveeEndpoints, setGoveeEndpoints] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
   const [triggerZoo, setTriggerZoo] = useState([]);
@@ -528,6 +608,8 @@ const SettingsPage = ({
   });
   const [draftThemeKey, setDraftThemeKey] = useState(currentThemeKey);
   const [appearanceMessage, setAppearanceMessage] = useState(null);
+  const [goveeDiscoveryResults, setGoveeDiscoveryResults] = useState({});
+  const [goveeDiscoveryMessages, setGoveeDiscoveryMessages] = useState({});
   const rawRequestedTab = forcedTab || searchParams.get('tab');
   const requestedTab = rawRequestedTab === 'run' ? 'monitoring' : rawRequestedTab;
   const allowedTabs = forcedTab ? [...SETTINGS_TABS, ...STANDALONE_PAGE_TABS] : SETTINGS_TABS;
@@ -621,7 +703,7 @@ const SettingsPage = ({
       throw new Error(detail || 'Failed to load Telegram trigger subscriptions');
     }
     const data = await response.json();
-    setTelegramSubscriptions((data || []).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
+    setTelegramSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
   };
 
   const reloadAppleMessageSubscriptionState = async () => {
@@ -637,7 +719,23 @@ const SettingsPage = ({
       throw new Error(detail || 'Failed to load Apple Messages trigger subscriptions');
     }
     const data = await response.json();
-    setAppleMessageSubscriptions((data || []).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+    setAppleMessageSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+  };
+
+  const reloadGoveeEndpointState = async () => {
+    const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load Govee connector endpoints');
+    }
+    const data = await response.json();
+    setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
   };
 
   useEffect(() => {
@@ -679,6 +777,7 @@ const SettingsPage = ({
         }
         await reloadTelegramSubscriptionState();
         await reloadAppleMessageSubscriptionState();
+        await reloadGoveeEndpointState();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
         });
@@ -694,10 +793,10 @@ const SettingsPage = ({
           fetch(`${BaseURL}/connector-zoo`),
         ]);
         if (triggerResponse.ok) {
-          setTriggerZoo(await triggerResponse.json());
+          setTriggerZoo(normalizeZooPayload(await triggerResponse.json(), 'triggers'));
         }
         if (connectorResponse.ok) {
-          setConnectorZoo(await connectorResponse.json());
+          setConnectorZoo(normalizeZooPayload(await connectorResponse.json(), 'connectors'));
         }
       } catch {
         // Keep the page usable if the zoo catalogs are temporarily unavailable.
@@ -901,6 +1000,104 @@ const SettingsPage = ({
     );
   };
 
+  const addGoveeEndpoint = () => {
+    setGoveeEndpoints((previous) => [...previous, createGoveeEndpointDraft()]);
+  };
+
+  const removeGoveeEndpoint = (clientKey) => {
+    setGoveeEndpoints((previous) => previous.filter((endpoint) => endpoint.clientKey !== clientKey));
+    setGoveeEndpointErrors((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+    setGoveeDiscoveryResults((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+    setGoveeDiscoveryMessages((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+  };
+
+  const setGoveeEndpointField = (clientKey, field, value) => {
+    setGoveeEndpoints((previous) =>
+      previous.map((endpoint) =>
+        endpoint.clientKey === clientKey
+          ? {
+              ...endpoint,
+              [field]: value,
+            }
+          : endpoint
+      )
+    );
+  };
+
+  const applyGoveeDeviceSelection = (clientKey, deviceKey) => {
+    const devices = goveeDiscoveryResults[clientKey] || [];
+    const selectedDevice = devices.find((device) => `${device.sku}:${device.device}` === deviceKey);
+    setGoveeEndpoints((previous) =>
+      previous.map((endpoint) => {
+        if (endpoint.clientKey !== clientKey) {
+          return endpoint;
+        }
+        if (!selectedDevice) {
+          return {
+            ...endpoint,
+            sku: '',
+            device: '',
+            device_name: '',
+            capability_key: '',
+            capability_type: '',
+            capability_instance: '',
+            capability_value: '',
+            capability_value_label: '',
+            input_kind: '',
+          };
+        }
+        const firstCapability = (selectedDevice.capability_options || [])[0];
+        return {
+          ...endpoint,
+          sku: selectedDevice.sku,
+          device: selectedDevice.device,
+          device_name: selectedDevice.device_name,
+          capability_key: firstCapability?.key || '',
+          capability_type: firstCapability?.capability_type || '',
+          capability_instance: firstCapability?.instance || '',
+          capability_value: firstCapability?.default_value ?? '',
+          capability_value_label: '',
+          input_kind: firstCapability?.input_kind || '',
+        };
+      })
+    );
+  };
+
+  const applyGoveeCapabilitySelection = (clientKey, capabilityKey) => {
+    const endpoint = goveeEndpoints.find((item) => item.clientKey === clientKey);
+    const deviceEntry = (goveeDiscoveryResults[clientKey] || []).find(
+      (device) => device.sku === endpoint?.sku && device.device === endpoint?.device,
+    );
+    const capability = (deviceEntry?.capability_options || []).find((item) => item.key === capabilityKey);
+    setGoveeEndpoints((previous) =>
+      previous.map((item) =>
+        item.clientKey === clientKey
+          ? {
+              ...item,
+              capability_key: capability?.key || '',
+              capability_type: capability?.capability_type || '',
+              capability_instance: capability?.instance || '',
+              capability_value: capability?.default_value ?? '',
+              capability_value_label: '',
+              input_kind: capability?.input_kind || '',
+            }
+          : item
+      )
+    );
+  };
+
   const setSourceKind = (clientKey, kind) => {
     setUploadFeedback((previous) => {
       const next = { ...previous };
@@ -1020,6 +1217,23 @@ const SettingsPage = ({
       }
     });
     setAppleMessageSubscriptionErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const validateGoveeEndpoints = () => {
+    const nextErrors = {};
+    goveeEndpoints.forEach((endpoint) => {
+      if (!endpoint.api_key.trim()) {
+        nextErrors[endpoint.clientKey] = 'API key is required.';
+      } else if (!endpoint.sku || !endpoint.device) {
+        nextErrors[endpoint.clientKey] = 'Discover and select a Govee light device first.';
+      } else if (!endpoint.capability_type || !endpoint.capability_instance) {
+        nextErrors[endpoint.clientKey] = 'Select a supported Govee light action.';
+      } else if (endpoint.capability_value === '' || endpoint.capability_value === null || endpoint.capability_value === undefined) {
+        nextErrors[endpoint.clientKey] = 'Select or enter the action value to send on trigger.';
+      }
+    });
+    setGoveeEndpointErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
@@ -1394,7 +1608,7 @@ const SettingsPage = ({
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save Telegram trigger subscriptions');
       }
-      setTelegramSubscriptions((data || []).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
+      setTelegramSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
       setTelegramSubscriptionErrors({});
       setBanner({ kind: 'success', text: 'Telegram trigger subscriptions saved.' });
     } catch (error) {
@@ -1465,7 +1679,7 @@ const SettingsPage = ({
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save Apple Messages trigger subscriptions');
       }
-      setAppleMessageSubscriptions((data || []).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+      setAppleMessageSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
       setAppleMessageSubscriptionErrors({});
       setBanner({ kind: 'success', text: 'Apple Messages trigger subscriptions saved.' });
     } catch (error) {
@@ -1510,6 +1724,144 @@ const SettingsPage = ({
     }
   };
 
+  const testGoveeApiKey = async (endpoint) => {
+    if (!endpoint.api_key.trim()) {
+      setGoveeEndpointErrors((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: 'API key is required.',
+      }));
+      setBanner({ kind: 'error', text: 'API key is required for a Govee test.' });
+      return;
+    }
+    setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: true }));
+    try {
+      const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
+        ? `?endpoint_id=${endpoint.id}`
+        : '';
+      const response = await fetch(`${BaseURL}/settings/govee/test${query}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ api_key: endpoint.api_key.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to validate Govee API key');
+      }
+      setBanner({ kind: 'success', text: data.message || 'Govee API key is valid.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: false }));
+    }
+  };
+
+  const discoverGoveeDevices = async (endpoint) => {
+    if (!endpoint.api_key.trim()) {
+      setGoveeEndpointErrors((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: 'API key is required.',
+      }));
+      setBanner({ kind: 'error', text: 'API key is required to discover Govee devices.' });
+      return;
+    }
+    setBusyGoveeDiscovery((previous) => ({ ...previous, [endpoint.clientKey]: true }));
+    try {
+      const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
+        ? `?endpoint_id=${endpoint.id}`
+        : '';
+      const response = await fetch(`${BaseURL}/settings/govee/devices${query}`, {
+        headers: endpoint.api_key.trim() === MASKED_SECRET_VALUE
+          ? {}
+          : {
+              'x-govee-api-key': endpoint.api_key.trim(),
+            },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to discover Govee devices');
+      }
+      setGoveeDiscoveryResults((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: data || [],
+      }));
+      setGoveeDiscoveryMessages((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: data.length > 0
+          ? `Discovered ${data.length} Govee light device${data.length === 1 ? '' : 's'}.`
+          : 'The API key is valid, but no light-capable Govee devices were returned for this account.',
+      }));
+      setBanner({
+        kind: 'success',
+        text: data.length > 0
+          ? `Discovered ${data.length} Govee light device${data.length === 1 ? '' : 's'}.`
+          : 'Govee API key is valid, but no light-capable devices were returned.',
+      });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyGoveeDiscovery((previous) => ({ ...previous, [endpoint.clientKey]: false }));
+    }
+  };
+
+  const saveGoveeEndpoints = async () => {
+    if (!validateGoveeEndpoints()) {
+      setBanner({ kind: 'error', text: 'Fix the Govee connection rows first.' });
+      return;
+    }
+    setIsSavingGoveeEndpoints(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeGoveeEndpointsForApi(goveeEndpoints)),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save Govee light connections');
+      }
+      setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
+      setGoveeEndpointErrors({});
+      setBanner({ kind: 'success', text: 'Govee light connections saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingGoveeEndpoints(false);
+    }
+  };
+
+  const sendGoveeTestAction = async (endpoint) => {
+    if (!validateGoveeEndpoints()) {
+      setBanner({ kind: 'error', text: 'Fix the Govee connection row before sending a test action.' });
+      return;
+    }
+    setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: true }));
+    try {
+      const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
+        ? `?endpoint_id=${endpoint.id}`
+        : '';
+      const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints/test${query}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeGoveeEndpointsForApi([endpoint])[0]),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to send Govee test action');
+      }
+      setBanner({ kind: 'success', text: data.detail || 'Govee trigger action sent.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: false }));
+    }
+  };
+
   const modelOptionsByStage = MODEL_STAGE_OPTIONS.reduce((result, option) => {
     const stageEntry = (modelOptionCatalog.stages || []).find((entry) => entry.stage === option.stage);
     result[option.stage] = stageEntry?.options || [];
@@ -1546,6 +1898,17 @@ const SettingsPage = ({
       subscription.enabled
       && subscription.recipient_handle.trim()
       && ['iMessage', 'SMS'].includes(subscription.service),
+  );
+  const normalizedConnectorZoo = Array.isArray(connectorZoo) ? connectorZoo : [];
+  const goveeConnectorZooEntry = normalizedConnectorZoo.find((entry) => entry.key === 'govee');
+  const isGoveeConnectorConfigured = goveeEndpoints.some(
+    (endpoint) =>
+      endpoint.enabled
+      && endpoint.sku
+      && endpoint.device
+      && endpoint.capability_type
+      && endpoint.capability_instance
+      && endpoint.api_key.trim(),
   );
   const stageLibraryEntries = MODEL_STAGE_OPTIONS.map((option) => {
     const stageOptions = modelOptionsByStage[option.stage] || [];
@@ -2461,6 +2824,219 @@ const SettingsPage = ({
               )}
 
               <section className="control-grid connectors-grid">
+                  {goveeConnectorZooEntry && (
+                    <div className="card">
+                      <div className="card-header">
+                        <div>
+                          <div className="connector-header-line">
+                            <h3>Connector Zoo</h3>
+                          </div>
+                          <p>Optional connector plugins can be added here without being part of the default built-in connector set.</p>
+                        </div>
+                      </div>
+                      <div className="source-list">
+                        <div className="source-row">
+                          <div className="source-row-header">
+                            <div>
+                              <strong>{goveeConnectorZooEntry.label}</strong>
+                              <div className="muted-text">{goveeConnectorZooEntry.description}</div>
+                            </div>
+                            <button type="button" onClick={addGoveeEndpoint} className="secondary-button">
+                              Add Connection
+                            </button>
+                          </div>
+                          <div className="muted-text">Plugin: {goveeConnectorZooEntry.plugin_key || 'external'}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {(goveeEndpoints.length > 0) && (
+                    <div className="card">
+                      <div className="card-header">
+                        <div>
+                          <div className="connector-header-line">
+                            <h3>Govee Light Connection</h3>
+                            <span className={`connector-status-badge ${isGoveeConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                              {isGoveeConnectorConfigured ? 'Configured' : 'Needs setup'}
+                            </span>
+                          </div>
+                          <p>Use a Govee account to discover light-capable devices and trigger light actions when Hearthlight rules fire.</p>
+                        </div>
+                        <button type="button" onClick={addGoveeEndpoint} className="secondary-button">
+                          Add Connection
+                        </button>
+                      </div>
+
+                      <div className="source-list">
+                        {goveeEndpoints.map((endpoint, index) => {
+                          const devices = goveeDiscoveryResults[endpoint.clientKey] || [];
+                          const selectedDevice = devices.find((device) => device.sku === endpoint.sku && device.device === endpoint.device);
+                          const capabilityOptions = selectedDevice?.capability_options || [];
+                          const selectedCapability = capabilityOptions.find((option) => option.key === endpoint.capability_key);
+                          const enumValues = selectedCapability?.values || [];
+                          const isColorInput = selectedCapability?.input_kind === 'color';
+                          const colorValue = Number(endpoint.capability_value || 0);
+                          const colorHex = `#${Math.max(0, colorValue).toString(16).padStart(6, '0').slice(-6)}`;
+                          return (
+                            <div key={endpoint.clientKey} className="source-row">
+                              <div className="source-row-header">
+                                <strong>Connection {index + 1}</strong>
+                                <button type="button" onClick={() => removeGoveeEndpoint(endpoint.clientKey)} className="ghost-button">Remove</button>
+                              </div>
+                              <div className="model-binding-grid">
+                                <label>
+                                  <span>Label</span>
+                                  <input
+                                    type="text"
+                                    value={endpoint.label}
+                                    onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'label', event.target.value)}
+                                    placeholder="Optional operator label"
+                                  />
+                                </label>
+                                <label>
+                                  <span>API Key</span>
+                                  <input
+                                    type="password"
+                                    value={endpoint.api_key}
+                                    onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'api_key', event.target.value)}
+                                    placeholder="Govee API key"
+                                  />
+                                </label>
+                                <label className="toggle-field">
+                                  <span>Enabled</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={endpoint.enabled}
+                                    onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'enabled', event.target.checked)}
+                                  />
+                                </label>
+                                <label>
+                                  <span>Device</span>
+                                  <select
+                                    value={endpoint.sku && endpoint.device ? `${endpoint.sku}:${endpoint.device}` : ''}
+                                    onChange={(event) => applyGoveeDeviceSelection(endpoint.clientKey, event.target.value)}
+                                  >
+                                    <option value="">Select discovered light</option>
+                                    {devices.map((device) => (
+                                      <option key={`${device.sku}:${device.device}`} value={`${device.sku}:${device.device}`}>
+                                        {device.device_name} ({device.sku})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  <span>Action</span>
+                                  <select
+                                    value={endpoint.capability_key}
+                                    onChange={(event) => applyGoveeCapabilitySelection(endpoint.clientKey, event.target.value)}
+                                    disabled={!selectedDevice}
+                                  >
+                                    <option value="">Select action</option>
+                                    {capabilityOptions.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                {selectedCapability?.input_kind === 'enum' && (
+                                  <label>
+                                    <span>Action Value</span>
+                                    <select
+                                      value={endpoint.capability_value}
+                                      onChange={(event) => {
+                                        const selectedValue = enumValues.find((item) => `${item.value}` === event.target.value);
+                                        setGoveeEndpointField(endpoint.clientKey, 'capability_value', Number.isNaN(Number(event.target.value)) ? event.target.value : Number(event.target.value));
+                                        setGoveeEndpointField(endpoint.clientKey, 'capability_value_label', selectedValue?.label || '');
+                                      }}
+                                    >
+                                      <option value="">Select value</option>
+                                      {enumValues.map((item) => (
+                                        <option key={`${item.value}`} value={item.value}>{item.label}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                )}
+                                {selectedCapability?.input_kind === 'integer' && (
+                                  <label>
+                                    <span>Action Value</span>
+                                    <input
+                                      type="number"
+                                      min={selectedCapability.range?.min ?? 0}
+                                      max={selectedCapability.range?.max ?? 100}
+                                      step={selectedCapability.range?.precision ?? 1}
+                                      value={endpoint.capability_value}
+                                      onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'capability_value', Number(event.target.value))}
+                                    />
+                                  </label>
+                                )}
+                                {isColorInput && (
+                                  <label>
+                                    <span>Color</span>
+                                    <input
+                                      type="color"
+                                      value={colorHex}
+                                      onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'capability_value', parseInt(event.target.value.replace('#', ''), 16))}
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                              <div className="control-actions">
+                                <button
+                                  type="button"
+                                  onClick={() => testGoveeApiKey(endpoint)}
+                                  className="ghost-button"
+                                  disabled={Boolean(busyGoveeTests[endpoint.clientKey])}
+                                >
+                                  {busyGoveeTests[endpoint.clientKey] ? 'Testing...' : 'Test API Key'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => discoverGoveeDevices(endpoint)}
+                                  className="ghost-button"
+                                  disabled={Boolean(busyGoveeDiscovery[endpoint.clientKey])}
+                                >
+                                  {busyGoveeDiscovery[endpoint.clientKey] ? 'Discovering...' : 'Discover Devices'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => sendGoveeTestAction(endpoint)}
+                                  className="ghost-button"
+                                  disabled={Boolean(busyGoveeTests[endpoint.clientKey])}
+                                >
+                                  {busyGoveeTests[endpoint.clientKey] ? 'Sending Test...' : 'Send Test Action'}
+                                </button>
+                              </div>
+                              {goveeDiscoveryMessages[endpoint.clientKey] && (
+                                <div className="muted-text">{goveeDiscoveryMessages[endpoint.clientKey]}</div>
+                              )}
+                              {goveeEndpointErrors[endpoint.clientKey] && (
+                                <div className="row-error">{goveeEndpointErrors[endpoint.clientKey]}</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="control-actions">
+                        <button
+                          type="button"
+                          onClick={saveGoveeEndpoints}
+                          className="secondary-button"
+                          disabled={isSavingGoveeEndpoints}
+                        >
+                          {isSavingGoveeEndpoints ? 'Saving...' : 'Save Govee Light Connections'}
+                        </button>
+                      </div>
+
+                      <div className="empty-state endpoint-info">
+                        <div className="muted-text">GET/PUT {`${BaseURL}/settings/govee-connector-endpoints`}</div>
+                        <div className="muted-text">POST {`${BaseURL}/settings/govee/test`}</div>
+                        <div className="muted-text">GET {`${BaseURL}/settings/govee/devices`}</div>
+                        <div className="muted-text">POST {`${BaseURL}/settings/govee-connector-endpoints/test`}</div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="card">
                     <div className="card-header">
                       <div>

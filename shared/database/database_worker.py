@@ -39,8 +39,13 @@ from ..utils.apple_messages_notifications import (
 )
 from ..utils.connector_endpoints import (
     CONNECTOR_KEY_APPLE_MESSAGES,
+    CONNECTOR_KEY_GOVEE,
     CONNECTOR_KEY_TELEGRAM,
     list_connector_endpoint_rows,
+)
+from ..utils.govee_connector import (
+    ensure_govee_connector_tables,
+    queue_govee_trigger_actions,
 )
 from ..utils.telegram_notifications import (
     build_trigger_notification_text,
@@ -436,6 +441,14 @@ class DatabaseWorker:
             enabled_only=True,
         )
 
+    def get_enabled_govee_endpoints(self):
+        ensure_govee_connector_tables()
+        return list_connector_endpoint_rows(
+            self.db,
+            connector_key=CONNECTOR_KEY_GOVEE,
+            enabled_only=True,
+        )
+
     def queue_trigger_notifications(
         self,
         incident_row: SQLModels.Incident,
@@ -447,7 +460,8 @@ class DatabaseWorker:
     ) -> None:
         telegram_subscriptions = self.get_enabled_telegram_subscriptions()
         apple_message_subscriptions = self.get_enabled_apple_message_subscriptions()
-        if not telegram_subscriptions and not apple_message_subscriptions:
+        govee_endpoints = self.get_enabled_govee_endpoints()
+        if not telegram_subscriptions and not apple_message_subscriptions and not govee_endpoints:
             return
         run_row = (
             self.db.query(SQLModels.Run)
@@ -489,6 +503,11 @@ class DatabaseWorker:
         if apple_message_subscriptions:
             queue_apple_message_trigger_notifications(
                 apple_message_subscriptions,
+                trigger_text=trigger_text,
+            )
+        if govee_endpoints:
+            queue_govee_trigger_actions(
+                govee_endpoints,
                 trigger_text=trigger_text,
             )
 

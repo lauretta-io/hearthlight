@@ -8,10 +8,12 @@ from ..models import SQLModels
 
 CONNECTOR_KEY_TELEGRAM = "telegram"
 CONNECTOR_KEY_APPLE_MESSAGES = "apple_messages"
+CONNECTOR_KEY_GOVEE = "govee"
 MASKED_SECRET_VALUE = "********"
 SECRET_CONFIG_KEYS = {
     "bot_token",
     "bearer_token",
+    "api_key",
 }
 
 

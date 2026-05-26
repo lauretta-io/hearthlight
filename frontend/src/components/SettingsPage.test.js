@@ -202,6 +202,31 @@ beforeEach(() => {
         },
       ]);
     }
+    if (url.endsWith('/settings/govee-connector-endpoints') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/trigger-zoo')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/connector-zoo')) {
+      return buildJsonResponse([
+        {
+          key: 'telegram',
+          label: 'Telegram',
+          description: 'Telegram connector',
+          category: 'messaging',
+          enabled: true,
+        },
+        {
+          key: 'govee',
+          label: 'Govee Light Connection',
+          description: 'Optional Govee light connector plugin.',
+          category: 'integrations',
+          enabled: true,
+          plugin_key: 'govee_light_connection',
+        },
+      ]);
+    }
     if (url.endsWith('/settings/input-sources') && options.method === 'PUT') {
       return buildJsonResponse([
         {
@@ -290,6 +315,54 @@ beforeEach(() => {
       return buildJsonResponse({
         status: 'sent',
         detail: 'Apple Messages test message sent.',
+      });
+    }
+    if (url.includes('/settings/govee/test') && options.method === 'POST') {
+      return buildJsonResponse({
+        valid: true,
+        device_count: 1,
+        light_device_count: 1,
+        message: 'Govee API key is valid.',
+      });
+    }
+    if (url.includes('/settings/govee/devices') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([
+        {
+          sku: 'H6000',
+          device: 'AA:BB:CC:DD',
+          device_name: 'Desk Light',
+          device_type: 'devices.types.light',
+          capability_options: [
+            {
+              key: 'devices.capabilities.on_off:powerSwitch',
+              label: 'Power',
+              capability_type: 'devices.capabilities.on_off',
+              instance: 'powerSwitch',
+              input_kind: 'enum',
+              values: [
+                { label: 'on', value: 1 },
+                { label: 'off', value: 0 },
+              ],
+              default_value: 1,
+            },
+          ],
+        },
+      ]);
+    }
+    if (url.endsWith('/settings/govee-connector-endpoints') && options.method === 'PUT') {
+      const payload = JSON.parse(options.body);
+      return buildJsonResponse(payload.map((item, index) => ({
+        id: 71 + index,
+        connector_key: 'govee',
+        label: item.label,
+        enabled: item.enabled,
+        config: item.config,
+        delivery_capabilities: item.delivery_capabilities,
+      })));
+    }
+    if (url.includes('/settings/govee-connector-endpoints/test') && options.method === 'POST') {
+      return buildJsonResponse({
+        detail: 'Govee trigger action sent.',
       });
     }
     if (url.endsWith('/settings/anomaly-prompts') && options.method === 'PUT') {
@@ -444,6 +517,7 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   expect(await screen.findByText('Telegram')).toBeTruthy();
+  expect(screen.getByText('Govee Light Connection')).toBeTruthy();
   expect(screen.getAllByText('Configured').length).toBeGreaterThan(0);
   expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
   expect(screen.getByDisplayValue('Ops Chat')).toBeTruthy();
@@ -476,6 +550,40 @@ test('renders connectors tab and saves both connector subscription types', async
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringMatching(/\/settings\/apple-message-trigger-subscriptions$/),
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getAllByText('Add Connection')[0]);
+  });
+  expect(screen.getByPlaceholderText('Govee API key')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.change(screen.getByPlaceholderText('Govee API key'), {
+      target: { value: 'test-govee-key' },
+    });
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Discover Devices'));
+  });
+
+  expect((await screen.findAllByText(/Discovered 1 Govee light device/)).length).toBeGreaterThan(0);
+
+  await act(async () => {
+    fireEvent.change(screen.getByLabelText('Device'), {
+      target: { value: 'H6000:AA:BB:CC:DD' },
+    });
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByText('Save Govee Light Connections'));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/govee-connector-endpoints$/),
       expect.objectContaining({ method: 'PUT' }),
     );
   });

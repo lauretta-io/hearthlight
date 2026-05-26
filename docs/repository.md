@@ -61,6 +61,7 @@ The system now uses multiple config sources together:
 - `shared/configs/saved_configs/*.yaml`: reusable template and camera-preset files
 - `shared/plugins/*/plugin.yaml`: plugin bundle manifests loaded on server restart
 - plugin-referenced YAML payloads: model registrations, trigger zoo entries, connector zoo entries, and rule-set templates
+- optional integration plugins such as `shared/plugins/govee_light_connection/` can contribute zoo entries without becoming part of the core built-in plugin bundle
 - `shared/configs/model_bindings.yaml`: default stage bindings for the active plugin-backed model catalog
 - Postgres `control` schema: persisted input sources, uploads, alert rules, and control-plane state
 

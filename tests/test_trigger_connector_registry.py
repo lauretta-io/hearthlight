@@ -16,6 +16,7 @@ class TriggerConnectorRegistryTests(unittest.TestCase):
         self.assertIn("telegram", keys)
         self.assertIn("apple_messages", keys)
         self.assertIn("webhook", keys)
+        self.assertIn("govee", keys)
 
 
 if __name__ == "__main__":

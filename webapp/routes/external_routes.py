@@ -50,6 +50,10 @@ from ...shared.models.APIModels import (
     Camera,
     FeedEndpoint,
     FeedLocation,
+    GoveeApiKeyRequest,
+    GoveeApiKeyTestResponse,
+    GoveeDeviceStateResponse,
+    GoveeDiscoveredDevice,
     InputSource,
     ModelBinding,
     ModelHealth,
@@ -97,6 +101,7 @@ from ...shared.utils.apple_messages_notifications import (
     send_test_apple_message_trigger_message,
 )
 from ...shared.utils.connector_endpoints import (
+    CONNECTOR_KEY_GOVEE,
     CONNECTOR_KEY_APPLE_MESSAGES,
     CONNECTOR_KEY_TELEGRAM,
     ensure_connector_endpoint_tables,
@@ -107,6 +112,13 @@ from ...shared.utils.connector_endpoints import (
     list_connector_endpoint_rows,
     redact_connector_endpoint_config,
     set_connector_endpoint_payload,
+)
+from ...shared.utils.govee_connector import (
+    discover_govee_devices,
+    ensure_govee_connector_tables,
+    get_govee_device_state,
+    send_test_govee_trigger_action,
+    test_govee_api_key,
 )
 from ...shared.utils.telegram_notifications import (
     ensure_telegram_subscription_tables,
@@ -2106,7 +2118,7 @@ def get_connector_endpoint_rows(db: Session, connector_key: str | None = None):
     return list_connector_endpoint_rows(db, connector_key=connector_key, enabled_only=False)
 
 
-def build_connector_endpoint_responses(db: Session):
+def build_connector_endpoint_responses(db: Session, connector_key: str | None = None):
     bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
     plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
     connector_components = plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {})
@@ -2127,19 +2139,29 @@ def build_connector_endpoint_responses(db: Session):
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
-        for row in get_connector_endpoint_rows(db)
+        for row in get_connector_endpoint_rows(db, connector_key=connector_key)
     ]
 
 
-def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint]):
+def replace_connector_endpoints(
+    db: Session,
+    endpoints: list[ConnectorEndpoint],
+    *,
+    connector_key: str | None = None,
+):
     ensure_connector_endpoint_tables()
     bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
     plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
-    existing_rows = get_connector_endpoint_rows(db)
+    existing_rows = get_connector_endpoint_rows(db, connector_key=connector_key)
     existing_by_id = {row.id: row for row in existing_rows}
     seen_ids = set()
     persisted_rows = []
     for endpoint in endpoints:
+        if connector_key is not None and endpoint.connector_key != connector_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"connector_key must be {connector_key}",
+            )
         if endpoint.connector_key not in plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {}):
             raise HTTPException(
                 status_code=400,
@@ -2171,7 +2193,23 @@ def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint])
             row.is_deleted = True
             row.deleted_at = datetime.utcnow()
     db.commit()
-    return build_connector_endpoint_responses(db)
+    return build_connector_endpoint_responses(db, connector_key=connector_key)
+
+
+def get_govee_connector_rows(db: Session):
+    ensure_govee_connector_tables()
+    return get_connector_endpoint_rows(db, CONNECTOR_KEY_GOVEE)
+
+
+def _extract_govee_api_key(request: Request, db: Session, endpoint_id: int | None = None) -> str:
+    header_value = str(request.headers.get("x-govee-api-key", "") or "").strip()
+    if header_value:
+        return header_value
+    if endpoint_id is not None:
+        row = next((row for row in get_govee_connector_rows(db) if row.id == endpoint_id), None)
+        if row is not None:
+            return str(get_connector_endpoint_config(row).get("api_key", "") or "").strip()
+    raise HTTPException(status_code=400, detail="Govee API key is required")
 
 
 def get_telegram_trigger_subscription_rows(db: Session):
@@ -3272,6 +3310,101 @@ def update_settings_connector_endpoints(
     db: Session = Depends(get_db),
 ):
     return replace_connector_endpoints(db, endpoints)
+
+
+@external_router.get("/settings/govee-connector-endpoints", response_model=list[ConnectorEndpoint])
+def get_settings_govee_connector_endpoints(db: Session = Depends(get_db)):
+    return build_connector_endpoint_responses(db, connector_key=CONNECTOR_KEY_GOVEE)
+
+
+@external_router.put("/settings/govee-connector-endpoints", response_model=list[ConnectorEndpoint])
+def update_settings_govee_connector_endpoints(
+    endpoints: list[ConnectorEndpoint],
+    db: Session = Depends(get_db),
+):
+    return replace_connector_endpoints(db, endpoints, connector_key=CONNECTOR_KEY_GOVEE)
+
+
+@external_router.post("/settings/govee/test", response_model=GoveeApiKeyTestResponse)
+def post_settings_govee_test(
+    payload: GoveeApiKeyRequest,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    api_key = payload.api_key
+    if str(api_key or "").strip() == MASKED_SECRET_VALUE and endpoint_id is not None:
+        row = next((row for row in get_govee_connector_rows(db) if row.id == endpoint_id), None)
+        if row is not None:
+            api_key = str(get_connector_endpoint_config(row).get("api_key", "") or "").strip()
+    try:
+        result = test_govee_api_key(api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GoveeApiKeyTestResponse.model_validate(result)
+
+
+@external_router.get("/settings/govee/devices", response_model=list[GoveeDiscoveredDevice])
+def get_settings_govee_devices(
+    request: Request,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    api_key = _extract_govee_api_key(request, db, endpoint_id=endpoint_id)
+    try:
+        devices = discover_govee_devices(api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return [GoveeDiscoveredDevice.model_validate(device) for device in devices]
+
+
+@external_router.get("/settings/govee/devices/{sku}/{device}/state", response_model=GoveeDeviceStateResponse)
+def get_settings_govee_device_state(
+    sku: str,
+    device: str,
+    request: Request,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    api_key = _extract_govee_api_key(request, db, endpoint_id=endpoint_id)
+    try:
+        payload = get_govee_device_state(api_key=api_key, sku=sku, device=device)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GoveeDeviceStateResponse(
+        sku=str(payload.get("sku") or sku),
+        device=str(payload.get("device") or device),
+        capabilities=list(payload.get("capabilities") or []),
+    )
+
+
+@external_router.post("/settings/govee-connector-endpoints/test")
+def post_settings_govee_connector_endpoint_test(
+    endpoint: ConnectorEndpoint,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    row = SQLModels.ConnectorEndpoint()
+    config = merge_connector_endpoint_secret_config({}, dict(endpoint.config or {}))
+    if str(config.get("api_key", "") or "").strip() == MASKED_SECRET_VALUE and endpoint_id is not None:
+        existing_row = next((item for item in get_govee_connector_rows(db) if item.id == endpoint_id), None)
+        if existing_row is not None:
+            config = merge_connector_endpoint_secret_config(
+                get_connector_endpoint_config(existing_row),
+                config,
+            )
+    set_connector_endpoint_payload(
+        row,
+        connector_key=CONNECTOR_KEY_GOVEE,
+        label=endpoint.label,
+        enabled=endpoint.enabled,
+        config=config,
+        delivery_capabilities=list(endpoint.delivery_capabilities or []),
+    )
+    try:
+        send_test_govee_trigger_action(row)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"detail": "Govee trigger action sent."}
 
 
 @external_router.get("/settings/alert-rules", response_model=list[AlertRule])

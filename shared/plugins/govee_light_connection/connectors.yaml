@@ -1,0 +1,28 @@
+govee:
+  label: Govee Light Connection
+  description: Trigger-driven light actions for Govee devices discovered from a Govee account.
+  category: integrations
+  enabled: true
+  requirements:
+    - api-key
+    - selected-device
+    - selected-action
+  fields:
+    - key: api_key
+      label: API Key
+      secret: true
+    - key: sku
+      label: Device SKU
+    - key: device
+      label: Device ID
+    - key: device_name
+      label: Device Name
+    - key: capability_type
+      label: Capability Type
+    - key: capability_instance
+      label: Capability Instance
+    - key: capability_value
+      label: Capability Value
+  delivery_capabilities:
+    - light_control
+    - async

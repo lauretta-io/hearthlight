@@ -21,6 +21,8 @@
 - added third-party Stage 2 anomaly model entries for Chatgpt, Claude, and Lauretta-hosted OpenAI-compatible APIs, with env-based availability checks and provider model-name overrides
 - moved theme selection into `Settings > Appearance` and persisted it as a workspace-wide backend setting with cached startup restore
 - unified models, triggers, connectors, and rule-set templates under a restart-loaded plugin manifest system backed by persisted plugin bundle/component catalogs
+- added `Govee Light Connection` as a non-core connector plugin that can be pulled from the Connector Zoo without becoming part of the default built-in connector set
+- added Govee connector setup helpers for API-key validation, light-device discovery, optional state inspection, and trigger-driven light control
 - removed stale frontend pages and assets from the retired Control, Entity, and POI flows
 - cleaned up duplicate backup files such as `README (1).md` and `.gitignore (1)`
 - documented the validated detector class surface and clarified that live detector trigger IDs remain normalized to `PERSON` and `BAG`

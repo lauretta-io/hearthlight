@@ -52,6 +52,7 @@ CONNECTOR_KEYS = {
     "apple_messages",
     "webhook",
     "slack",
+    "govee",
 }
 APPEARANCE_THEME_KEYS = {
     "fidelity-light",
@@ -751,6 +752,46 @@ class ConnectorEndpoint(BaseModel):
             return value
         stripped = value.strip()
         return stripped or None
+
+
+class GoveeApiKeyRequest(BaseModel):
+    api_key: str
+
+    @field_validator("api_key")
+    def validate_api_key(cls, value):
+        return validate_non_empty_string(value, "api_key")
+
+
+class GoveeApiKeyTestResponse(BaseModel):
+    valid: bool = True
+    device_count: int = 0
+    light_device_count: int = 0
+    message: str = ""
+
+
+class GoveeCapabilityOption(BaseModel):
+    key: str
+    label: str
+    capability_type: str
+    instance: str
+    input_kind: str
+    values: list[dict] = Field(default_factory=list)
+    range: dict = Field(default_factory=dict)
+    default_value: int | str | None = None
+
+
+class GoveeDiscoveredDevice(BaseModel):
+    sku: str
+    device: str
+    device_name: str
+    device_type: str | None = None
+    capability_options: list[GoveeCapabilityOption] = Field(default_factory=list)
+
+
+class GoveeDeviceStateResponse(BaseModel):
+    sku: str
+    device: str
+    capabilities: list[dict] = Field(default_factory=list)
 
 
 class TelegramTriggerSubscription(BaseModel):
