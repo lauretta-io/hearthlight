@@ -223,6 +223,35 @@ Models, triggers, connectors, and rule-set templates are all loaded from that pl
 restart, and missing plugin manifests are soft-disabled in the control-plane database rather than
 hard-deleted.
 
+## The Three Zoos
+
+Hearthlight exposes three operator-facing catalogs, or "zoos", that define what the system can do
+after a server restart loads the active plugin set:
+
+1. Model Zoo
+   - contains detector, tracker, heuristic filter, and anomaly detection model options
+   - feeds the mounted model inventory and the per-stage bindings used by cameras
+   - supports built-in models, third-party API-backed models such as Chatgpt and Claude, and future external plugin models
+
+2. Trigger Zoo
+   - contains the trigger types that rules can use, such as detector-driven or anomaly-driven triggers
+   - defines the kinds of events the Rules page can turn into alerts or downstream actions
+   - is plugin-backed, so new trigger families can appear after a restart without changing the UI contract
+
+3. Connector Zoo
+   - contains the outbound integrations that can receive trigger actions, such as Telegram, Apple Messages, webhooks, and optional plugins like Govee Light Connection
+   - keeps the default built-in connector set small while still allowing optional integrations to be pulled into the workspace
+   - separates connector availability from connector configuration, so a zoo entry can exist without being configured yet
+
+The three zoos are related but distinct:
+
+- the Model Zoo controls how video is processed
+- the Trigger Zoo controls when the system decides something important happened
+- the Connector Zoo controls where those events are sent
+
+All three zoos are loaded from the restart-time plugin catalog, persisted in the control plane, and
+surfaced through the web UI as stable operator-facing selections rather than ad hoc config files.
+
 The default core connector set stays intentionally small. Optional integrations can be exposed as
 non-core plugins through the Connector Zoo. For example, `shared/plugins/govee_light_connection/`
 adds the `Govee Light Connection` connector without making it part of the default built-in
