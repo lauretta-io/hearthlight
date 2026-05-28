@@ -14,12 +14,14 @@ class ConnectorSecurityTests(unittest.TestCase):
                 "bot_token": "123:secret",
                 "chat_id": "-100123",
                 "bearer_token": "abc",
+                "api_key": "govee-secret",
                 "url": "https://example.com/hook",
             }
         )
 
         self.assertEqual(redacted["bot_token"], MASKED_SECRET_VALUE)
         self.assertEqual(redacted["bearer_token"], MASKED_SECRET_VALUE)
+        self.assertEqual(redacted["api_key"], MASKED_SECRET_VALUE)
         self.assertEqual(redacted["chat_id"], "-100123")
         self.assertEqual(redacted["url"], "https://example.com/hook")
 

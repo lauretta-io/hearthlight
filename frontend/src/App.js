@@ -114,8 +114,14 @@ const App = () => {
       <div className="app">
         <nav className="top-nav">
           <div className="brand-block">
-            <div className="brand-mark">Hearthlight</div>
-            <div className="brand-submark">{getThemeOption(theme).label}</div>
+            <div className="brand-logo-shell">
+              <div className="brand-logo-tint" />
+              <img className="brand-logo" src="/hearthlight.png" alt="Hearthlight logo" />
+            </div>
+            <div className="brand-copy">
+              <div className="brand-mark">Hearthlight</div>
+              <div className="brand-submark">{getThemeOption(theme).label}</div>
+            </div>
           </div>
           <NavLink
             to="/incidents"

@@ -34,6 +34,18 @@ defaults for Telegram and Apple Messages into `.env`, seeds those subscriptions
 after `reset-db` when values are present, and chooses CPU or CUDA launcher
 defaults based on the local machine.
 
+If you want onboarding to pre-mount models into the shared inventory, use:
+
+- `--mount-default-models` to mount the current default local model set
+- repeated `--mount-model` flags to mount specific registry keys
+
+Third-party Stage 2 models must be configured during CLI onboarding with their
+required credentials:
+
+- `chatgpt_api_stage_2` requires `--openai-api-key` and accepts `--openai-model-name`
+- `claude_api_stage_2` requires `--anthropic-api-key` and accepts `--anthropic-model-name`
+- `lauretta_api_stage_2` requires both `--lauretta-api-key` and `--lauretta-api-base-url`, and accepts `--lauretta-model-name`
+
 If you need to do the config step manually:
 
 ```bash

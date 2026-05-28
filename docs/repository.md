@@ -61,8 +61,36 @@ The system now uses multiple config sources together:
 - `shared/configs/saved_configs/*.yaml`: reusable template and camera-preset files
 - `shared/plugins/*/plugin.yaml`: plugin bundle manifests loaded on server restart
 - plugin-referenced YAML payloads: model registrations, trigger zoo entries, connector zoo entries, and rule-set templates
+- optional integration plugins such as `shared/plugins/govee_light_connection/` can contribute zoo entries without becoming part of the core built-in plugin bundle
 - `shared/configs/model_bindings.yaml`: default stage bindings for the active plugin-backed model catalog
 - Postgres `control` schema: persisted input sources, uploads, alert rules, and control-plane state
+
+## The Three Zoos
+
+At the repository level, Hearthlight organizes operator-selectable capabilities into three plugin-backed
+catalogs:
+
+1. Model Zoo
+   - source: plugin-provided model registrations plus mounted-model state
+   - used by: `GET /model-options`, `GET/PUT /model-bindings`, source settings, model inventory, and model library views
+
+2. Trigger Zoo
+   - source: plugin-provided trigger catalog entries
+   - used by: rules preparation, trigger-type display, and future trigger-family expansion
+
+3. Connector Zoo
+   - source: plugin-provided connector catalog entries
+   - used by: connectors setup, connector install/pull flows, and generic connector endpoint persistence
+
+The intended separation is:
+
+- models decide how frames are processed
+- triggers decide what kinds of runtime events can become rules
+- connectors decide which downstream systems can receive actions
+
+This split is important for plugin design. A plugin can contribute to one zoo without needing to
+touch the others. For example, `shared/plugins/govee_light_connection/` contributes only a
+Connector Zoo entry, while core detector and anomaly plugins primarily contribute to the Model Zoo.
 
 Alert-rule option catalogs intentionally come from the backend instead of the browser:
 

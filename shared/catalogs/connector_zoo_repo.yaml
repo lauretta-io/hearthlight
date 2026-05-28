@@ -1,0 +1,22 @@
+catalog_version: 1
+generated_at: "2026-05-27T00:00:00Z"
+source_url: "./connector_zoo_repo.yaml"
+connectors:
+  - key: govee
+    label: Govee Light Connection
+    description: Trigger-driven light actions for Govee devices discovered from a Govee account.
+    category: integrations
+    enabled: true
+    requirements:
+      - api-key
+      - selected-device
+      - selected-action
+    delivery_capabilities:
+      - light_control
+      - async
+    plugin_key: govee_light_connection
+    plugin_version: "0.8.0"
+    plugin_manifest_url: "../plugins/govee_light_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/govee_light_connection/connectors.yaml"
+    source_url: "../plugins/govee_light_connection/"

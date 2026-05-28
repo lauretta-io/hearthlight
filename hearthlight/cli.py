@@ -31,6 +31,28 @@ from hearthlight.workspace import (  # noqa: E402
     workspace_python_path,
 )
 
+ASCII_LOGO = r"""
+      /\        
+     /  \    []
+    /    \   []
+   /      \  []
+  /   /\   \
+ /   /  \   \
+/___/____\___\
+|   \ /\ /   |
+|    /  \    |
+|   / /\ \   |
+|__/ /  \ \__|
+   (  __  )
+    \(__)/
+"""
+
+
+def _print_cli_banner() -> None:
+    print(ASCII_LOGO.rstrip())
+    print("Hearthlight")
+    print("")
+
 
 def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
     defaults = resolve_start_defaults(ROOT_DIR)
@@ -141,6 +163,28 @@ def build_parser() -> argparse.ArgumentParser:
     onboard_parser.add_argument("--skip-cuda-detection", action="store_true", help="Skip CPU/GPU default detection")
     onboard_parser.add_argument("--skip-infra-init", action="store_true", help="Skip starting Docker Postgres/RabbitMQ and reset-db")
     onboard_parser.add_argument("--start-webapp", action="store_true", help="Also start webapp and reverse proxy during onboarding")
+    onboard_parser.add_argument(
+        "--mount-default-models",
+        action="store_true",
+        help="Seed the mounted model inventory with the workspace default detector, tracker, heuristic filter, and anomaly detection models.",
+    )
+    onboard_parser.add_argument(
+        "--mount-model",
+        action="append",
+        default=[],
+        help=(
+            "Mount a specific model into the central inventory. Repeat as needed. "
+            "Accepts either MODEL_KEY or STAGE:MODEL_KEY, for example "
+            "`--mount-model detector:builtin_yolox_s_cpu` or `--mount-model chatgpt_api_stage_2`."
+        ),
+    )
+    onboard_parser.add_argument("--openai-api-key", help="API key to use when mounting ChatGPT/OpenAI-compatible Stage 2 models.")
+    onboard_parser.add_argument("--openai-model-name", help="OpenAI model name string to use for Chatgpt Stage 2.")
+    onboard_parser.add_argument("--anthropic-api-key", help="API key to use when mounting Claude Stage 2 models.")
+    onboard_parser.add_argument("--anthropic-model-name", help="Anthropic model name string to use for Claude Stage 2.")
+    onboard_parser.add_argument("--lauretta-api-key", help="API key to use when mounting Lauretta-hosted Stage 2 models.")
+    onboard_parser.add_argument("--lauretta-api-base-url", help="Base URL to use when mounting Lauretta-hosted Stage 2 models.")
+    onboard_parser.add_argument("--lauretta-model-name", help="Model name string to use for Lauretta-hosted Stage 2.")
 
     list_models_parser = subparsers.add_parser("list-models", help="List discovered templates and model options")
     _add_workspace_arg(list_models_parser)
@@ -204,6 +248,7 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(argv) if argv is not None else sys.argv[1:]
     if not argv:
         argv = ["start", "--interactive"]
+    _print_cli_banner()
     parser = build_parser()
     args = parser.parse_args(argv)
 

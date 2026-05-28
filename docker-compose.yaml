@@ -14,7 +14,7 @@ services:
     networks:
       - mynetwork
     ports:
-      - "${POSTGRES_HOST_PORT:-5433}:5432"
+      - "${POSTGRES_HOST_BIND:-127.0.0.1}:${POSTGRES_HOST_PORT:-5433}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data/
     env_file:
@@ -28,12 +28,13 @@ services:
       start_period: 10s
 
   rabbitmq:
+    image: ${HEARTHLIGHT_RABBITMQ_IMAGE:-hearthlight-rabbitmq:latest}
     build: ./rabbitmq
     networks:
       - mynetwork
     ports:
-      - "${RABBITMQ_HOST_PORT:-5673}:5672"
-      - "${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
+      - "${RABBITMQ_HOST_BIND:-127.0.0.1}:${RABBITMQ_HOST_PORT:-5673}:5672"
+      - "${RABBITMQ_MANAGEMENT_HOST_BIND:-127.0.0.1}:${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
     restart: unless-stopped
     command: sh /usr/local/bin/init.sh
     healthcheck:
@@ -44,6 +45,7 @@ services:
       start_period: 10s
 
   reset_db:
+    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
     build: ./webapp
     networks:
       - mynetwork
@@ -61,6 +63,7 @@ services:
       python -um src.shared.database.recreate_db'
 
   webapp:
+    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./webapp
@@ -70,7 +73,7 @@ services:
       - "8000"
       - "3000"
     ports:
-      - "${WEBAPP_API_HOST_PORT:-8000}:8000"
+      - "${WEBAPP_API_HOST_BIND:-127.0.0.1}:${WEBAPP_API_HOST_PORT:-8000}:8000"
     volumes:
       - ./frontend:/app/src/frontend
       - ./shared:/app/src/shared
@@ -85,6 +88,7 @@ services:
       - .env
     environment:
       - RELOAD=${RELOAD:-}
+      - HEARTHLIGHT_LOCAL_STACK=${HEARTHLIGHT_LOCAL_STACK:-true}
       - HEARTHLIGHT_CONFIG_PATH=/app/src/shared/configs/config.yaml
       - HEARTHLIGHT_WORKER_RUNTIME=${HEARTHLIGHT_WORKER_RUNTIME:-docker}
       - HEARTHLIGHT_LOCAL_WORKER_URL=${HEARTHLIGHT_LOCAL_WORKER_URL:-http://host.docker.internal:8070}
@@ -105,7 +109,7 @@ services:
     command: >
       bash -c '
       cd /app/src/frontend &&
-      npm install &&
+      npm ci --no-audit --no-fund &&
       (npm start &) &&
       cd /app &&
       until nc -z rabbitmq 15672; do
@@ -118,7 +122,7 @@ services:
     networks:
       - mynetwork
     ports:
-      - "${WEBAPP_UI_HOST_PORT:-3000}:80"
+      - "${WEBAPP_UI_HOST_BIND:-127.0.0.1}:${WEBAPP_UI_HOST_PORT:-3000}:80"
     volumes:
       - ./deploy/nginx/hearthlight.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -133,6 +137,7 @@ services:
       start_period: 10s
 
   ingestor:
+    image: ${HEARTHLIGHT_INGESTOR_IMAGE:-hearthlight-ingestor:latest}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./ingestor
@@ -167,6 +172,7 @@ services:
       fi'
 
   reid:
+    image: ${HEARTHLIGHT_REID_IMAGE:-hearthlight-reid:latest}
     build: ./reid
     networks:
       - mynetwork
@@ -196,6 +202,7 @@ services:
       fi'
 
   association:
+    image: ${HEARTHLIGHT_ASSOCIATION_IMAGE:-hearthlight-association:latest}
     build: ./association
     networks:
       - mynetwork
@@ -226,6 +233,7 @@ services:
       fi'
 
   anomaly:
+    image: ${HEARTHLIGHT_ANOMALY_IMAGE:-hearthlight-anomaly:latest}
     build: ./anomaly
     networks:
       - mynetwork

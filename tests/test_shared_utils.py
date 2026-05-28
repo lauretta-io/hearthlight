@@ -1,6 +1,8 @@
 import os
+import sys
 import tempfile
 import unittest
+import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Event, Thread
@@ -61,6 +63,7 @@ from shared.utils.timer import LoopTimer
 from shared.constants import IncidentStatus
 from shared.utils.system_state import derive_system_status, get_error_modules, SystemStatus
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
+from shared.utils.download_weights import get_model_weights
 from shared.utils.threading import collect_live_thread_names
 from shared.utils.time_utils import seconds_since_datetime
 
@@ -79,8 +82,10 @@ try:
         build_model_option_catalog,
         build_model_display_name,
         build_default_bindings,
+        collect_required_mounted_models,
         build_runtime_binding_block,
         collect_required_mounted_models,
+        is_registration_available,
         load_registry_bundle,
         resolve_tracker_name,
         validate_source_bindings,
@@ -94,8 +99,10 @@ except ModuleNotFoundError:
     build_model_option_catalog = None
     build_model_display_name = None
     build_default_bindings = None
+    collect_required_mounted_models = None
     build_runtime_binding_block = None
     collect_required_mounted_models = None
+    is_registration_available = None
     load_registry_bundle = None
     resolve_tracker_name = None
     validate_source_bindings = None
@@ -539,6 +546,36 @@ class InputSourceUtilsTests(unittest.TestCase):
 
         self.assertEqual(error, "source opened but did not yield a frame")
 
+
+class DownloadWeightsTests(unittest.TestCase):
+    def test_get_model_weights_blocks_zip_slip_paths(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir_path = Path(temp_dir)
+            weights_path = temp_dir_path / "weights" / "model.pth"
+            outside_path = temp_dir_path / "escaped.pth"
+
+            def fake_download(*, url, output, fuzzy, quiet):
+                del url, fuzzy, quiet
+                output_path = Path(output)
+                with zipfile.ZipFile(output_path, "w") as archive:
+                    archive.writestr("../../escaped.txt", b"owned")
+                    archive.writestr("nested/model.pth", b"safe-weights")
+                return str(output_path)
+
+            with patch(
+                "shared.utils.download_weights.MODEL_REGISTRY",
+                {"test-model": {"url": "https://example.invalid/model.zip", "path": str(weights_path)}},
+            ), patch.dict(
+                sys.modules,
+                {"gdown": SimpleNamespace(download=fake_download)},
+            ):
+                resolved = get_model_weights("test-model")
+
+            self.assertEqual(resolved, str(weights_path))
+            self.assertTrue(weights_path.exists())
+            self.assertEqual(weights_path.read_bytes(), b"safe-weights")
+            self.assertFalse(outside_path.exists())
+
     def test_probe_source_connection_accepts_valid_source(self):
         class FakeCapture:
             def open(self, source, *_args):
@@ -946,6 +983,58 @@ class ModelRegistryTests(unittest.TestCase):
             ),
             "SmolVLM Stage 2 (MLX)",
         )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "chatgpt_api_stage_2",
+                {"artifact_ref": "openai-chatgpt-api", "adapter": "openai_compatible_stage_2", "runtime": {"provider": "openai"}},
+            ),
+            "Chatgpt",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "claude_api_stage_2",
+                {"artifact_ref": "anthropic-claude-api", "adapter": "claude_stage_2", "runtime": {"provider": "anthropic"}},
+            ),
+            "Claude",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
+                "lauretta_api_stage_2",
+                {"artifact_ref": "lauretta-api", "adapter": "openai_compatible_stage_2", "runtime": {"provider": "lauretta"}},
+            ),
+            "Lauretta API",
+        )
+
+    @unittest.skipIf(is_registration_available is None, "omegaconf is not installed")
+    def test_is_registration_available_checks_required_env_vars(self):
+        with patch.dict(os.environ, {}, clear=False):
+            available, detail = is_registration_available(
+                {"healthcheck": {"required_env_vars": ["OPENAI_API_KEY", "LAURETTA_API_BASE_URL"]}}
+            )
+        self.assertFalse(available)
+        self.assertIn("OPENAI_API_KEY", detail)
+        self.assertIn("LAURETTA_API_BASE_URL", detail)
+
+        with patch.dict(
+            os.environ,
+            {"OPENAI_API_KEY": "test-key", "LAURETTA_API_BASE_URL": "https://api.lauretta.test/v1"},
+            clear=False,
+        ):
+            available, detail = is_registration_available(
+                {"healthcheck": {"required_env_vars": ["OPENAI_API_KEY", "LAURETTA_API_BASE_URL"]}}
+            )
+        self.assertTrue(available)
+        self.assertIsNone(detail)
+
+    @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
+    def test_registry_bundle_third_party_stage_two_defaults_use_expected_model_names(self):
+        bundle = load_registry_bundle()
+        stage_two = bundle["models"]["anomaly_stage_2"]
+        self.assertEqual(stage_two["chatgpt_api_stage_2"]["runtime"]["model_name"], "gpt-5.4-mini")
+        self.assertEqual(stage_two["claude_api_stage_2"]["runtime"]["model_name"], "claude-sonnet-4-6")
 
     @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")
     def test_build_model_option_catalog_enriches_detector_classes_from_model_zoo_artifacts(self):
@@ -986,22 +1075,21 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertNotIn("reid", mounted)
 
     @unittest.skipIf(collect_required_mounted_models is None, "omegaconf is not installed")
-    def test_collect_required_mounted_models_ignores_internal_reid_default(self):
-        bundle = {
-            "bindings": {
-                "defaults": {
-                    "detector": "builtin_yolox_s_cpu",
-                    "tracker": "builtin_bytetrack",
-                    "reid": None,
-                    "anomaly_stage_1": "heuristic_presence_stage_1",
-                    "anomaly_stage_2": "claude_compatible_stage_2",
-                }
-            }
-        }
-        required = collect_required_mounted_models(bundle, [])
-
+    def test_collect_required_mounted_models_ignores_retired_reid_stage(self):
+        bundle = load_registry_bundle()
+        required = collect_required_mounted_models(
+            bundle,
+            [],
+            defaults={
+                "detector": "builtin_yolox_s_cpu",
+                "tracker": "builtin_bytetrack",
+                "reid": "builtin_transreid_person_hybrid_bag",
+                "anomaly_stage_1": "siglip_stage_1_cpu",
+                "anomaly_stage_2": "smolvlm_stage_2_cpu",
+            },
+        )
         self.assertNotIn("reid", required)
-        self.assertEqual(required["anomaly_stage_2"], {"claude_compatible_stage_2"})
+        self.assertEqual(required["anomaly_stage_2"], {"smolvlm_stage_2_cpu"})
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_load_model_registries_merges_upstream_master_with_local_entries(self):

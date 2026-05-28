@@ -1,0 +1,238 @@
+from dataclasses import replace
+import json
+import unittest
+from urllib import error
+from unittest.mock import patch
+
+from anomaly.adapters import (
+    ClaudeStageTwoAdapter,
+    OpenAICompatibleStageTwoAdapter,
+    PromptBundle,
+    StageOneCandidate,
+)
+from shared.models.DataModels import AssetReference
+
+
+class _FakeHTTPResponse:
+    def __init__(self, payload: dict):
+        self._payload = json.dumps(payload).encode("utf-8")
+
+    def read(self):
+        return self._payload
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _CaptureURLopener:
+    def __init__(self, payload: dict | Exception):
+        self.payload = payload
+        self.last_request = None
+
+    def __call__(self, req, timeout=None):
+        self.last_request = req
+        self.last_timeout = timeout
+        if isinstance(self.payload, Exception):
+            raise self.payload
+        return _FakeHTTPResponse(self.payload)
+
+
+class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
+    def setUp(self):
+        self.candidate = StageOneCandidate(
+            event_id="evt-1",
+            run_id="run-1",
+            source_id=1,
+            camera_id=1,
+            frame_id=42,
+            stage_1_model_key="siglip_stage_1_cpu",
+            stage_2_model_key="chatgpt_api_stage_2",
+            category="presence_resume",
+            score=0.7,
+            reasoning="Stage 1 saw a candidate.",
+            visible_items=["person", "backpack"],
+            visible_activities=["loitering"],
+            asset_references=[
+                AssetReference(uri="/tmp/frame.jpg", media_type="image/jpeg", producer="ANOMALY")
+            ],
+        )
+        self.prompts = PromptBundle(
+            template="Find anomalies in the frame.",
+            anomaly_object_list=["person", "backpack"],
+            anomaly_activity_list=["loitering", "abandoned object"],
+        )
+
+    def test_openai_compatible_adapter_parses_remote_json_response(self):
+        adapter = OpenAICompatibleStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "openai",
+                    "model_name": "gpt-5.4-mini",
+                    "model_name_env": "OPENAI_MODEL_NAME",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "base_url": "https://api.openai.com/v1",
+                }
+            }
+        )
+        response_payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "title": "Possible loitering near bag",
+                                "category": "loitering",
+                                "score": 8,
+                                "reasoning": "The person remained near a bag.",
+                                "visible_items": ["person", "backpack"],
+                                "visible_activities": ["loitering"],
+                            }
+                        )
+                    }
+                }
+            ]
+        }
+        opener = _CaptureURLopener(response_payload)
+        with patch.dict(
+            "os.environ",
+            {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL_NAME": "gpt-5.5"},
+            clear=False,
+        ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
+            event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
+        self.assertEqual(event.title, "Possible loitering near bag")
+        self.assertEqual(event.category, "loitering")
+        self.assertAlmostEqual(event.score, 0.8)
+        self.assertEqual(event.visible_items, ["person", "backpack"])
+        self.assertEqual(opener.last_request.full_url, "https://api.openai.com/v1/chat/completions")
+        self.assertEqual(opener.last_request.get_header("Authorization"), "Bearer test-key")
+        payload = json.loads(opener.last_request.data.decode("utf-8"))
+        self.assertEqual(payload["model"], "gpt-5.5")
+        self.assertEqual(payload["messages"][1]["role"], "user")
+
+    def test_openai_compatible_adapter_falls_back_on_malformed_json(self):
+        adapter = OpenAICompatibleStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "openai",
+                    "model_name": "gpt-5.4-mini",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "base_url": "https://api.openai.com/v1",
+                }
+            }
+        )
+        response_payload = {"choices": [{"message": {"content": "{not-json"}}]}
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "anomaly.adapters.request.urlopen",
+            return_value=_FakeHTTPResponse(response_payload),
+        ):
+            event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
+        self.assertEqual(event.model_key, "chatgpt_api_stage_2")
+        self.assertIn("Remote adapter detail", event.reasoning or "")
+
+    def test_openai_compatible_adapter_falls_back_on_transport_error(self):
+        adapter = OpenAICompatibleStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "openai",
+                    "model_name": "gpt-5.4-mini",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "base_url": "https://api.openai.com/v1",
+                }
+            }
+        )
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
+            "anomaly.adapters.request.urlopen",
+            side_effect=error.URLError("network down"),
+        ):
+            event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
+        self.assertEqual(event.category, "loitering")
+        self.assertIn("network down", event.reasoning or "")
+
+    def test_claude_adapter_falls_back_when_api_key_missing(self):
+        candidate = replace(self.candidate, stage_2_model_key="claude_api_stage_2")
+        adapter = ClaudeStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "anthropic",
+                    "model_name": "claude-sonnet-4-6",
+                    "api_key_env": "ANTHROPIC_API_KEY",
+                    "base_url": "https://api.anthropic.com/v1",
+                }
+            }
+        )
+        with patch.dict("os.environ", {}, clear=True):
+            event = adapter.build_event(candidate=candidate, prompts=self.prompts)
+        self.assertEqual(event.model_key, "claude_api_stage_2")
+        self.assertIn("missing ANTHROPIC_API_KEY", event.reasoning or "")
+
+    def test_claude_adapter_parses_remote_json_response_and_model_override(self):
+        candidate = replace(self.candidate, stage_2_model_key="claude_api_stage_2")
+        adapter = ClaudeStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "anthropic",
+                    "model_name": "claude-sonnet-4-6",
+                    "model_name_env": "ANTHROPIC_MODEL_NAME",
+                    "api_key_env": "ANTHROPIC_API_KEY",
+                    "base_url": "https://api.anthropic.com/v1",
+                }
+            }
+        )
+        opener = _CaptureURLopener(
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "title": "Bag abandoned near platform edge",
+                                "category": "abandoned object",
+                                "score": 0.9,
+                                "reasoning": "Bag remained alone after the person left.",
+                                "visible_items": ["backpack"],
+                                "visible_activities": ["abandoned object"],
+                            }
+                        ),
+                    }
+                ]
+            }
+        )
+        with patch.dict(
+            "os.environ",
+            {"ANTHROPIC_API_KEY": "anthropic-test", "ANTHROPIC_MODEL_NAME": "claude-opus-4-7"},
+            clear=False,
+        ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
+            event = adapter.build_event(candidate=candidate, prompts=self.prompts)
+        self.assertEqual(event.title, "Bag abandoned near platform edge")
+        self.assertEqual(event.category, "abandoned object")
+        self.assertAlmostEqual(event.score, 0.9)
+        self.assertEqual(opener.last_request.full_url, "https://api.anthropic.com/v1/messages")
+        header_map = {key.lower(): value for key, value in opener.last_request.header_items()}
+        self.assertEqual(header_map.get("x-api-key"), "anthropic-test")
+        self.assertEqual(header_map.get("anthropic-version"), "2023-06-01")
+        payload = json.loads(opener.last_request.data.decode("utf-8"))
+        self.assertEqual(payload["model"], "claude-opus-4-7")
+
+    def test_claude_adapter_falls_back_on_malformed_json(self):
+        candidate = replace(self.candidate, stage_2_model_key="claude_api_stage_2")
+        adapter = ClaudeStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "anthropic",
+                    "model_name": "claude-sonnet-4-6",
+                    "api_key_env": "ANTHROPIC_API_KEY",
+                    "base_url": "https://api.anthropic.com/v1",
+                }
+            }
+        )
+        response_payload = {"content": [{"type": "text", "text": "{bad-json"}]}
+        with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "anthropic-test"}, clear=False), patch(
+            "anomaly.adapters.request.urlopen",
+            return_value=_FakeHTTPResponse(response_payload),
+        ):
+            event = adapter.build_event(candidate=candidate, prompts=self.prompts)
+        self.assertEqual(event.model_key, "claude_api_stage_2")
+        self.assertIn("Remote adapter detail", event.reasoning or "")

@@ -7,6 +7,8 @@ from ..database.database import get_engine
 from ..models import SQLModels
 
 SETTING_KEY_APPEARANCE = "appearance"
+SETTING_KEY_CONNECTOR_ZOO_REPO = "connector_zoo_repo"
+SETTING_KEY_CONNECTOR_ZOO_REPO_CACHE = "connector_zoo_repo_cache"
 
 
 def ensure_workspace_setting_tables() -> None:

@@ -2,8 +2,8 @@ addict==2.4.0
 annotated-types==0.7.0
 antlr4-python3-runtime==4.9.3
 anyio==4.6.2.post1
-certifi==2024.8.30
-charset-normalizer==2.0.12
+certifi==2026.5.20
+charset-normalizer==3.4.7
 einops==0.8.0
 exceptiongroup==1.2.2
 filelock==3.16.1
@@ -17,7 +17,7 @@ hupper==1.12.1
 idna==3.10
 importlib_metadata==8.5.0
 iopath==0.1.10
-Jinja2==3.1.4
+Jinja2==3.1.6
 joblib==1.4.2
 lapx==0.5.11
 markdown-it-py==3.0.0
@@ -40,8 +40,8 @@ pydantic_core==2.46.4
 Pygments==2.18.0
 python-dateutil==2.9.0.post0
 pytz==2024.2
-PyYAML==6.0
-requests==2.26.0
+PyYAML==6.0.3
+requests==2.34.2
 rich==13.9.4
 scikit-learn==1.2.2
 scipy==1.7.3
@@ -58,7 +58,7 @@ tqdm==4.64.1
 triton==3.3.0; platform_machine != "aarch64"
 typing_extensions==4.14.1
 tzdata==2024.2
-urllib3==1.26.20
+urllib3==2.7.0
 yacs==0.1.8
 yapf==0.40.2
 zipp==3.20.2

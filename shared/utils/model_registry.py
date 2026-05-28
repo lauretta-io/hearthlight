@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from importlib import metadata
 from importlib.util import find_spec
 from pathlib import Path
@@ -304,15 +305,11 @@ def collect_required_mounted_models(
         stage: set() for stage in OPERATOR_MODEL_STAGES
     }
     for stage, model_key in resolved_defaults.items():
-        if stage not in required:
-            continue
-        if model_key:
+        if stage in required and model_key:
             required[stage].add(model_key)
     for source_row in source_rows:
         for stage, model_key in build_source_binding_overrides(source_row).items():
-            if stage not in required:
-                continue
-            if model_key:
+            if stage in required and model_key:
                 required[stage].add(model_key)
     return required
 
@@ -508,6 +505,15 @@ def build_model_display_name(stage: str, model_key: str, registration: dict[str,
             return "VLM Anomaly Demo Stage 2"
         if adapter == "claude_compatible_stage_2":
             return "Claude-Compatible Anomaly API"
+        if adapter == "openai_compatible_stage_2":
+            provider = str(runtime.get("provider") or "").strip().lower()
+            if provider == "lauretta":
+                return "Lauretta API"
+            if provider == "openai":
+                return "Chatgpt"
+            return "OpenAI-Compatible API"
+        if adapter == "claude_stage_2":
+            return "Claude"
 
     cleaned_key = model_key.removeprefix("builtin_").replace("-", " ").replace("_", " ")
     parts = [part for part in cleaned_key.split() if part]
@@ -797,6 +803,15 @@ def validate_source_bindings(
 
 def is_registration_available(registration: dict[str, Any]) -> tuple[bool, str | None]:
     healthcheck = registration.get("healthcheck") or {}
+    required_env_vars = [
+        str(name).strip()
+        for name in list(healthcheck.get("required_env_vars") or [])
+        if str(name).strip()
+    ]
+    missing_env_vars = [name for name in required_env_vars if not os.environ.get(name, "").strip()]
+    if missing_env_vars:
+        joined = ", ".join(missing_env_vars)
+        return False, f"missing required env vars: {joined}"
     import_path = healthcheck.get("import_path")
     if import_path:
         try:

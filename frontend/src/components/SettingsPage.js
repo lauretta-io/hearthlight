@@ -42,40 +42,18 @@ const ALERT_LEVEL_OPTIONS = [
   { value: 'medium', label: 'Medium' },
   { value: 'high', label: 'High' },
 ];
-const DEMO_TRIGGER_OPTIONS = [
-  { value: 'anomaly_event_trigger', label: 'Anomaly Event', severity: 'high' },
-  { value: 'unattended_bag_trigger', label: 'Unattended Bag', severity: 'high' },
-  { value: 'loitering_trigger', label: 'Loitering Compatibility', severity: 'medium' },
-  { value: 'manual_trigger', label: 'Manual Trigger', severity: 'low' },
-];
-const ACTION_CONNECTOR_OPTIONS = [
-  { value: 'philips_hue', label: 'Philips Hue', defaultCommand: 'flash_scene', defaultTarget: 'demo-light' },
-  { value: 'music_api', label: 'Music API', defaultCommand: 'play_alert', defaultTarget: 'demo-speaker' },
-  { value: 'robot_action', label: 'Robot Action', defaultCommand: 'move_to_zone', defaultTarget: 'demo-zone' },
-];
 const MODEL_LIBRARY_SUB_TABS = [
   { key: 'inventory', label: 'Model Inventory' },
   { key: 'library', label: 'Model Library' },
+];
+const CONNECTOR_SUB_TABS = [
+  { key: 'connections', label: 'Connections' },
+  { key: 'connector-zoo', label: 'Connector Zoo' },
 ];
 const EMPTY_PROMPT_SETTINGS = {
   anomaly_items: [],
   anomaly_behaviors: [],
 };
-
-const readResponseJson = async (response, fallbackMessage = 'Request failed') => {
-  const text = await response.text();
-  if (!text) {
-    return {};
-  }
-  try {
-    return JSON.parse(text);
-  } catch (error) {
-    return {
-      detail: response.ok ? text : `${fallbackMessage}: ${text}`,
-    };
-  }
-};
-
 const SETTINGS_TABS = [
   { key: 'sources', label: 'Sources' },
   { key: 'model-library', label: 'Model Library' },
@@ -116,6 +94,22 @@ const normalizeBindingsPayload = (payload) => {
   if (Array.isArray(payload?.items)) return payload.items;
   return [];
 };
+
+const normalizeListPayload = (payload) => {
+  if (Array.isArray(payload)) return payload;
+  if (Array.isArray(payload?.items)) return payload.items;
+  return [];
+};
+
+const normalizeRepoConnectorZooPayload = (payload) => ({
+  catalog_url: payload?.catalog_url ?? '',
+  source_url: payload?.source_url ?? '',
+  generated_at: payload?.generated_at ?? null,
+  last_refreshed_at: payload?.last_refreshed_at ?? null,
+  error: payload?.error ?? null,
+  from_cache: Boolean(payload?.from_cache),
+  connectors: Array.isArray(payload?.connectors) ? payload.connectors : [],
+});
 
 const createSourceDraft = (kind = 'camera_url') => ({
   clientKey: `settings-source-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -167,9 +161,6 @@ const createAlertRuleDraft = (ruleKind = 'detector') => ({
   min_confidence: 0.5,
   anomaly_cutoff: 6,
   alert_level: 'medium',
-  delivery_target_ids: [],
-  trigger_key: 'alert_rule_trigger',
-  metadata: {},
 });
 
 const hydrateAlertRule = (rule, fallbackIndex = 0) => ({
@@ -189,24 +180,7 @@ const hydrateAlertRule = (rule, fallbackIndex = 0) => ({
   min_confidence: Number.isFinite(rule.min_confidence) ? rule.min_confidence : 0.5,
   anomaly_cutoff: Number.isFinite(rule.anomaly_cutoff) ? rule.anomaly_cutoff : 6,
   alert_level: rule.alert_level ?? 'medium',
-  delivery_target_ids: Array.isArray(rule.delivery_target_ids) ? rule.delivery_target_ids : [],
-  trigger_key: rule.trigger_key ?? 'alert_rule_trigger',
-  metadata: rule.metadata ?? {},
 });
-
-const createDemoTriggerRuleDraft = (triggerKey = 'manual_trigger') => {
-  const template = DEMO_TRIGGER_OPTIONS.find((option) => option.value === triggerKey) || DEMO_TRIGGER_OPTIONS[0];
-  return {
-    ...createAlertRuleDraft('detector'),
-    trigger_key: template.value,
-    rule_label: template.label,
-    alert_level: template.severity,
-    target_key: template.value,
-    signal_family: 'detector',
-    min_confidence: 0.5,
-    anomaly_cutoff: null,
-  };
-};
 
 const createAnomalyItemDraft = (item = '') => ({
   clientKey: `settings-anomaly-item-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -273,84 +247,46 @@ const hydrateAppleMessageSubscription = (subscription, fallbackIndex = 0) => ({
   service: subscription.service ?? 'iMessage',
 });
 
-const createClaudeApiConnectorDraft = () => ({
-  clientKey: `settings-claude-api-connector-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+const createGoveeEndpointDraft = () => ({
+  clientKey: `settings-govee-endpoint-${Date.now()}-${Math.random().toString(16).slice(2)}`,
   id: null,
+  connector_key: 'govee',
+  label: '',
   enabled: true,
-  connector_label: '',
-  base_url: 'http://localhost:8787/v1/messages',
-  auth_token: '',
-  timeout_seconds: 10,
-  retry_count: 1,
+  api_key: '',
+  sku: '',
+  device: '',
+  device_name: '',
+  capability_key: '',
+  capability_type: '',
+  capability_instance: '',
+  capability_value: '',
+  capability_value_label: '',
+  input_kind: '',
 });
 
-const DEFAULT_CLAUDE_ANOMALY_PROMPT = 'Evaluate the Hearthlight anomaly candidate and return JSON with promote, category, title, score, reasoning, visible_items, and visible_activities.';
-
-const createClaudeAnomalyModelSettings = () => ({
-  enabled: false,
-  base_url: 'http://localhost:8788/v1/messages',
-  auth_token: '',
-  model_name: 'claude-compatible-anomaly',
-  timeout_seconds: 10,
-  retry_count: 1,
-  prompt_template: DEFAULT_CLAUDE_ANOMALY_PROMPT,
-});
-
-const hydrateClaudeAnomalyModelSettings = (settings = {}) => ({
-  ...createClaudeAnomalyModelSettings(),
-  ...settings,
-  enabled: Boolean(settings.enabled),
-  auth_token: settings.auth_token ?? '',
-  prompt_template: settings.prompt_template || DEFAULT_CLAUDE_ANOMALY_PROMPT,
-});
-
-const hydrateClaudeApiConnector = (connector, fallbackIndex = 0) => ({
-  clientKey: connector.id
-    ? `settings-claude-api-connector-${connector.id}`
-    : `settings-claude-api-connector-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
-  id: connector.id ?? null,
-  enabled: connector.enabled ?? true,
-  connector_label: connector.connector_label ?? '',
-  base_url: connector.base_url ?? '',
-  auth_token: connector.auth_token ?? '',
-  timeout_seconds: connector.timeout_seconds ?? 10,
-  retry_count: connector.retry_count ?? 1,
-});
-
-const createActionConnectorDraft = (actionType = 'robot_action') => {
-  const option = ACTION_CONNECTOR_OPTIONS.find((candidate) => candidate.value === actionType) || ACTION_CONNECTOR_OPTIONS[2];
+const hydrateGoveeEndpoint = (endpoint, fallbackIndex = 0) => {
+  const config = endpoint.config || {};
   return {
-    clientKey: `settings-action-connector-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    id: null,
-    enabled: true,
-    action_type: option.value,
-    connector_label: '',
-    base_url: 'http://localhost:8790/actions',
-    auth_token: '',
-    command: option.defaultCommand,
-    target: option.defaultTarget,
-    parameters_text: JSON.stringify({ intensity: 'demo' }, null, 2),
-    timeout_seconds: 10,
-    retry_count: 1,
+    clientKey: endpoint.id
+      ? `settings-govee-endpoint-${endpoint.id}`
+      : `settings-govee-endpoint-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
+    id: endpoint.id ?? null,
+    connector_key: endpoint.connector_key ?? 'govee',
+    label: endpoint.label ?? '',
+    enabled: endpoint.enabled ?? true,
+    api_key: config.api_key ?? '',
+    sku: config.sku ?? '',
+    device: config.device ?? '',
+    device_name: config.device_name ?? '',
+    capability_key: config.capability_key ?? '',
+    capability_type: config.capability_type ?? '',
+    capability_instance: config.capability_instance ?? '',
+    capability_value: config.capability_value ?? '',
+    capability_value_label: config.capability_value_label ?? '',
+    input_kind: config.input_kind ?? '',
   };
 };
-
-const hydrateActionConnector = (connector, fallbackIndex = 0) => ({
-  clientKey: connector.id
-    ? `settings-action-connector-${connector.id}`
-    : `settings-action-connector-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
-  id: connector.id ?? null,
-  enabled: connector.enabled ?? true,
-  action_type: connector.action_type ?? 'robot_action',
-  connector_label: connector.connector_label ?? '',
-  base_url: connector.base_url ?? '',
-  auth_token: connector.auth_token ?? '',
-  command: connector.command ?? 'trigger',
-  target: connector.target ?? '',
-  parameters_text: JSON.stringify(connector.parameters || {}, null, 2),
-  timeout_seconds: connector.timeout_seconds ?? 10,
-  retry_count: connector.retry_count ?? 1,
-});
 
 const sanitizeSourcesForApi = (sources) =>
   sources.map((source, index) => ({
@@ -383,9 +319,7 @@ const sanitizeAlertRulesForApi = (rules) =>
     min_confidence: Number(rule.min_confidence),
     anomaly_cutoff: rule.rule_kind === 'anomaly' ? Number(rule.anomaly_cutoff) : null,
     alert_level: rule.alert_level,
-    delivery_target_ids: rule.delivery_target_ids || [],
-    metadata: rule.metadata || {},
-    trigger_key: rule.trigger_key || 'alert_rule_trigger',
+    trigger_key: 'alert_rule_trigger',
   }));
 
 const sanitizeTelegramSubscriptionsForApi = (subscriptions) =>
@@ -408,46 +342,25 @@ const sanitizeAppleMessageSubscriptionsForApi = (subscriptions) =>
     service: subscription.service,
   }));
 
-const sanitizeClaudeApiConnectorsForApi = (connectors) =>
-  connectors.map((connector) => ({
-    id: connector.id ?? undefined,
-    enabled: connector.enabled,
-    connector_label: connector.connector_label?.trim() || null,
-    base_url: connector.base_url.trim(),
-    auth_token: connector.auth_token.trim(),
-    timeout_seconds: Number(connector.timeout_seconds) || 10,
-    retry_count: Number(connector.retry_count) || 0,
-  }));
-
-const sanitizeClaudeAnomalyModelForApi = (settings) => ({
-  enabled: Boolean(settings.enabled),
-  base_url: settings.base_url.trim(),
-  auth_token: settings.auth_token.trim(),
-  model_name: settings.model_name.trim(),
-  timeout_seconds: Number(settings.timeout_seconds) || 10,
-  retry_count: Number(settings.retry_count) || 0,
-  prompt_template: settings.prompt_template.trim(),
-});
-
-const parseActionConnectorParameters = (connector) => {
-  const raw = connector.parameters_text?.trim();
-  if (!raw) return {};
-  return JSON.parse(raw);
-};
-
-const sanitizeActionConnectorsForApi = (connectors) =>
-  connectors.map((connector) => ({
-    id: connector.id ?? undefined,
-    enabled: connector.enabled,
-    action_type: connector.action_type,
-    connector_label: connector.connector_label?.trim() || null,
-    base_url: connector.base_url.trim(),
-    auth_token: connector.auth_token.trim(),
-    command: connector.command.trim(),
-    target: connector.target.trim(),
-    parameters: parseActionConnectorParameters(connector),
-    timeout_seconds: Number(connector.timeout_seconds) || 10,
-    retry_count: Number(connector.retry_count) || 0,
+const sanitizeGoveeEndpointsForApi = (endpoints) =>
+  endpoints.map((endpoint) => ({
+    id: endpoint.id ?? undefined,
+    connector_key: 'govee',
+    label: endpoint.label?.trim() || endpoint.device_name || 'Govee Light Connection',
+    enabled: endpoint.enabled,
+    config: {
+      api_key: endpoint.api_key,
+      sku: endpoint.sku,
+      device: endpoint.device,
+      device_name: endpoint.device_name,
+      capability_key: endpoint.capability_key,
+      capability_type: endpoint.capability_type,
+      capability_instance: endpoint.capability_instance,
+      capability_value: endpoint.capability_value,
+      capability_value_label: endpoint.capability_value_label || null,
+      input_kind: endpoint.input_kind || null,
+    },
+    delivery_capabilities: ['light_control'],
   }));
 
 const buildAlertRuleSetupHint = (sources, errorDetail = null) => {
@@ -598,9 +511,6 @@ const describeModelOption = (option) => {
       if (adapter === 'passthrough_stage_2') {
         return `${name} keeps Stage 1 anomaly events moving without adding prompt-based interpretation.`;
       }
-      if (adapter === 'claude_compatible_stage_2') {
-        return `${name} calls a configured Claude-compatible API as the anomaly reasoning model.`;
-      }
       return `${name} is used as the second anomaly pass to interpret or enrich anomaly events.`;
     default:
       return `${name} is available in the current model library.`;
@@ -626,9 +536,6 @@ const describeModelFit = (option) => {
   if (option.stage === 'anomaly_stage_2' && option.adapter === 'passthrough_stage_2') {
     return 'Best when you want to keep the anomaly lane simple and skip prompt interpretation.';
   }
-  if (option.stage === 'anomaly_stage_2' && option.adapter === 'claude_compatible_stage_2') {
-    return 'Best when you want localhost or third-party anomaly reasoning through an HTTP model API.';
-  }
   return 'Available for specialized or compatibility use.';
 };
 
@@ -651,11 +558,7 @@ const SettingsPage = ({
       return [createSourceDraft()];
     }
     try {
-      const parsed = JSON.parse(saved);
-      if (!Array.isArray(parsed) || parsed.length === 0) {
-        return [createSourceDraft()];
-      }
-      return parsed.map((source, index) => hydrateSource(source || {}, index));
+      return JSON.parse(saved);
     } catch (error) {
       return [createSourceDraft()];
     }
@@ -667,37 +570,34 @@ const SettingsPage = ({
   const [isSavingAlertRules, setIsSavingAlertRules] = useState(false);
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
-  const [isSavingClaudeApiConnectors, setIsSavingClaudeApiConnectors] = useState(false);
-  const [isSavingClaudeAnomalyModel, setIsSavingClaudeAnomalyModel] = useState(false);
-  const [isSavingActionConnectors, setIsSavingActionConnectors] = useState(false);
+  const [isSavingGoveeEndpoints, setIsSavingGoveeEndpoints] = useState(false);
+  const [isSavingConnectorZooRepoSettings, setIsSavingConnectorZooRepoSettings] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
   const [rowErrors, setRowErrors] = useState({});
   const [alertRuleErrors, setAlertRuleErrors] = useState({});
   const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
   const [appleMessageSubscriptionErrors, setAppleMessageSubscriptionErrors] = useState({});
-  const [claudeApiConnectorErrors, setClaudeApiConnectorErrors] = useState({});
-  const [actionConnectorErrors, setActionConnectorErrors] = useState({});
+  const [goveeEndpointErrors, setGoveeEndpointErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
-  const [busyClaudeApiTests, setBusyClaudeApiTests] = useState({});
-  const [isTestingClaudeAnomalyModel, setIsTestingClaudeAnomalyModel] = useState(false);
-  const [busyActionConnectorTests, setBusyActionConnectorTests] = useState({});
-  const [busyDemoTriggers, setBusyDemoTriggers] = useState({});
+  const [busyGoveeTests, setBusyGoveeTests] = useState({});
+  const [busyGoveeDiscovery, setBusyGoveeDiscovery] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
   const [alertRules, setAlertRules] = useState([]);
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
-  const [claudeApiConnectors, setClaudeApiConnectors] = useState([]);
-  const [claudeAnomalyModel, setClaudeAnomalyModel] = useState(createClaudeAnomalyModelSettings);
-  const [actionConnectors, setActionConnectors] = useState([]);
+  const [goveeEndpoints, setGoveeEndpoints] = useState([]);
+  const [genericConnectorEndpoints, setGenericConnectorEndpoints] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
-  const [triggerZoo, setTriggerZoo] = useState([]);
-  const [connectorZoo, setConnectorZoo] = useState([]);
+  const [connectorSubTab, setConnectorSubTab] = useState('connections');
+  const [connectorZooRepoSettings, setConnectorZooRepoSettings] = useState({ catalog_url: '' });
+  const [repoConnectorZooCatalog, setRepoConnectorZooCatalog] = useState(normalizeRepoConnectorZooPayload({}));
+  const [installingRepoConnectorKey, setInstallingRepoConnectorKey] = useState('');
   const [anomalyItems, setAnomalyItems] = useState([]);
   const [anomalyBehaviors, setAnomalyBehaviors] = useState([]);
   const [standardPromptSettings, setStandardPromptSettings] = useState(EMPTY_PROMPT_SETTINGS);
@@ -719,6 +619,8 @@ const SettingsPage = ({
   });
   const [draftThemeKey, setDraftThemeKey] = useState(currentThemeKey);
   const [appearanceMessage, setAppearanceMessage] = useState(null);
+  const [goveeDiscoveryResults, setGoveeDiscoveryResults] = useState({});
+  const [goveeDiscoveryMessages, setGoveeDiscoveryMessages] = useState({});
   const rawRequestedTab = forcedTab || searchParams.get('tab');
   const requestedTab = rawRequestedTab === 'run' ? 'monitoring' : rawRequestedTab;
   const allowedTabs = forcedTab ? [...SETTINGS_TABS, ...STANDALONE_PAGE_TABS] : SETTINGS_TABS;
@@ -812,7 +714,7 @@ const SettingsPage = ({
       throw new Error(detail || 'Failed to load Telegram trigger subscriptions');
     }
     const data = await response.json();
-    setTelegramSubscriptions((data || []).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
+    setTelegramSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
   };
 
   const reloadAppleMessageSubscriptionState = async () => {
@@ -828,11 +730,11 @@ const SettingsPage = ({
       throw new Error(detail || 'Failed to load Apple Messages trigger subscriptions');
     }
     const data = await response.json();
-    setAppleMessageSubscriptions((data || []).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+    setAppleMessageSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
   };
 
-  const reloadClaudeApiConnectorState = async () => {
-    const response = await fetch(`${BaseURL}/settings/claude-api-connectors`);
+  const reloadGoveeEndpointState = async () => {
+    const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints`);
     if (!response.ok) {
       let detail = null;
       try {
@@ -841,14 +743,14 @@ const SettingsPage = ({
       } catch (error) {
         detail = null;
       }
-      throw new Error(detail || 'Failed to load third-party API connectors');
+      throw new Error(detail || 'Failed to load Govee connector endpoints');
     }
     const data = await response.json();
-    setClaudeApiConnectors((Array.isArray(data) ? data : []).map((connector, index) => hydrateClaudeApiConnector(connector, index)));
+    setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
   };
 
-  const reloadClaudeAnomalyModelState = async () => {
-    const response = await fetch(`${BaseURL}/settings/claude-anomaly-model`);
+  const reloadGenericConnectorEndpointState = async () => {
+    const response = await fetch(`${BaseURL}/settings/connector-endpoints`);
     if (!response.ok) {
       let detail = null;
       try {
@@ -857,14 +759,29 @@ const SettingsPage = ({
       } catch (error) {
         detail = null;
       }
-      throw new Error(detail || 'Failed to load Claude-compatible anomaly model settings');
+      throw new Error(detail || 'Failed to load connector endpoints');
     }
     const data = await response.json();
-    setClaudeAnomalyModel(hydrateClaudeAnomalyModelSettings(data || {}));
+    setGenericConnectorEndpoints(
+      normalizeListPayload(data).filter(
+        (endpoint) => !['telegram', 'apple_messages', 'govee'].includes(endpoint.connector_key),
+      ),
+    );
   };
 
-  const reloadActionConnectorState = async () => {
-    const response = await fetch(`${BaseURL}/settings/action-connectors`);
+  const reloadConnectorZooRepoSettings = async () => {
+    const response = await fetch(`${BaseURL}/settings/connector-zoo-repo`);
+    if (!response.ok) {
+      throw new Error('Failed to load Connector Zoo repo settings');
+    }
+    const data = await response.json();
+    setConnectorZooRepoSettings({
+      catalog_url: data?.catalog_url ?? '',
+    });
+  };
+
+  const reloadRepoConnectorZooCatalog = async () => {
+    const response = await fetch(`${BaseURL}/connector-zoo/repo`);
     if (!response.ok) {
       let detail = null;
       try {
@@ -873,10 +790,10 @@ const SettingsPage = ({
       } catch (error) {
         detail = null;
       }
-      throw new Error(detail || 'Failed to load action connectors');
+      throw new Error(detail || 'Failed to refresh Connector Zoo');
     }
     const data = await response.json();
-    setActionConnectors((Array.isArray(data) ? data : []).map((connector, index) => hydrateActionConnector(connector, index)));
+    setRepoConnectorZooCatalog(normalizeRepoConnectorZooPayload(data));
   };
 
   useEffect(() => {
@@ -918,9 +835,9 @@ const SettingsPage = ({
         }
         await reloadTelegramSubscriptionState();
         await reloadAppleMessageSubscriptionState();
-        await reloadClaudeApiConnectorState();
-        await reloadClaudeAnomalyModelState();
-        await reloadActionConnectorState();
+        await reloadGoveeEndpointState();
+        await reloadGenericConnectorEndpointState();
+        await reloadConnectorZooRepoSettings();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
         });
@@ -929,26 +846,17 @@ const SettingsPage = ({
       }
     };
 
-    const loadZoos = async () => {
-      try {
-        const [triggerResponse, connectorResponse] = await Promise.all([
-          fetch(`${BaseURL}/trigger-zoo`),
-          fetch(`${BaseURL}/connector-zoo`),
-        ]);
-        if (triggerResponse.ok) {
-          setTriggerZoo(await triggerResponse.json());
-        }
-        if (connectorResponse.ok) {
-          setConnectorZoo(await connectorResponse.json());
-        }
-      } catch {
-        // Keep the page usable if the zoo catalogs are temporarily unavailable.
-      }
-    };
-
     loadSources();
-    loadZoos();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'connectors' || connectorSubTab !== 'connector-zoo') {
+      return;
+    }
+    reloadRepoConnectorZooCatalog().catch((error) => {
+      setBanner({ kind: 'error', text: error.message });
+    });
+  }, [activeTab, connectorSubTab]);
 
   const setSourceField = (clientKey, field, value) => {
     setSources((previous) =>
@@ -1143,209 +1051,102 @@ const SettingsPage = ({
     );
   };
 
-  const addClaudeApiConnector = () => {
-    setClaudeApiConnectors((previous) => [
-      ...previous,
-      createClaudeApiConnectorDraft(),
-    ]);
+  const addGoveeEndpoint = () => {
+    setGoveeEndpoints((previous) => [...previous, createGoveeEndpointDraft()]);
   };
 
-  const removeClaudeApiConnector = (clientKey) => {
-    setClaudeApiConnectors((previous) =>
-      previous.filter((connector) => connector.clientKey !== clientKey)
-    );
-    setClaudeApiConnectorErrors((previous) => {
+  const removeGoveeEndpoint = (clientKey) => {
+    setGoveeEndpoints((previous) => previous.filter((endpoint) => endpoint.clientKey !== clientKey));
+    setGoveeEndpointErrors((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+    setGoveeDiscoveryResults((previous) => {
+      const next = { ...previous };
+      delete next[clientKey];
+      return next;
+    });
+    setGoveeDiscoveryMessages((previous) => {
       const next = { ...previous };
       delete next[clientKey];
       return next;
     });
   };
 
-  const setClaudeApiConnectorField = (clientKey, field, value) => {
-    setClaudeApiConnectors((previous) =>
-      previous.map((connector) =>
-        connector.clientKey === clientKey
+  const setGoveeEndpointField = (clientKey, field, value) => {
+    setGoveeEndpoints((previous) =>
+      previous.map((endpoint) =>
+        endpoint.clientKey === clientKey
           ? {
-              ...connector,
+              ...endpoint,
               [field]: value,
             }
-          : connector
+          : endpoint
       )
     );
   };
 
-  const setClaudeAnomalyModelField = (field, value) => {
-    setClaudeAnomalyModel((previous) => ({
-      ...previous,
-      [field]: value,
-    }));
-  };
-
-  const addActionConnector = (actionType = 'robot_action') => {
-    setActionConnectors((previous) => [
-      ...previous,
-      createActionConnectorDraft(actionType),
-    ]);
-  };
-
-  const removeActionConnector = (clientKey) => {
-    setActionConnectors((previous) =>
-      previous.filter((connector) => connector.clientKey !== clientKey)
-    );
-    setActionConnectorErrors((previous) => {
-      const next = { ...previous };
-      delete next[clientKey];
-      return next;
-    });
-  };
-
-  const setActionConnectorField = (clientKey, field, value) => {
-    setActionConnectors((previous) =>
-      previous.map((connector) => {
-        if (connector.clientKey !== clientKey) {
-          return connector;
+  const applyGoveeDeviceSelection = (clientKey, deviceKey) => {
+    const devices = goveeDiscoveryResults[clientKey] || [];
+    const selectedDevice = devices.find((device) => `${device.sku}:${device.device}` === deviceKey);
+    setGoveeEndpoints((previous) =>
+      previous.map((endpoint) => {
+        if (endpoint.clientKey !== clientKey) {
+          return endpoint;
         }
-        if (field === 'action_type') {
-          const previousOption = ACTION_CONNECTOR_OPTIONS.find((candidate) => candidate.value === connector.action_type);
-          const nextOption = ACTION_CONNECTOR_OPTIONS.find((candidate) => candidate.value === value);
-          const shouldUseNextCommand = !connector.command.trim() || connector.command === previousOption?.defaultCommand;
-          const shouldUseNextTarget = !connector.target.trim() || connector.target === previousOption?.defaultTarget;
+        if (!selectedDevice) {
           return {
-            ...connector,
-            action_type: value,
-            command: shouldUseNextCommand ? (nextOption?.defaultCommand || connector.command) : connector.command,
-            target: shouldUseNextTarget ? (nextOption?.defaultTarget || connector.target) : connector.target,
+            ...endpoint,
+            sku: '',
+            device: '',
+            device_name: '',
+            capability_key: '',
+            capability_type: '',
+            capability_instance: '',
+            capability_value: '',
+            capability_value_label: '',
+            input_kind: '',
           };
         }
+        const firstCapability = (selectedDevice.capability_options || [])[0];
         return {
-          ...connector,
-          [field]: value,
+          ...endpoint,
+          sku: selectedDevice.sku,
+          device: selectedDevice.device,
+          device_name: selectedDevice.device_name,
+          capability_key: firstCapability?.key || '',
+          capability_type: firstCapability?.capability_type || '',
+          capability_instance: firstCapability?.instance || '',
+          capability_value: firstCapability?.default_value ?? '',
+          capability_value_label: '',
+          input_kind: firstCapability?.input_kind || '',
         };
       })
     );
   };
 
-  const availableDeliveryTargets = [
-    ...telegramSubscriptions.map((subscription, index) => ({
-      id: subscription.id,
-      label: subscription.subscription_label?.trim() || `Telegram ${index + 1}`,
-      connectorKey: 'telegram',
-      group: 'Notification',
-      enabled: subscription.enabled,
-    })),
-    ...claudeApiConnectors.map((connector, index) => ({
-      id: connector.id,
-      label: connector.connector_label?.trim() || `Third-party API ${index + 1}`,
-      connectorKey: 'claude_api',
-      group: 'Notification',
-      enabled: connector.enabled,
-    })),
-    ...actionConnectors.map((connector, index) => ({
-      id: connector.id,
-      label: connector.connector_label?.trim()
-        || `${ACTION_CONNECTOR_OPTIONS.find((option) => option.value === connector.action_type)?.label || 'Action'} ${index + 1}`,
-      connectorKey: connector.action_type,
-      group: 'Action',
-      enabled: connector.enabled,
-    })),
-  ].filter((target) => target.id);
-
-  const toggleAlertRuleDeliveryTarget = (clientKey, targetId, checked) => {
-    setAlertRules((previous) =>
-      previous.map((rule) => {
-        if (rule.clientKey !== clientKey) {
-          return rule;
-        }
-        const nextTargetIds = new Set(rule.delivery_target_ids || []);
-        if (checked) {
-          nextTargetIds.add(targetId);
-        } else {
-          nextTargetIds.delete(targetId);
-        }
-        return {
-          ...rule,
-          delivery_target_ids: availableDeliveryTargets
-            .filter((target) => nextTargetIds.has(target.id))
-            .map((target) => target.id),
-        };
-      })
+  const applyGoveeCapabilitySelection = (clientKey, capabilityKey) => {
+    const endpoint = goveeEndpoints.find((item) => item.clientKey === clientKey);
+    const deviceEntry = (goveeDiscoveryResults[clientKey] || []).find(
+      (device) => device.sku === endpoint?.sku && device.device === endpoint?.device,
     );
-  };
-
-  const renderDeliveryTargetSelector = (rule, keyPrefix) => {
-    const selectedTargetIds = new Set(rule.delivery_target_ids || []);
-    const selectedCount = availableDeliveryTargets.filter((target) => selectedTargetIds.has(target.id)).length;
-    const groupedTargets = availableDeliveryTargets.reduce((groups, target) => {
-      const group = target.group || 'Other';
-      if (!groups[group]) {
-        groups[group] = [];
-      }
-      groups[group].push(target);
-      return groups;
-    }, {});
-    const groupOrder = ['Notification', 'Action', 'Other'].filter((group) => groupedTargets[group]?.length);
-
-    return (
-      <div className="delivery-target-selector">
-        <div className="delivery-target-header">
-          <span>Delivery Targets</span>
-          <span className="delivery-target-count">
-            {selectedCount === 0 ? 'None selected' : `${selectedCount} selected`}
-          </span>
-        </div>
-        {availableDeliveryTargets.length === 0 ? (
-          <div className="delivery-target-empty">
-            Save a notification connector or action connector before routing this trigger.
-          </div>
-        ) : (
-          <div className="delivery-target-groups">
-            {groupOrder.map((group) => (
-              <div key={`${keyPrefix}-${group}`} className="delivery-target-group">
-                <div className="delivery-target-group-title">{group}</div>
-                <div className="delivery-target-options">
-                  {groupedTargets[group].map((target) => {
-                    const checked = selectedTargetIds.has(target.id);
-                    return (
-                      <label
-                        key={`${keyPrefix}-target-${target.id}`}
-                        className={`delivery-target-option ${checked ? 'delivery-target-option-selected' : ''}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={(event) => toggleAlertRuleDeliveryTarget(rule.clientKey, target.id, event.target.checked)}
-                        />
-                        <span className="delivery-target-option-main">
-                          <strong>{target.label}</strong>
-                          <span>{target.connectorKey.replace(/_/g, ' ')}</span>
-                        </span>
-                        <span className={`delivery-target-state ${target.enabled ? 'delivery-target-state-enabled' : 'delivery-target-state-disabled'}`}>
-                          {target.enabled ? 'Enabled' : 'Disabled'}
-                        </span>
-                      </label>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+    const capability = (deviceEntry?.capability_options || []).find((item) => item.key === capabilityKey);
+    setGoveeEndpoints((previous) =>
+      previous.map((item) =>
+        item.clientKey === clientKey
+          ? {
+              ...item,
+              capability_key: capability?.key || '',
+              capability_type: capability?.capability_type || '',
+              capability_instance: capability?.instance || '',
+              capability_value: capability?.default_value ?? '',
+              capability_value_label: '',
+              input_kind: capability?.input_kind || '',
+            }
+          : item
+      )
     );
-  };
-
-  const loadDemoTriggerPresets = () => {
-    setAlertRules((previous) => [
-      ...previous,
-      ...DEMO_TRIGGER_OPTIONS.map((option) => ({
-        ...createDemoTriggerRuleDraft(option.value),
-        source_ids: option.value === 'manual_trigger'
-          ? []
-          : sources.filter((source) => source.id).map((source) => source.id),
-        delivery_target_ids: availableDeliveryTargets.map((target) => target.id),
-      })),
-    ]);
-    setBanner({ kind: 'success', text: 'Loaded demo trigger presets.' });
   };
 
   const setSourceKind = (clientKey, kind) => {
@@ -1410,11 +1211,8 @@ const SettingsPage = ({
   const validateAlertRules = () => {
     const nextErrors = {};
     alertRules.forEach((rule) => {
-      if (rule.trigger_key !== 'manual_trigger' && (!Array.isArray(rule.source_ids) || rule.source_ids.length === 0)) {
+      if (!Array.isArray(rule.source_ids) || rule.source_ids.length === 0) {
         nextErrors[rule.clientKey] = 'Select at least one camera.';
-        return;
-      }
-      if (rule.trigger_key !== 'alert_rule_trigger') {
         return;
       }
       if (!rule.target_key) {
@@ -1450,7 +1248,7 @@ const SettingsPage = ({
     telegramSubscriptions.forEach((subscription) => {
       if (!subscription.bot_token.trim()) {
         nextErrors[subscription.clientKey] = 'Bot token is required.';
-      } else if (subscription.bot_token.trim() === MASKED_SECRET_VALUE && !subscription.id) {
+      } else if (subscription.bot_token.trim() === MASKED_SECRET_VALUE) {
         nextErrors[subscription.clientKey] = 'Paste the new bot token value before saving.';
       } else if (!subscription.chat_id.trim()) {
         nextErrors[subscription.clientKey] = 'Chat ID is required.';
@@ -1473,80 +1271,20 @@ const SettingsPage = ({
     return Object.keys(nextErrors).length === 0;
   };
 
-  const validateClaudeApiConnectors = () => {
+  const validateGoveeEndpoints = () => {
     const nextErrors = {};
-    claudeApiConnectors.forEach((connector) => {
-      if (!connector.base_url.trim()) {
-        nextErrors[connector.clientKey] = 'Base URL is required.';
-      } else if (!/^https?:\/\//i.test(connector.base_url.trim())) {
-        nextErrors[connector.clientKey] = 'Base URL must start with http:// or https://.';
-      } else if (connector.auth_token.trim() === MASKED_SECRET_VALUE && !connector.id) {
-        nextErrors[connector.clientKey] = 'Paste the new auth token value before saving.';
-      } else if (Number(connector.timeout_seconds) < 1 || Number(connector.timeout_seconds) > 120) {
-        nextErrors[connector.clientKey] = 'Timeout must be between 1 and 120 seconds.';
-      } else if (Number(connector.retry_count) < 0 || Number(connector.retry_count) > 5) {
-        nextErrors[connector.clientKey] = 'Retry count must be between 0 and 5.';
+    goveeEndpoints.forEach((endpoint) => {
+      if (!endpoint.api_key.trim()) {
+        nextErrors[endpoint.clientKey] = 'API key is required.';
+      } else if (!endpoint.sku || !endpoint.device) {
+        nextErrors[endpoint.clientKey] = 'Discover and select a Govee light device first.';
+      } else if (!endpoint.capability_type || !endpoint.capability_instance) {
+        nextErrors[endpoint.clientKey] = 'Select a supported Govee light action.';
+      } else if (endpoint.capability_value === '' || endpoint.capability_value === null || endpoint.capability_value === undefined) {
+        nextErrors[endpoint.clientKey] = 'Select or enter the action value to send on trigger.';
       }
     });
-    setClaudeApiConnectorErrors(nextErrors);
-    return Object.keys(nextErrors).length === 0;
-  };
-
-  const validateClaudeAnomalyModel = () => {
-    if (!claudeAnomalyModel.enabled) {
-      return true;
-    }
-    if (!claudeAnomalyModel.base_url.trim()) {
-      setBanner({ kind: 'error', text: 'Claude anomaly model base URL is required.' });
-      return false;
-    }
-    if (!/^https?:\/\//i.test(claudeAnomalyModel.base_url.trim())) {
-      setBanner({ kind: 'error', text: 'Claude anomaly model base URL must start with http:// or https://.' });
-      return false;
-    }
-    if (!claudeAnomalyModel.model_name.trim()) {
-      setBanner({ kind: 'error', text: 'Claude anomaly model name is required.' });
-      return false;
-    }
-    if (claudeAnomalyModel.auth_token.trim() === MASKED_SECRET_VALUE && !claudeAnomalyModel.base_url.trim()) {
-      setBanner({ kind: 'error', text: 'Paste the new auth token value before saving.' });
-      return false;
-    }
-    if (Number(claudeAnomalyModel.timeout_seconds) < 1 || Number(claudeAnomalyModel.timeout_seconds) > 120) {
-      setBanner({ kind: 'error', text: 'Claude anomaly timeout must be between 1 and 120 seconds.' });
-      return false;
-    }
-    if (Number(claudeAnomalyModel.retry_count) < 0 || Number(claudeAnomalyModel.retry_count) > 5) {
-      setBanner({ kind: 'error', text: 'Claude anomaly retry count must be between 0 and 5.' });
-      return false;
-    }
-    return true;
-  };
-
-  const validateActionConnectors = () => {
-    const nextErrors = {};
-    actionConnectors.forEach((connector) => {
-      if (!connector.base_url.trim()) {
-        nextErrors[connector.clientKey] = 'Action URL is required.';
-      } else if (!/^https?:\/\//i.test(connector.base_url.trim())) {
-        nextErrors[connector.clientKey] = 'Action URL must start with http:// or https://.';
-      } else if (!connector.command.trim()) {
-        nextErrors[connector.clientKey] = 'Command is required.';
-      } else if (connector.auth_token.trim() === MASKED_SECRET_VALUE && !connector.id) {
-        nextErrors[connector.clientKey] = 'Paste the new auth token value before saving.';
-      } else if (Number(connector.timeout_seconds) < 1 || Number(connector.timeout_seconds) > 120) {
-        nextErrors[connector.clientKey] = 'Timeout must be between 1 and 120 seconds.';
-      } else if (Number(connector.retry_count) < 0 || Number(connector.retry_count) > 5) {
-        nextErrors[connector.clientKey] = 'Retry count must be between 0 and 5.';
-      } else {
-        try {
-          parseActionConnectorParameters(connector);
-        } catch (error) {
-          nextErrors[connector.clientKey] = 'Parameters must be valid JSON.';
-        }
-      }
-    });
-    setActionConnectorErrors(nextErrors);
+    setGoveeEndpointErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
@@ -1770,7 +1508,7 @@ const SettingsPage = ({
         },
         body: JSON.stringify(payload),
       });
-      const data = await readResponseJson(response, 'Failed to save mounted models');
+      const data = await response.json();
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save mounted models');
       }
@@ -1921,7 +1659,7 @@ const SettingsPage = ({
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save Telegram trigger subscriptions');
       }
-      setTelegramSubscriptions((data || []).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
+      setTelegramSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
       setTelegramSubscriptionErrors({});
       setBanner({ kind: 'success', text: 'Telegram trigger subscriptions saved.' });
     } catch (error) {
@@ -1992,7 +1730,7 @@ const SettingsPage = ({
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save Apple Messages trigger subscriptions');
       }
-      setAppleMessageSubscriptions((data || []).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+      setAppleMessageSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
       setAppleMessageSubscriptionErrors({});
       setBanner({ kind: 'success', text: 'Apple Messages trigger subscriptions saved.' });
     } catch (error) {
@@ -2037,240 +1775,200 @@ const SettingsPage = ({
     }
   };
 
-  const saveClaudeApiConnectors = async () => {
-    if (!validateClaudeApiConnectors()) {
-      setBanner({ kind: 'error', text: 'Fix the third-party API connector rows first.' });
+  const testGoveeApiKey = async (endpoint) => {
+    if (!endpoint.api_key.trim()) {
+      setGoveeEndpointErrors((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: 'API key is required.',
+      }));
+      setBanner({ kind: 'error', text: 'API key is required for a Govee test.' });
       return;
     }
-    setIsSavingClaudeApiConnectors(true);
+    setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: true }));
     try {
-      const response = await fetch(`${BaseURL}/settings/claude-api-connectors`, {
+      const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
+        ? `?endpoint_id=${endpoint.id}`
+        : '';
+      const response = await fetch(`${BaseURL}/settings/govee/test${query}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ api_key: endpoint.api_key.trim() }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to validate Govee API key');
+      }
+      setBanner({ kind: 'success', text: data.message || 'Govee API key is valid.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: false }));
+    }
+  };
+
+  const discoverGoveeDevices = async (endpoint) => {
+    if (!endpoint.api_key.trim()) {
+      setGoveeEndpointErrors((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: 'API key is required.',
+      }));
+      setBanner({ kind: 'error', text: 'API key is required to discover Govee devices.' });
+      return;
+    }
+    setBusyGoveeDiscovery((previous) => ({ ...previous, [endpoint.clientKey]: true }));
+    try {
+      const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
+        ? `?endpoint_id=${endpoint.id}`
+        : '';
+      const response = await fetch(`${BaseURL}/settings/govee/devices${query}`, {
+        headers: endpoint.api_key.trim() === MASKED_SECRET_VALUE
+          ? {}
+          : {
+              'x-govee-api-key': endpoint.api_key.trim(),
+            },
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to discover Govee devices');
+      }
+      setGoveeDiscoveryResults((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: data || [],
+      }));
+      setGoveeDiscoveryMessages((previous) => ({
+        ...previous,
+        [endpoint.clientKey]: data.length > 0
+          ? `Discovered ${data.length} Govee light device${data.length === 1 ? '' : 's'}.`
+          : 'The API key is valid, but no light-capable Govee devices were returned for this account.',
+      }));
+      setBanner({
+        kind: 'success',
+        text: data.length > 0
+          ? `Discovered ${data.length} Govee light device${data.length === 1 ? '' : 's'}.`
+          : 'Govee API key is valid, but no light-capable devices were returned.',
+      });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyGoveeDiscovery((previous) => ({ ...previous, [endpoint.clientKey]: false }));
+    }
+  };
+
+  const saveGoveeEndpoints = async () => {
+    if (!validateGoveeEndpoints()) {
+      setBanner({ kind: 'error', text: 'Fix the Govee connection rows first.' });
+      return;
+    }
+    setIsSavingGoveeEndpoints(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(sanitizeClaudeApiConnectorsForApi(claudeApiConnectors)),
+        body: JSON.stringify(sanitizeGoveeEndpointsForApi(goveeEndpoints)),
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save third-party API connectors');
+        throw new Error(data.detail || 'Failed to save Govee light connections');
       }
-      setClaudeApiConnectors((data || []).map((connector, index) => hydrateClaudeApiConnector(connector, index)));
-      setClaudeApiConnectorErrors({});
-      setBanner({ kind: 'success', text: 'Third-party API connectors saved.' });
+      setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
+      setGoveeEndpointErrors({});
+      setBanner({ kind: 'success', text: 'Govee light connections saved.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
-      setIsSavingClaudeApiConnectors(false);
+      setIsSavingGoveeEndpoints(false);
     }
   };
 
-  const sendClaudeApiTest = async (connector) => {
-    if (!connector.base_url.trim()) {
-      setClaudeApiConnectorErrors((previous) => ({
-        ...previous,
-        [connector.clientKey]: 'Base URL is required.',
-      }));
-      setBanner({ kind: 'error', text: 'Base URL is required for a third-party API test payload.' });
+  const sendGoveeTestAction = async (endpoint) => {
+    if (!validateGoveeEndpoints()) {
+      setBanner({ kind: 'error', text: 'Fix the Govee connection row before sending a test action.' });
       return;
     }
-    setBusyClaudeApiTests((previous) => ({ ...previous, [connector.clientKey]: true }));
+    setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: true }));
     try {
-      const response = await fetch(`${BaseURL}/settings/claude-api-connectors/test`, {
+      const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
+        ? `?endpoint_id=${endpoint.id}`
+        : '';
+      const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints/test${query}`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          id: connector.id ?? undefined,
-          enabled: connector.enabled,
-          connector_label: connector.connector_label?.trim() || null,
-          base_url: connector.base_url.trim(),
-          auth_token: connector.auth_token.trim(),
-          timeout_seconds: Number(connector.timeout_seconds) || 10,
-          retry_count: Number(connector.retry_count) || 0,
-        }),
+        body: JSON.stringify(sanitizeGoveeEndpointsForApi([endpoint])[0]),
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to send third-party API test payload');
+        throw new Error(data.detail || 'Failed to send Govee test action');
       }
-      setBanner({ kind: 'success', text: data.detail || 'Third-party API test payload sent.' });
+      setBanner({ kind: 'success', text: data.detail || 'Govee trigger action sent.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
-      setBusyClaudeApiTests((previous) => ({ ...previous, [connector.clientKey]: false }));
+      setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: false }));
     }
   };
 
-  const saveClaudeAnomalyModel = async () => {
-    if (!validateClaudeAnomalyModel()) {
-      return;
-    }
-    setIsSavingClaudeAnomalyModel(true);
+  const saveConnectorZooRepoSettings = async () => {
+    setIsSavingConnectorZooRepoSettings(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/claude-anomaly-model`, {
+      const response = await fetch(`${BaseURL}/settings/connector-zoo-repo`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(sanitizeClaudeAnomalyModelForApi(claudeAnomalyModel)),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save Claude-compatible anomaly model settings');
-      }
-      setClaudeAnomalyModel(hydrateClaudeAnomalyModelSettings(data || {}));
-      setBanner({ kind: 'success', text: 'Claude-compatible anomaly model settings saved.' });
-    } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
-    } finally {
-      setIsSavingClaudeAnomalyModel(false);
-    }
-  };
-
-  const sendClaudeAnomalyModelTest = async () => {
-    if (!validateClaudeAnomalyModel()) {
-      return;
-    }
-    if (!claudeAnomalyModel.base_url.trim()) {
-      setBanner({ kind: 'error', text: 'Base URL is required for a Claude anomaly test request.' });
-      return;
-    }
-    setIsTestingClaudeAnomalyModel(true);
-    try {
-      const response = await fetch(`${BaseURL}/settings/claude-anomaly-model/test`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
         body: JSON.stringify({
-          ...sanitizeClaudeAnomalyModelForApi(claudeAnomalyModel),
-          enabled: true,
+          catalog_url: connectorZooRepoSettings.catalog_url.trim() || null,
         }),
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to send Claude-compatible anomaly model test request');
+        throw new Error(data.detail || 'Failed to save Connector Zoo repo settings');
       }
-      setBanner({ kind: 'success', text: data.detail || 'Claude-compatible anomaly model test request sent.' });
-    } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
-    } finally {
-      setIsTestingClaudeAnomalyModel(false);
-    }
-  };
-
-  const saveActionConnectors = async () => {
-    if (!validateActionConnectors()) {
-      setBanner({ kind: 'error', text: 'Fix the action connector rows first.' });
-      return;
-    }
-    setIsSavingActionConnectors(true);
-    try {
-      const response = await fetch(`${BaseURL}/settings/action-connectors`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(sanitizeActionConnectorsForApi(actionConnectors)),
+      setConnectorZooRepoSettings({
+        catalog_url: data?.catalog_url ?? '',
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save action connectors');
-      }
-      setActionConnectors((data || []).map((connector, index) => hydrateActionConnector(connector, index)));
-      setActionConnectorErrors({});
-      setBanner({ kind: 'success', text: 'Action connectors saved.' });
+      await reloadRepoConnectorZooCatalog();
+      setBanner({ kind: 'success', text: 'Connector Zoo catalog settings updated.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
-      setIsSavingActionConnectors(false);
+      setIsSavingConnectorZooRepoSettings(false);
     }
   };
 
-  const sendActionConnectorTest = async (connector) => {
-    if (!connector.base_url.trim()) {
-      setActionConnectorErrors((previous) => ({
-        ...previous,
-        [connector.clientKey]: 'Action URL is required.',
-      }));
-      setBanner({ kind: 'error', text: 'Action URL is required for an action connector test payload.' });
-      return;
-    }
-    let parameters = {};
+  const installRepoConnector = async (connectorKey) => {
+    setInstallingRepoConnectorKey(connectorKey);
     try {
-      parameters = parseActionConnectorParameters(connector);
-    } catch (error) {
-      setActionConnectorErrors((previous) => ({
-        ...previous,
-        [connector.clientKey]: 'Parameters must be valid JSON.',
-      }));
-      setBanner({ kind: 'error', text: 'Parameters must be valid JSON for an action connector test payload.' });
-      return;
-    }
-    setBusyActionConnectorTests((previous) => ({ ...previous, [connector.clientKey]: true }));
-    try {
-      const response = await fetch(`${BaseURL}/settings/action-connectors/test`, {
+      const response = await fetch(`${BaseURL}/connector-zoo/repo/install`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          id: connector.id ?? undefined,
-          enabled: connector.enabled,
-          action_type: connector.action_type,
-          connector_label: connector.connector_label?.trim() || null,
-          base_url: connector.base_url.trim(),
-          auth_token: connector.auth_token.trim(),
-          command: connector.command.trim(),
-          target: connector.target.trim(),
-          parameters,
-          timeout_seconds: Number(connector.timeout_seconds) || 10,
-          retry_count: Number(connector.retry_count) || 0,
-        }),
+        body: JSON.stringify({ connector_key: connectorKey }),
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to send action connector test payload');
+        throw new Error(data.detail || 'Failed to add connector from Connector Zoo');
       }
-      setBanner({ kind: 'success', text: data.detail || 'Action connector test payload sent.' });
-    } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
-    } finally {
-      setBusyActionConnectorTests((previous) => ({ ...previous, [connector.clientKey]: false }));
-    }
-  };
-
-  const fireDemoTrigger = async (rule) => {
-    setBusyDemoTriggers((previous) => ({ ...previous, [rule.clientKey]: true }));
-    try {
-      const response = await fetch(`${BaseURL}/demo/triggers/fire`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          trigger_key: rule.trigger_key,
-          display_title: rule.rule_label || DEMO_TRIGGER_OPTIONS.find((option) => option.value === rule.trigger_key)?.label || 'Demo Trigger',
-          alert_level: rule.alert_level,
-          source_id: rule.source_ids?.[0] || null,
-          delivery_target_ids: rule.delivery_target_ids || [],
-          metadata: {
-            preset: true,
-            source_ids: rule.source_ids || [],
-          },
-        }),
+      await Promise.all([
+        reloadGenericConnectorEndpointState(),
+        reloadGoveeEndpointState(),
+        reloadRepoConnectorZooCatalog(),
+      ]);
+      setConnectorSubTab('connections');
+      setBanner({
+        kind: 'success',
+        text: data.message || 'Connector added. Restart Hearthlight to activate the plugin runtime.',
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to fire demo trigger');
-      }
-      setBanner({ kind: 'success', text: data.detail || 'Demo trigger queued.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
-      setBusyDemoTriggers((previous) => ({ ...previous, [rule.clientKey]: false }));
+      setInstallingRepoConnectorKey('');
     }
   };
 
@@ -2292,10 +1990,8 @@ const SettingsPage = ({
     }
     return modelDisplayNamesByStage[stage]?.[modelKey] || modelKey;
   };
-  const detectionRules = alertRules.filter((rule) => (!rule.trigger_key || rule.trigger_key === 'alert_rule_trigger') && rule.rule_kind === 'detector');
-  const anomalyRules = alertRules.filter((rule) => (!rule.trigger_key || rule.trigger_key === 'alert_rule_trigger') && rule.rule_kind === 'anomaly');
-  const demoTriggerRules = alertRules.filter((rule) => rule.trigger_key && rule.trigger_key !== 'alert_rule_trigger');
-  const alertConnectorRules = alertRules.filter((rule) => !rule.trigger_key || rule.trigger_key === 'alert_rule_trigger');
+  const detectionRules = alertRules.filter((rule) => rule.rule_kind === 'detector');
+  const anomalyRules = alertRules.filter((rule) => rule.rule_kind === 'anomaly');
   const modelZooSource = modelOptionCatalog.model_zoo || {};
   const persistedMountedModelsByStage = modelOptionCatalog.mounted_models || {};
   const mountedModelsByStage = Object.keys(mountedModels || {}).length > 0
@@ -2313,16 +2009,20 @@ const SettingsPage = ({
       && subscription.recipient_handle.trim()
       && ['iMessage', 'SMS'].includes(subscription.service),
   );
-  const isClaudeApiConnectorConfigured = claudeApiConnectors.some(
-    (connector) => connector.enabled && connector.base_url.trim(),
+  const isGoveeConnectorConfigured = goveeEndpoints.some(
+    (endpoint) =>
+      endpoint.enabled
+      && endpoint.sku
+      && endpoint.device
+      && endpoint.capability_type
+      && endpoint.capability_instance
+      && endpoint.api_key.trim(),
   );
-  const isClaudeAnomalyModelConfigured = Boolean(
-    claudeAnomalyModel.enabled
-      && claudeAnomalyModel.base_url.trim()
-      && claudeAnomalyModel.model_name.trim(),
-  );
-  const isActionConnectorConfigured = actionConnectors.some(
-    (connector) => connector.enabled && connector.base_url.trim() && connector.command.trim(),
+  const repoConnectorEntries = Array.isArray(repoConnectorZooCatalog.connectors)
+    ? repoConnectorZooCatalog.connectors
+    : [];
+  const genericInstalledConnectorEndpoints = genericConnectorEndpoints.filter(
+    (endpoint) => endpoint.connector_key !== 'govee',
   );
   const stageLibraryEntries = MODEL_STAGE_OPTIONS.map((option) => {
     const stageOptions = modelOptionsByStage[option.stage] || [];
@@ -3115,7 +2815,6 @@ const SettingsPage = ({
                                       <span>Enabled</span>
                                       <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
                                     </label>
-                                    {renderDeliveryTargetSelector(rule, `${rule.clientKey}-detector`)}
                                   </div>
                                   {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
                                 </div>
@@ -3210,90 +2909,6 @@ const SettingsPage = ({
                                       <span>Enabled</span>
                                       <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
                                     </label>
-                                    {renderDeliveryTargetSelector(rule, `${rule.clientKey}-anomaly`)}
-                                  </div>
-                                  {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="source-row">
-                        <div className="source-row-header">
-                          <div>
-                            <strong>Demo Trigger Templates</strong>
-                            <div className="muted-text">Configure anomaly, unattended bag, loitering compatibility, and manual triggers for local demos.</div>
-                          </div>
-                          <button type="button" onClick={loadDemoTriggerPresets} className="secondary-button">
-                            Load Demo Presets
-                          </button>
-                        </div>
-                        {demoTriggerRules.length === 0 ? (
-                          <div className="empty-state">No demo trigger templates configured yet.</div>
-                        ) : (
-                          <div className="source-list">
-                            {demoTriggerRules.map((rule, ruleIndex) => {
-                              const triggerOption = DEMO_TRIGGER_OPTIONS.find((option) => option.value === rule.trigger_key);
-                              return (
-                                <div key={rule.clientKey} className="source-row">
-                                  <div className="source-row-header">
-                                    <strong>{triggerOption?.label || `Demo Trigger ${ruleIndex + 1}`}</strong>
-                                    <button type="button" onClick={() => removeAlertRule(rule.clientKey)} className="ghost-button">Remove</button>
-                                  </div>
-                                  <div className="model-binding-grid">
-                                    <label>
-                                      <span>Label</span>
-                                      <input type="text" value={rule.rule_label} onChange={(event) => setAlertRuleField(rule.clientKey, 'rule_label', event.target.value)} placeholder="Operator label" />
-                                    </label>
-                                    <label>
-                                      <span>Trigger Type</span>
-                                      <select value={rule.trigger_key} onChange={(event) => setAlertRuleField(rule.clientKey, 'trigger_key', event.target.value)}>
-                                        {DEMO_TRIGGER_OPTIONS.map((option) => (
-                                          <option key={option.value} value={option.value}>{option.label}</option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                    <label>
-                                      <span>Severity</span>
-                                      <select value={rule.alert_level} onChange={(event) => setAlertRuleField(rule.clientKey, 'alert_level', event.target.value)}>
-                                        {ALERT_LEVEL_OPTIONS.map((option) => (
-                                          <option key={option.value} value={option.value}>{option.label}</option>
-                                        ))}
-                                      </select>
-                                    </label>
-                                    <div className="camera-rule-selector">
-                                      <span>Sources</span>
-                                      <div className="camera-checkbox-grid">
-                                        {sources.filter((source) => source.id).map((source, index) => (
-                                          <label key={`${rule.clientKey}-demo-source-${source.id}`} className="model-mount-toggle">
-                                            <input
-                                              type="checkbox"
-                                              checked={(rule.source_ids || []).includes(source.id)}
-                                              disabled={rule.trigger_key === 'manual_trigger'}
-                                              onChange={(event) => toggleAlertRuleSource(rule.clientKey, source.id, event.target.checked)}
-                                            />
-                                            <span>{source.label?.trim() || defaultSourceLabel(source, index, sources)}</span>
-                                          </label>
-                                        ))}
-                                      </div>
-                                    </div>
-                                    {renderDeliveryTargetSelector(rule, `${rule.clientKey}-demo`)}
-                                    <label className="toggle-field">
-                                      <span>Enabled</span>
-                                      <input type="checkbox" checked={rule.enabled} onChange={(event) => setAlertRuleField(rule.clientKey, 'enabled', event.target.checked)} />
-                                    </label>
-                                  </div>
-                                  <div className="control-actions">
-                                    <button
-                                      type="button"
-                                      onClick={() => fireDemoTrigger(rule)}
-                                      className="ghost-button"
-                                      disabled={Boolean(busyDemoTriggers[rule.clientKey])}
-                                    >
-                                      {busyDemoTriggers[rule.clientKey] ? 'Firing...' : 'Fire Demo Trigger'}
-                                    </button>
                                   </div>
                                   {alertRuleErrors[rule.clientKey] && <div className="row-error">{alertRuleErrors[rule.clientKey]}</div>}
                                 </div>
@@ -3310,7 +2925,7 @@ const SettingsPage = ({
                       </button>
                     </div>
                   </div>
-              </section>
+                </section>
             </>
           )}
 
@@ -3322,7 +2937,243 @@ const SettingsPage = ({
                 </div>
               )}
 
-              <section className="control-grid connectors-grid">
+              <div className="settings-subtabs">
+                {CONNECTOR_SUB_TABS.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    className={connectorSubTab === tab.key ? 'settings-subtab active' : 'settings-subtab'}
+                    onClick={() => setConnectorSubTab(tab.key)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {connectorSubTab === 'connections' && (
+                <section className="control-grid connectors-grid">
+                  {genericInstalledConnectorEndpoints.length > 0 && (
+                    <div className="card">
+                      <div className="card-header">
+                        <div>
+                          <div className="connector-header-line">
+                            <h3>Installed Connector Plugins</h3>
+                          </div>
+                          <p>Connectors added from the Connector Zoo appear here after they are added to this workspace.</p>
+                        </div>
+                      </div>
+                      <div className="source-list">
+                        {genericInstalledConnectorEndpoints.map((endpoint, index) => (
+                          <div key={`generic-connector-${endpoint.id || index}`} className="source-row">
+                            <div className="source-row-header">
+                              <div>
+                                <strong>{endpoint.label || endpoint.connector_key}</strong>
+                                <div className="muted-text">Connector key: {endpoint.connector_key}</div>
+                              </div>
+                              <span className={`connector-status-badge ${endpoint.resolved ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                                {endpoint.resolved ? 'Installed' : 'Restart required'}
+                              </span>
+                            </div>
+                            {endpoint.unavailable_reason && (
+                              <div className="row-error">{endpoint.unavailable_reason}</div>
+                            )}
+                            <div className="muted-text">
+                              {endpoint.resolved
+                                ? 'This connector is installed and managed through the generic connector endpoint registry.'
+                                : 'This connector row was added, but the plugin runtime is not active yet. Restart Hearthlight to activate it.'}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {(goveeEndpoints.length > 0) && (
+                    <div className="card">
+                      <div className="card-header">
+                        <div>
+                          <div className="connector-header-line">
+                            <h3>Govee Light Connection</h3>
+                            <span className={`connector-status-badge ${isGoveeConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                              {isGoveeConnectorConfigured ? 'Configured' : 'Needs setup'}
+                            </span>
+                          </div>
+                          <p>Use a Govee account to discover light-capable devices and trigger light actions when Hearthlight rules fire.</p>
+                        </div>
+                        <button type="button" onClick={addGoveeEndpoint} className="secondary-button">
+                          Add Connection
+                        </button>
+                      </div>
+
+                      <div className="source-list">
+                        {goveeEndpoints.map((endpoint, index) => {
+                          const devices = goveeDiscoveryResults[endpoint.clientKey] || [];
+                          const selectedDevice = devices.find((device) => device.sku === endpoint.sku && device.device === endpoint.device);
+                          const capabilityOptions = selectedDevice?.capability_options || [];
+                          const selectedCapability = capabilityOptions.find((option) => option.key === endpoint.capability_key);
+                          const enumValues = selectedCapability?.values || [];
+                          const isColorInput = selectedCapability?.input_kind === 'color';
+                          const colorValue = Number(endpoint.capability_value || 0);
+                          const colorHex = `#${Math.max(0, colorValue).toString(16).padStart(6, '0').slice(-6)}`;
+                          return (
+                            <div key={endpoint.clientKey} className="source-row">
+                              <div className="source-row-header">
+                                <strong>Connection {index + 1}</strong>
+                                <button type="button" onClick={() => removeGoveeEndpoint(endpoint.clientKey)} className="ghost-button">Remove</button>
+                              </div>
+                              <div className="model-binding-grid">
+                                <label>
+                                  <span>Label</span>
+                                  <input
+                                    type="text"
+                                    value={endpoint.label}
+                                    onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'label', event.target.value)}
+                                    placeholder="Optional operator label"
+                                  />
+                                </label>
+                                <label>
+                                  <span>API Key</span>
+                                  <input
+                                    type="password"
+                                    value={endpoint.api_key}
+                                    onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'api_key', event.target.value)}
+                                    placeholder="Govee API key"
+                                  />
+                                </label>
+                                <label className="toggle-field">
+                                  <span>Enabled</span>
+                                  <input
+                                    type="checkbox"
+                                    checked={endpoint.enabled}
+                                    onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'enabled', event.target.checked)}
+                                  />
+                                </label>
+                                <label>
+                                  <span>Device</span>
+                                  <select
+                                    value={endpoint.sku && endpoint.device ? `${endpoint.sku}:${endpoint.device}` : ''}
+                                    onChange={(event) => applyGoveeDeviceSelection(endpoint.clientKey, event.target.value)}
+                                  >
+                                    <option value="">Select discovered light</option>
+                                    {devices.map((device) => (
+                                      <option key={`${device.sku}:${device.device}`} value={`${device.sku}:${device.device}`}>
+                                        {device.device_name} ({device.sku})
+                                      </option>
+                                    ))}
+                                  </select>
+                                </label>
+                                <label>
+                                  <span>Action</span>
+                                  <select
+                                    value={endpoint.capability_key}
+                                    onChange={(event) => applyGoveeCapabilitySelection(endpoint.clientKey, event.target.value)}
+                                    disabled={!selectedDevice}
+                                  >
+                                    <option value="">Select action</option>
+                                    {capabilityOptions.map((option) => (
+                                      <option key={option.key} value={option.key}>{option.label}</option>
+                                    ))}
+                                  </select>
+                                </label>
+                                {selectedCapability?.input_kind === 'enum' && (
+                                  <label>
+                                    <span>Action Value</span>
+                                    <select
+                                      value={endpoint.capability_value}
+                                      onChange={(event) => {
+                                        const selectedValue = enumValues.find((item) => `${item.value}` === event.target.value);
+                                        setGoveeEndpointField(endpoint.clientKey, 'capability_value', Number.isNaN(Number(event.target.value)) ? event.target.value : Number(event.target.value));
+                                        setGoveeEndpointField(endpoint.clientKey, 'capability_value_label', selectedValue?.label || '');
+                                      }}
+                                    >
+                                      <option value="">Select value</option>
+                                      {enumValues.map((item) => (
+                                        <option key={`${item.value}`} value={item.value}>{item.label}</option>
+                                      ))}
+                                    </select>
+                                  </label>
+                                )}
+                                {selectedCapability?.input_kind === 'integer' && (
+                                  <label>
+                                    <span>Action Value</span>
+                                    <input
+                                      type="number"
+                                      min={selectedCapability.range?.min ?? 0}
+                                      max={selectedCapability.range?.max ?? 100}
+                                      step={selectedCapability.range?.precision ?? 1}
+                                      value={endpoint.capability_value}
+                                      onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'capability_value', Number(event.target.value))}
+                                    />
+                                  </label>
+                                )}
+                                {isColorInput && (
+                                  <label>
+                                    <span>Color</span>
+                                    <input
+                                      type="color"
+                                      value={colorHex}
+                                      onChange={(event) => setGoveeEndpointField(endpoint.clientKey, 'capability_value', parseInt(event.target.value.replace('#', ''), 16))}
+                                    />
+                                  </label>
+                                )}
+                              </div>
+                              <div className="control-actions">
+                                <button
+                                  type="button"
+                                  onClick={() => testGoveeApiKey(endpoint)}
+                                  className="ghost-button"
+                                  disabled={Boolean(busyGoveeTests[endpoint.clientKey])}
+                                >
+                                  {busyGoveeTests[endpoint.clientKey] ? 'Testing...' : 'Test API Key'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => discoverGoveeDevices(endpoint)}
+                                  className="ghost-button"
+                                  disabled={Boolean(busyGoveeDiscovery[endpoint.clientKey])}
+                                >
+                                  {busyGoveeDiscovery[endpoint.clientKey] ? 'Discovering...' : 'Discover Devices'}
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => sendGoveeTestAction(endpoint)}
+                                  className="ghost-button"
+                                  disabled={Boolean(busyGoveeTests[endpoint.clientKey])}
+                                >
+                                  {busyGoveeTests[endpoint.clientKey] ? 'Sending Test...' : 'Send Test Action'}
+                                </button>
+                              </div>
+                              {goveeDiscoveryMessages[endpoint.clientKey] && (
+                                <div className="muted-text">{goveeDiscoveryMessages[endpoint.clientKey]}</div>
+                              )}
+                              {goveeEndpointErrors[endpoint.clientKey] && (
+                                <div className="row-error">{goveeEndpointErrors[endpoint.clientKey]}</div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+
+                      <div className="control-actions">
+                        <button
+                          type="button"
+                          onClick={saveGoveeEndpoints}
+                          className="secondary-button"
+                          disabled={isSavingGoveeEndpoints}
+                        >
+                          {isSavingGoveeEndpoints ? 'Saving...' : 'Save Govee Light Connections'}
+                        </button>
+                      </div>
+
+                      <div className="empty-state endpoint-info">
+                        <div className="muted-text">GET/PUT {`${BaseURL}/settings/govee-connector-endpoints`}</div>
+                        <div className="muted-text">POST {`${BaseURL}/settings/govee/test`}</div>
+                        <div className="muted-text">GET {`${BaseURL}/settings/govee/devices`}</div>
+                        <div className="muted-text">POST {`${BaseURL}/settings/govee-connector-endpoints/test`}</div>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="card">
                     <div className="card-header">
                       <div>
@@ -3459,421 +3310,6 @@ const SettingsPage = ({
                     <div className="card-header">
                       <div>
                         <div className="connector-header-line">
-                          <h3>Third-party API (Claude)</h3>
-                          <span className={`connector-status-badge ${isClaudeApiConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
-                            {isClaudeApiConnectorConfigured ? 'Configured' : 'Needs setup'}
-                          </span>
-                        </div>
-                        <p>Send trigger events to a Claude-compatible JSON endpoint with optional bearer auth, timeout, and retries.</p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={addClaudeApiConnector}
-                        className="secondary-button"
-                      >
-                        Add Endpoint
-                      </button>
-                    </div>
-
-                    {claudeApiConnectors.length === 0 ? (
-                      <div className="empty-state">
-                        No third-party API endpoints saved yet.
-                      </div>
-                    ) : (
-                      <div className="source-list">
-                        {claudeApiConnectors.map((connector, index) => (
-                          <div key={connector.clientKey} className="source-row">
-                            <div className="source-row-header">
-                              <strong>Endpoint {index + 1}</strong>
-                              <button
-                                type="button"
-                                onClick={() => removeClaudeApiConnector(connector.clientKey)}
-                                className="ghost-button"
-                              >
-                                Remove
-                              </button>
-                            </div>
-
-                            <div className="model-binding-grid">
-                              <label>
-                                <span>Label</span>
-                                <input
-                                  type="text"
-                                  value={connector.connector_label}
-                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'connector_label', event.target.value)}
-                                  placeholder="Optional operator label"
-                                />
-                              </label>
-                              <label>
-                                <span>Base URL</span>
-                                <input
-                                  type="url"
-                                  value={connector.base_url}
-                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'base_url', event.target.value)}
-                                  placeholder="http://localhost:8787/v1/messages"
-                                />
-                              </label>
-                              <label>
-                                <span>Auth Token / Secret</span>
-                                <input
-                                  type="password"
-                                  value={connector.auth_token}
-                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'auth_token', event.target.value)}
-                                  placeholder="Optional bearer token"
-                                />
-                              </label>
-                              <label>
-                                <span>Timeout Seconds</span>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="120"
-                                  value={connector.timeout_seconds}
-                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'timeout_seconds', event.target.value)}
-                                />
-                              </label>
-                              <label>
-                                <span>Retry Count</span>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="5"
-                                  value={connector.retry_count}
-                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'retry_count', event.target.value)}
-                                />
-                              </label>
-                              <label className="toggle-field">
-                                <span>Enabled</span>
-                                <input
-                                  type="checkbox"
-                                  checked={connector.enabled}
-                                  onChange={(event) => setClaudeApiConnectorField(connector.clientKey, 'enabled', event.target.checked)}
-                                />
-                              </label>
-                            </div>
-
-                            <div className="control-actions">
-                              <button
-                                type="button"
-                                onClick={() => sendClaudeApiTest(connector)}
-                                className="ghost-button"
-                                disabled={Boolean(busyClaudeApiTests[connector.clientKey])}
-                              >
-                                {busyClaudeApiTests[connector.clientKey] ? 'Sending Test...' : 'Send Test Payload'}
-                              </button>
-                            </div>
-
-                            {claudeApiConnectorErrors[connector.clientKey] && (
-                              <div className="row-error">{claudeApiConnectorErrors[connector.clientKey]}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="control-actions">
-                      <button
-                        type="button"
-                        onClick={saveClaudeApiConnectors}
-                        className="secondary-button"
-                        disabled={isSavingClaudeApiConnectors}
-                      >
-                        {isSavingClaudeApiConnectors ? 'Saving...' : 'Save Third-party API Connectors'}
-                      </button>
-                    </div>
-
-                    <div className="empty-state endpoint-info">
-                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/claude-api-connectors`}</div>
-                      <div className="muted-text">POST {`${BaseURL}/settings/claude-api-connectors/test`}</div>
-                      <div className="muted-text">Payload contract: Claude-style `messages` JSON plus `metadata` and `hearthlight` trigger context.</div>
-                    </div>
-                  </div>
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <div className="connector-header-line">
-                          <h3>Claude-Compatible Anomaly Model</h3>
-                          <span className={`connector-status-badge ${isClaudeAnomalyModelConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
-                            {isClaudeAnomalyModelConfigured ? 'Configured' : 'Needs setup'}
-                          </span>
-                        </div>
-                        <p>Use a Claude-compatible API server inside anomaly detection stage 2, separate from trigger delivery connectors.</p>
-                      </div>
-                    </div>
-
-                    <div className="source-row">
-                      <div className="model-binding-grid">
-                        <label className="toggle-field">
-                          <span>Enabled</span>
-                          <input
-                            type="checkbox"
-                            checked={claudeAnomalyModel.enabled}
-                            onChange={(event) => setClaudeAnomalyModelField('enabled', event.target.checked)}
-                          />
-                        </label>
-                        <label>
-                          <span>Base URL</span>
-                          <input
-                            type="url"
-                            value={claudeAnomalyModel.base_url}
-                            onChange={(event) => setClaudeAnomalyModelField('base_url', event.target.value)}
-                            placeholder="http://localhost:8788/v1/messages"
-                          />
-                        </label>
-                        <label>
-                          <span>Model Name</span>
-                          <input
-                            type="text"
-                            value={claudeAnomalyModel.model_name}
-                            onChange={(event) => setClaudeAnomalyModelField('model_name', event.target.value)}
-                            placeholder="claude-compatible-anomaly"
-                          />
-                        </label>
-                        <label>
-                          <span>Auth Token / Secret</span>
-                          <input
-                            type="password"
-                            value={claudeAnomalyModel.auth_token}
-                            onChange={(event) => setClaudeAnomalyModelField('auth_token', event.target.value)}
-                            placeholder="Optional bearer token"
-                          />
-                        </label>
-                        <label>
-                          <span>Timeout Seconds</span>
-                          <input
-                            type="number"
-                            min="1"
-                            max="120"
-                            value={claudeAnomalyModel.timeout_seconds}
-                            onChange={(event) => setClaudeAnomalyModelField('timeout_seconds', event.target.value)}
-                          />
-                        </label>
-                        <label>
-                          <span>Retry Count</span>
-                          <input
-                            type="number"
-                            min="0"
-                            max="5"
-                            value={claudeAnomalyModel.retry_count}
-                            onChange={(event) => setClaudeAnomalyModelField('retry_count', event.target.value)}
-                          />
-                        </label>
-                        <label className="full-width-field">
-                          <span>Prompt Template</span>
-                          <textarea
-                            value={claudeAnomalyModel.prompt_template}
-                            onChange={(event) => setClaudeAnomalyModelField('prompt_template', event.target.value)}
-                            rows={4}
-                          />
-                        </label>
-                      </div>
-
-                      <div className="control-actions">
-                        <button
-                          type="button"
-                          onClick={sendClaudeAnomalyModelTest}
-                          className="ghost-button"
-                          disabled={isTestingClaudeAnomalyModel}
-                        >
-                          {isTestingClaudeAnomalyModel ? 'Sending Test...' : 'Send Test Anomaly Request'}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={saveClaudeAnomalyModel}
-                          className="secondary-button"
-                          disabled={isSavingClaudeAnomalyModel}
-                        >
-                          {isSavingClaudeAnomalyModel ? 'Saving...' : 'Save Anomaly Model API'}
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="empty-state endpoint-info">
-                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/claude-anomaly-model`}</div>
-                      <div className="muted-text">POST {`${BaseURL}/settings/claude-anomaly-model/test`}</div>
-                      <div className="muted-text">Select `Claude-Compatible Anomaly API` as an Anomaly Detection model in Sources or Model Bindings to use it in stage 2.</div>
-                    </div>
-                  </div>
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <div className="connector-header-line">
-                          <h3>Action Connectors</h3>
-                          <span className={`connector-status-badge ${isActionConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
-                            {isActionConnectorConfigured ? 'Configured' : 'Needs setup'}
-                          </span>
-                        </div>
-                        <p>Send trigger commands to Hue lights, music playback APIs, robot controllers, or localhost action demos.</p>
-                      </div>
-                      <div className="control-actions">
-                        {ACTION_CONNECTOR_OPTIONS.map((option) => (
-                          <button
-                            key={`add-${option.value}`}
-                            type="button"
-                            onClick={() => addActionConnector(option.value)}
-                            className="secondary-button"
-                          >
-                            Add {option.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {actionConnectors.length === 0 ? (
-                      <div className="empty-state">
-                        No action connectors saved yet.
-                      </div>
-                    ) : (
-                      <div className="source-list">
-                        {actionConnectors.map((connector, index) => (
-                          <div key={connector.clientKey} className="source-row">
-                            <div className="source-row-header">
-                              <strong>Action {index + 1}</strong>
-                              <button
-                                type="button"
-                                onClick={() => removeActionConnector(connector.clientKey)}
-                                className="ghost-button"
-                              >
-                                Remove
-                              </button>
-                            </div>
-
-                            <div className="model-binding-grid">
-                              <label>
-                                <span>Action Type</span>
-                                <select
-                                  value={connector.action_type}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'action_type', event.target.value)}
-                                >
-                                  {ACTION_CONNECTOR_OPTIONS.map((option) => (
-                                    <option key={option.value} value={option.value}>{option.label}</option>
-                                  ))}
-                                </select>
-                              </label>
-                              <label>
-                                <span>Label</span>
-                                <input
-                                  type="text"
-                                  value={connector.connector_label}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'connector_label', event.target.value)}
-                                  placeholder="Optional operator label"
-                                />
-                              </label>
-                              <label>
-                                <span>Action URL</span>
-                                <input
-                                  type="url"
-                                  value={connector.base_url}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'base_url', event.target.value)}
-                                  placeholder="http://localhost:8790/actions"
-                                />
-                              </label>
-                              <label>
-                                <span>Auth Token / Secret</span>
-                                <input
-                                  type="password"
-                                  value={connector.auth_token}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'auth_token', event.target.value)}
-                                  placeholder="Optional bearer token"
-                                />
-                              </label>
-                              <label>
-                                <span>Command</span>
-                                <input
-                                  type="text"
-                                  value={connector.command}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'command', event.target.value)}
-                                  placeholder="play_alert"
-                                />
-                              </label>
-                              <label>
-                                <span>Target</span>
-                                <input
-                                  type="text"
-                                  value={connector.target}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'target', event.target.value)}
-                                  placeholder="light, speaker, robot, or zone"
-                                />
-                              </label>
-                              <label>
-                                <span>Timeout Seconds</span>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="120"
-                                  value={connector.timeout_seconds}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'timeout_seconds', event.target.value)}
-                                />
-                              </label>
-                              <label>
-                                <span>Retry Count</span>
-                                <input
-                                  type="number"
-                                  min="0"
-                                  max="5"
-                                  value={connector.retry_count}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'retry_count', event.target.value)}
-                                />
-                              </label>
-                              <label className="toggle-field">
-                                <span>Enabled</span>
-                                <input
-                                  type="checkbox"
-                                  checked={connector.enabled}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'enabled', event.target.checked)}
-                                />
-                              </label>
-                              <label>
-                                <span>Parameters JSON</span>
-                                <textarea
-                                  value={connector.parameters_text}
-                                  onChange={(event) => setActionConnectorField(connector.clientKey, 'parameters_text', event.target.value)}
-                                  rows={4}
-                                  spellCheck="false"
-                                />
-                              </label>
-                            </div>
-
-                            <div className="control-actions">
-                              <button
-                                type="button"
-                                onClick={() => sendActionConnectorTest(connector)}
-                                className="ghost-button"
-                                disabled={Boolean(busyActionConnectorTests[connector.clientKey])}
-                              >
-                                {busyActionConnectorTests[connector.clientKey] ? 'Sending Test...' : 'Send Test Action'}
-                              </button>
-                            </div>
-
-                            {actionConnectorErrors[connector.clientKey] && (
-                              <div className="row-error">{actionConnectorErrors[connector.clientKey]}</div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    <div className="control-actions">
-                      <button
-                        type="button"
-                        onClick={saveActionConnectors}
-                        className="secondary-button"
-                        disabled={isSavingActionConnectors}
-                      >
-                        {isSavingActionConnectors ? 'Saving...' : 'Save Action Connectors'}
-                      </button>
-                    </div>
-
-                    <div className="empty-state endpoint-info">
-                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/action-connectors`}</div>
-                      <div className="muted-text">POST {`${BaseURL}/settings/action-connectors/test`}</div>
-                      <div className="muted-text">Payload contract: `hearthlight.action.v1` with action command, target, parameters, and trigger context.</div>
-                    </div>
-                  </div>
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <div className="connector-header-line">
                           <h3>Apple Messages</h3>
                           <span className={`connector-status-badge ${isAppleMessagesConnectorConfigured ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
                             {isAppleMessagesConnectorConfigured ? 'Configured' : 'Needs setup'}
@@ -3991,7 +3427,111 @@ const SettingsPage = ({
                       <div className="muted-text">Apple Messages is host-local and depends on the macOS Messages app.</div>
                     </div>
                   </div>
-              </section>
+                </section>
+              )}
+
+              {connectorSubTab === 'connector-zoo' && (
+                <section className="control-grid connectors-grid">
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <div className="connector-header-line">
+                          <h3>Connector Zoo</h3>
+                        </div>
+                        <p>Optional connector plugins can be added here without being part of the default built-in connector set.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => reloadRepoConnectorZooCatalog().catch((error) => setBanner({ kind: 'error', text: error.message }))}
+                        className="secondary-button"
+                      >
+                        Refresh Zoo
+                      </button>
+                    </div>
+
+                    <div className="model-binding-grid">
+                      <label>
+                        <span>Catalog URL</span>
+                        <input
+                          type="url"
+                          value={connectorZooRepoSettings.catalog_url}
+                          onChange={(event) => setConnectorZooRepoSettings({ catalog_url: event.target.value })}
+                          placeholder="https://raw.githubusercontent.com/.../connector_zoo.yaml"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={saveConnectorZooRepoSettings}
+                        className="secondary-button"
+                        disabled={isSavingConnectorZooRepoSettings}
+                      >
+                        {isSavingConnectorZooRepoSettings ? 'Saving...' : 'Save Connector Zoo URL'}
+                      </button>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <div className="muted-text">Source URL: {repoConnectorZooCatalog.source_url || connectorZooRepoSettings.catalog_url || 'Not configured yet'}</div>
+                      <div className="muted-text">Last refreshed: {repoConnectorZooCatalog.last_refreshed_at || 'Not fetched yet'}</div>
+                      {repoConnectorZooCatalog.generated_at && (
+                        <div className="muted-text">Catalog generated: {repoConnectorZooCatalog.generated_at}</div>
+                      )}
+                      {repoConnectorZooCatalog.from_cache && (
+                        <div className="muted-text">Showing cached results because the live repo fetch failed.</div>
+                      )}
+                      {repoConnectorZooCatalog.error && (
+                        <div className="row-error">{repoConnectorZooCatalog.error}</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <div className="connector-header-line">
+                          <h3>Available Connectors</h3>
+                        </div>
+                        <p>Each entry comes from the remote repo catalog and can be added into this workspace.</p>
+                      </div>
+                    </div>
+
+                    {repoConnectorEntries.length === 0 ? (
+                      <div className="empty-state">No repo-backed connector entries are available yet. Save a catalog URL and refresh the zoo.</div>
+                    ) : (
+                      <div className="source-list">
+                        {repoConnectorEntries.map((entry) => (
+                          <div key={`repo-connector-${entry.key}`} className="source-row">
+                            <div className="source-row-header">
+                              <div>
+                                <strong>{entry.label}</strong>
+                                <div className="muted-text">{entry.description}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => installRepoConnector(entry.key)}
+                                className="secondary-button"
+                                disabled={installingRepoConnectorKey === entry.key}
+                              >
+                                {installingRepoConnectorKey === entry.key
+                                  ? 'Adding...'
+                                  : (entry.installed ? 'Add Connection' : 'Add to System')}
+                              </button>
+                            </div>
+                            <div className="muted-text">Plugin: {entry.plugin_key}{entry.plugin_version ? ` · ${entry.plugin_version}` : ''}</div>
+                            {entry.source_url && (
+                              <div className="muted-text">
+                                <a href={entry.source_url} target="_blank" rel="noreferrer">Open source listing</a>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
             </>
           )}
 

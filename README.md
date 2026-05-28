@@ -7,6 +7,7 @@ Current release: `0.8.0`
 
 - release notes: [CHANGELOG.md](/Users/galvinwidjaja/code/cursor/hearthlight/CHANGELOG.md:1)
 - API, CLI, frontend package metadata, and macOS bundle metadata are aligned to `0.8.0`
+- published Docker images can now be selected by setting `HEARTHLIGHT_*_IMAGE` values in `.env`
 
 ## Repository Overview
 
@@ -102,6 +103,8 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
 - source-level AI overrides hide automatically when `Enable Video AI` is turned off
 - the Rules page is now split into `Detection Rules` and `Anomaly Detection Rules`, with multi-camera targeting and per-rule anomaly cutoff values
 - the model library now shows qualitative processing-rate guidance, and Model Logs surfaces recent measured cadence by model stage
+- anomaly detection Stage 2 now supports third-party API-backed model entries for `Chatgpt`, `Claude`, and a generic `Lauretta API` endpoint when their credentials are configured
+- the compose/CLI path can now pull published service images such as `your-namespace/hearthlight-webapp:0.8.0` instead of building locally when those image refs are configured
 - theme selection now lives in `Settings > Appearance`, with a workspace-wide backend setting plus browser startup cache
 - the frontend now runs on Vite instead of `react-scripts`
 - anomaly Stage 1 and anomaly detection defaults now have local CPU/CUDA/MLX-safe registry fallbacks
@@ -114,6 +117,12 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
   inference
 - A populated runtime config at `shared/configs/config.yaml`
 - `.env` at the repository root
+
+Optional remote anomaly-model credentials:
+
+- `OPENAI_API_KEY` and optional `OPENAI_MODEL_NAME` for the `Chatgpt` model option
+- `ANTHROPIC_API_KEY` and optional `ANTHROPIC_MODEL_NAME` for the `Claude` model option
+- `LAURETTA_API_KEY` and `LAURETTA_API_BASE_URL` for the `Lauretta API` model option
 
 Minimum practical local tooling:
 
@@ -151,6 +160,12 @@ RABBITMQ_MANAGEMENT_HOST_PORT=15672
 RABBITMQ_EXCHANGE=test
 WEBAPP_API_HOST_PORT=8000
 WEBAPP_UI_HOST_PORT=3000
+WEBAPP_ALLOW_REMOTE_WITHOUT_API_KEY=false
+WEBAPP_ALLOWED_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+WEBAPP_MAX_REQUEST_BYTES=5242880
+
+# Set a shared API key before exposing the control-plane API beyond localhost.
+# WEBAPP_API_KEY=replace-with-random-secret
 ```
 
 ## Runtime Config
@@ -167,6 +182,8 @@ The onboarding flow can:
 - check platform dependencies such as `libpq-dev` and `python3-dev`
 - copy `shared/configs/example_config.yaml` to `shared/configs/config.yaml`
 - install service `requirements.txt` files
+- optionally seed the central mounted model inventory with `--mount-default-models` or repeated `--mount-model` flags
+- require API credentials during CLI onboarding when mounting `chatgpt_api_stage_2`, `claude_api_stage_2`, or `lauretta_api_stage_2`, and allow provider-specific model name strings
 - detect CUDA and write CPU/GPU launcher defaults
 - write `.env` notification defaults for Telegram and Apple Messages
 - seed Telegram and Apple Messages trigger subscriptions from `.env` after `reset-db`
@@ -205,6 +222,48 @@ Plugin discovery now happens at server startup through manifest bundles under `s
 Models, triggers, connectors, and rule-set templates are all loaded from that plugin catalog on
 restart, and missing plugin manifests are soft-disabled in the control-plane database rather than
 hard-deleted.
+
+## The Three Zoos
+
+Hearthlight exposes three operator-facing catalogs, or "zoos", that define what the system can do
+after a server restart loads the active plugin set:
+
+1. Model Zoo
+   - contains detector, tracker, heuristic filter, and anomaly detection model options
+   - feeds the mounted model inventory and the per-stage bindings used by cameras
+   - supports built-in models, third-party API-backed models such as Chatgpt and Claude, and future external plugin models
+
+2. Trigger Zoo
+   - contains the trigger types that rules can use, such as detector-driven or anomaly-driven triggers
+   - defines the kinds of events the Rules page can turn into alerts or downstream actions
+   - is plugin-backed, so new trigger families can appear after a restart without changing the UI contract
+
+3. Connector Zoo
+   - contains the outbound integrations that can receive trigger actions, such as Telegram, Apple Messages, webhooks, and optional plugins like Govee Light Connection
+   - keeps the default built-in connector set small while still allowing optional integrations to be pulled into the workspace
+   - separates connector availability from connector configuration, so a zoo entry can exist without being configured yet
+
+The three zoos are related but distinct:
+
+- the Model Zoo controls how video is processed
+- the Trigger Zoo controls when the system decides something important happened
+- the Connector Zoo controls where those events are sent
+
+All three zoos are loaded from the restart-time plugin catalog, persisted in the control plane, and
+surfaced through the web UI as stable operator-facing selections rather than ad hoc config files.
+
+The default core connector set stays intentionally small. Optional integrations can be exposed as
+non-core plugins through the Connector Zoo. For example, `shared/plugins/govee_light_connection/`
+adds the `Govee Light Connection` connector without making it part of the default built-in
+connector set. The current Govee v1 scope is light control only through the HTTP API:
+
+- validate API key
+- discover bound light-capable devices
+- read optional device state
+- send control actions such as power, brightness, RGB color, color temperature, and supported scenes
+
+If a valid Govee account has no bound devices, Hearthlight surfaces that as a clean empty discovery
+state rather than an authentication failure.
 
 ## Startup
 

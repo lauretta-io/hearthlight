@@ -52,9 +52,14 @@ from ..utils.connector_endpoints import (
     ACTION_CONNECTOR_KEYS,
     CONNECTOR_KEY_APPLE_MESSAGES,
     CONNECTOR_KEY_CLAUDE_API,
+    CONNECTOR_KEY_GOVEE,
     CONNECTOR_KEY_TELEGRAM,
     get_connector_endpoint_config,
     list_connector_endpoint_rows,
+)
+from ..utils.govee_connector import (
+    ensure_govee_connector_tables,
+    queue_govee_trigger_actions,
 )
 from ..utils.telegram_notifications import (
     build_trigger_notification_text,
@@ -550,6 +555,13 @@ class DatabaseWorker:
         target_ids = {int(item) for item in delivery_target_ids}
         return [row for row in rows if row.id in target_ids]
 
+    def get_enabled_govee_endpoints(self):
+        ensure_govee_connector_tables()
+        return list_connector_endpoint_rows(
+            self.db,
+            connector_key=CONNECTOR_KEY_GOVEE,
+            enabled_only=True,
+        )
     def queue_trigger_notifications(
         self,
         incident_row: SQLModels.Incident,
@@ -577,11 +589,16 @@ class DatabaseWorker:
             self.get_enabled_action_connectors(),
             delivery_target_ids,
         )
+        govee_endpoints = self.filter_connector_rows_by_targets(
+            self.get_enabled_govee_endpoints(),
+            delivery_target_ids,
+        )
         if (
             not telegram_subscriptions
             and not apple_message_subscriptions
             and not claude_api_connectors
             and not action_connectors
+            and not govee_endpoints
         ):
             return
         run_row = (
@@ -669,6 +686,11 @@ class DatabaseWorker:
             queue_action_trigger_notifications(
                 action_connectors,
                 payloads_by_id=action_payloads_by_id,
+            )
+        if govee_endpoints:
+            queue_govee_trigger_actions(
+                govee_endpoints,
+                trigger_text=trigger_text,
             )
 
     def resolve_telegram_media(

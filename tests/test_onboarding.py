@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -11,9 +12,13 @@ from hearthlight.onboarding import (
     configure_notification_env_interactively,
     copy_example_env,
     copy_example_config,
+    configure_selected_third_party_model_env,
     detect_runtime_profile_recommendation,
     detect_system_package_plan,
+    load_workspace_model_catalog,
+    persist_workspace_mounted_models,
     resolve_bootstrap_python,
+    resolve_selected_mounted_models,
     write_notification_env_defaults,
     write_runtime_profile_env_defaults,
 )
@@ -24,12 +29,29 @@ from hearthlight.workspace import resolve_workspace
 class OnboardingTests(unittest.TestCase):
     def test_parser_includes_onboard_command(self):
         parser = build_parser()
-        args = parser.parse_args(["onboard", "--yes", "--skip-system-packages", "--force-env", "--skip-notification-setup"])
+        args = parser.parse_args(
+            [
+                "onboard",
+                "--yes",
+                "--skip-system-packages",
+                "--force-env",
+                "--skip-notification-setup",
+                "--mount-model",
+                "chatgpt_api_stage_2",
+                "--openai-api-key",
+                "test-key",
+                "--openai-model-name",
+                "gpt-5.4-mini",
+            ]
+        )
         self.assertEqual(args.command, "onboard")
         self.assertTrue(args.yes)
         self.assertTrue(args.skip_system_packages)
         self.assertTrue(args.force_env)
         self.assertTrue(args.skip_notification_setup)
+        self.assertEqual(args.mount_model, ["chatgpt_api_stage_2"])
+        self.assertEqual(args.openai_api_key, "test-key")
+        self.assertEqual(args.openai_model_name, "gpt-5.4-mini")
 
     def test_detect_system_package_plan_for_apt(self):
         with (
@@ -130,6 +152,99 @@ class OnboardingTests(unittest.TestCase):
             self.assertTrue(path.exists())
             env_text = path.read_text()
             self.assertIn("TELEGRAM_TRIGGER_SUBSCRIPTION_ENABLED=false", env_text)
+
+    def test_resolve_selected_mounted_models_supports_stage_prefixed_and_plain_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            registry_dir = workspace / "shared" / "configs" / "registries"
+            registry_dir.mkdir(parents=True)
+            (workspace / "shared" / "configs" / "model_bindings.yaml").write_text(
+                "defaults:\n"
+                "  detector: builtin_yolox_s_cpu\n"
+                "  tracker: builtin_bytetrack\n"
+                "  anomaly_stage_1: siglip_stage_1_cpu\n"
+                "  anomaly_stage_2: smolvlm_stage_2_cpu\n"
+            )
+            (registry_dir / "detectors.yaml").write_text("builtin_yolox_s_cpu: {}\n")
+            (registry_dir / "trackers.yaml").write_text("builtin_bytetrack: {}\n")
+            (registry_dir / "anomaly_stage_1_models.yaml").write_text("siglip_stage_1_cpu: {}\n")
+            (registry_dir / "anomaly_stage_2_models.yaml").write_text(
+                "smolvlm_stage_2_cpu: {}\nchatgpt_api_stage_2: {}\n"
+            )
+            args = SimpleNamespace(
+                mount_default_models=True,
+                mount_model=["chatgpt_api_stage_2", "detector:builtin_yolox_s_cpu"],
+            )
+            selected = resolve_selected_mounted_models(workspace, args)
+        self.assertEqual(selected["detector"], ["builtin_yolox_s_cpu"])
+        self.assertEqual(selected["tracker"], ["builtin_bytetrack"])
+        self.assertEqual(selected["anomaly_stage_1"], ["siglip_stage_1_cpu"])
+        self.assertEqual(selected["anomaly_stage_2"], ["smolvlm_stage_2_cpu", "chatgpt_api_stage_2"])
+
+    def test_configure_selected_third_party_model_env_requires_keys(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / ".env").write_text("")
+            with self.assertRaisesRegex(RuntimeError, "OPENAI_API_KEY"):
+                configure_selected_third_party_model_env(
+                    workspace,
+                    {"anomaly_stage_2": ["chatgpt_api_stage_2"]},
+                    SimpleNamespace(
+                        yes=True,
+                        openai_api_key="",
+                        openai_model_name="",
+                        anthropic_api_key="",
+                        anthropic_model_name="",
+                        lauretta_api_key="",
+                        lauretta_api_base_url="",
+                        lauretta_model_name="",
+                    ),
+                )
+
+    def test_configure_selected_third_party_model_env_accepts_cli_values(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / ".env").write_text("")
+            updates = configure_selected_third_party_model_env(
+                workspace,
+                {"anomaly_stage_2": ["chatgpt_api_stage_2", "lauretta_api_stage_2"]},
+                SimpleNamespace(
+                    yes=True,
+                    openai_api_key="openai-test",
+                    openai_model_name="gpt-5.4-mini",
+                    anthropic_api_key="",
+                    anthropic_model_name="",
+                    lauretta_api_key="lauretta-test",
+                    lauretta_api_base_url="https://api.lauretta.test/v1",
+                    lauretta_model_name="lauretta-anomaly-stage-2",
+                ),
+            )
+        self.assertEqual(
+            updates,
+            {
+                "OPENAI_API_KEY": "openai-test",
+                "OPENAI_MODEL_NAME": "gpt-5.4-mini",
+                "LAURETTA_API_KEY": "lauretta-test",
+                "LAURETTA_API_BASE_URL": "https://api.lauretta.test/v1",
+                "LAURETTA_MODEL_NAME": "lauretta-anomaly-stage-2",
+            },
+        )
+
+    def test_persist_workspace_mounted_models_writes_selected_inventory(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            path = persist_workspace_mounted_models(
+                workspace,
+                {
+                    "detector": ["builtin_yolox_s_cpu"],
+                    "tracker": [],
+                    "anomaly_stage_1": ["siglip_stage_1_cpu"],
+                    "anomaly_stage_2": ["chatgpt_api_stage_2"],
+                },
+            )
+            text = path.read_text()
+        self.assertIn("builtin_yolox_s_cpu", text)
+        self.assertIn("chatgpt_api_stage_2", text)
 
     def test_resolve_workspace_prefers_explicit_path(self):
         with tempfile.TemporaryDirectory() as temp_dir:

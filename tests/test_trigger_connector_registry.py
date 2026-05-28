@@ -19,6 +19,7 @@ class TriggerConnectorRegistryTests(unittest.TestCase):
         self.assertIn("music_api", keys)
         self.assertIn("robot_action", keys)
         self.assertIn("webhook", keys)
+        self.assertIn("govee", keys)
 
 
 if __name__ == "__main__":

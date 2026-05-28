@@ -4,9 +4,12 @@ from collections import defaultdict
 from dataclasses import dataclass
 from importlib import import_module
 from importlib.util import find_spec
+import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
+from urllib import error, request
 
 from omegaconf import OmegaConf
 
@@ -321,6 +324,94 @@ class VLMAnomalyDemoStageTwoAdapter(PassThroughStageTwoAdapter):
         self.module = import_module(package_name)
 
 
+class RemoteAPIMixin(PromptRulesStageTwoAdapter):
+    def __init__(self, registration: dict):
+        super().__init__(registration)
+        self.registration = dict(registration or {})
+        self.runtime = dict(self.registration.get("runtime") or {})
+        self.timeout_seconds = float(self.runtime.get("timeout_seconds", 30.0))
+
+    def _fallback_event(self, *, candidate: StageOneCandidate, prompts: PromptBundle, detail: str) -> AnomalyEvent:
+        event = super().build_event(candidate=candidate, prompts=prompts)
+        detail = detail.strip()
+        if detail:
+            base_reasoning = event.reasoning or "Remote anomaly API call failed."
+            event.reasoning = f"{base_reasoning} Remote adapter detail: {detail}"
+        return event
+
+    def _build_request_payload(self, *, candidate: StageOneCandidate, prompts: PromptBundle) -> dict[str, Any]:
+        return {
+            "event_id": candidate.event_id,
+            "camera_id": candidate.camera_id,
+            "source_id": candidate.source_id,
+            "frame_id": candidate.frame_id,
+            "stage_1_score": candidate.score,
+            "stage_1_category": candidate.category,
+            "visible_items": list(candidate.visible_items),
+            "visible_activities": list(candidate.visible_activities),
+            "prompt_template": prompts.template,
+            "anomaly_objects": list(prompts.anomaly_object_list),
+            "anomaly_behaviors": list(prompts.anomaly_activity_list),
+            "asset_references": [
+                {
+                    "uri": asset.uri,
+                    "media_type": asset.media_type,
+                    "producer": asset.producer,
+                    "timestamp": asset.timestamp,
+                }
+                for asset in candidate.asset_references
+            ],
+        }
+
+    def _normalize_score(self, raw_score: Any, fallback: float) -> float:
+        try:
+            numeric = float(raw_score)
+        except (TypeError, ValueError):
+            return fallback
+        if numeric > 1.0:
+            numeric = numeric / 10.0
+        return max(0.0, min(1.0, numeric))
+
+    def _normalize_event(
+        self,
+        *,
+        candidate: StageOneCandidate,
+        prompts: PromptBundle,
+        payload: dict[str, Any],
+    ) -> AnomalyEvent:
+        fallback = super().build_event(candidate=candidate, prompts=prompts)
+        title = str(payload.get("title") or fallback.title or candidate.category).strip() or candidate.category
+        category = str(payload.get("category") or fallback.category or candidate.category).strip() or candidate.category
+        reasoning = str(payload.get("reasoning") or fallback.reasoning or candidate.reasoning or "").strip() or None
+        visible_items = [
+            str(item).strip()
+            for item in list(payload.get("visible_items") or fallback.visible_items or candidate.visible_items)
+            if str(item).strip()
+        ]
+        visible_activities = [
+            str(item).strip()
+            for item in list(payload.get("visible_activities") or fallback.visible_activities or candidate.visible_activities)
+            if str(item).strip()
+        ]
+        return AnomalyEvent(
+            event_id=candidate.event_id,
+            run_id=candidate.run_id,
+            source_id=candidate.source_id,
+            camera_id=candidate.camera_id,
+            frame_id=candidate.frame_id,
+            stage_1_model_key=candidate.stage_1_model_key,
+            stage_2_model_key=candidate.stage_2_model_key,
+            title=title,
+            model_key=candidate.stage_2_model_key,
+            category=category,
+            score=self._normalize_score(payload.get("score"), candidate.score),
+            reasoning=reasoning,
+            visible_items=visible_items,
+            visible_activities=visible_activities,
+            asset_references=candidate.asset_references,
+        )
+
+
 class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
     def __init__(self, registration: dict):
         runtime = registration.get("runtime") or {}
@@ -401,6 +492,126 @@ class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
         )
 
 
+class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
+    def __init__(self, registration: dict):
+        super().__init__(registration)
+        self.model_name = str(self.runtime.get("model_name") or "").strip()
+        self.model_name_env = str(self.runtime.get("model_name_env") or "").strip()
+        self.api_key_env = str(self.runtime.get("api_key_env") or "").strip()
+        self.base_url_env = str(self.runtime.get("base_url_env") or "").strip()
+        self.default_base_url = str(self.runtime.get("base_url") or "https://api.openai.com/v1").strip()
+        self.system_prompt = str(
+            self.runtime.get("system_prompt")
+            or "You are an anomaly detection analyst. Return strict JSON with keys title, category, score, reasoning, visible_items, visible_activities."
+        ).strip()
+
+    def build_event(
+        self,
+        *,
+        candidate: StageOneCandidate,
+        prompts: PromptBundle,
+    ) -> AnomalyEvent:
+        api_key = os.environ.get(self.api_key_env, "").strip()
+        if not api_key:
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail=f"missing {self.api_key_env}")
+        base_url = os.environ.get(self.base_url_env, "").strip() or self.default_base_url
+        endpoint = f"{base_url.rstrip('/')}/chat/completions"
+        payload = self._build_request_payload(candidate=candidate, prompts=prompts)
+        model_name = os.environ.get(self.model_name_env, "").strip() if self.model_name_env else ""
+        if not model_name:
+            model_name = self.model_name
+        request_body = {
+            "model": model_name,
+            "response_format": {"type": "json_object"},
+            "messages": [
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": json.dumps(payload)},
+            ],
+        }
+        req = request.Request(
+            endpoint,
+            data=json.dumps(request_body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+            content = raw.get("choices", [{}])[0].get("message", {}).get("content", "{}")
+            parsed = json.loads(content) if isinstance(content, str) else dict(content or {})
+            return self._normalize_event(candidate=candidate, prompts=prompts, payload=parsed)
+        except (error.URLError, TimeoutError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
+            logger.warning("OpenAI-compatible anomaly adapter failed: %s", exc)
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
+
+
+class ClaudeStageTwoAdapter(RemoteAPIMixin):
+    def __init__(self, registration: dict):
+        super().__init__(registration)
+        self.model_name = str(self.runtime.get("model_name") or "").strip()
+        self.model_name_env = str(self.runtime.get("model_name_env") or "").strip()
+        self.api_key_env = str(self.runtime.get("api_key_env") or "ANTHROPIC_API_KEY").strip()
+        self.base_url_env = str(self.runtime.get("base_url_env") or "").strip()
+        self.default_base_url = str(self.runtime.get("base_url") or "https://api.anthropic.com/v1").strip()
+        self.system_prompt = str(
+            self.runtime.get("system_prompt")
+            or "You are an anomaly detection analyst. Return strict JSON with keys title, category, score, reasoning, visible_items, visible_activities."
+        ).strip()
+        self.api_version = str(self.runtime.get("api_version") or "2023-06-01").strip()
+
+    def build_event(
+        self,
+        *,
+        candidate: StageOneCandidate,
+        prompts: PromptBundle,
+    ) -> AnomalyEvent:
+        api_key = os.environ.get(self.api_key_env, "").strip()
+        if not api_key:
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail=f"missing {self.api_key_env}")
+        base_url = os.environ.get(self.base_url_env, "").strip() or self.default_base_url
+        endpoint = f"{base_url.rstrip('/')}/messages"
+        payload = self._build_request_payload(candidate=candidate, prompts=prompts)
+        model_name = os.environ.get(self.model_name_env, "").strip() if self.model_name_env else ""
+        if not model_name:
+            model_name = self.model_name
+        request_body = {
+            "model": model_name,
+            "max_tokens": 700,
+            "system": self.system_prompt,
+            "messages": [{"role": "user", "content": json.dumps(payload)}],
+        }
+        req = request.Request(
+            endpoint,
+            data=json.dumps(request_body).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": self.api_version,
+            },
+            method="POST",
+        )
+        try:
+            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                raw = json.loads(response.read().decode("utf-8"))
+            content_blocks = list(raw.get("content") or [])
+            text_block = next(
+                (
+                    block.get("text")
+                    for block in content_blocks
+                    if isinstance(block, dict) and str(block.get("type") or "") == "text"
+                ),
+                "{}",
+            )
+            parsed = json.loads(text_block) if isinstance(text_block, str) else dict(text_block or {})
+            return self._normalize_event(candidate=candidate, prompts=prompts, payload=parsed)
+        except (error.URLError, TimeoutError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
+            logger.warning("Claude anomaly adapter failed: %s", exc)
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
+
+
 STAGE_1_ADAPTERS = {
     "siglip_stage_1": SigLIPStageOneAdapter,
     "heuristic_presence_stage_1": HeuristicPresenceStageOneAdapter,
@@ -413,6 +624,8 @@ STAGE_2_ADAPTERS = {
     "passthrough_stage_2": PassThroughStageTwoAdapter,
     "vlm_anomaly_demo_stage_2": VLMAnomalyDemoStageTwoAdapter,
     "claude_compatible_stage_2": ClaudeCompatibleStageTwoAdapter,
+    "openai_compatible_stage_2": OpenAICompatibleStageTwoAdapter,
+    "claude_stage_2": ClaudeStageTwoAdapter,
 }
 
 

@@ -42,6 +42,7 @@ from ...shared.models.APIModels import (
     AlertRule,
     AlertRuleOptionCatalog,
     ConnectorEndpoint,
+    ConnectorZooRepoSettings,
     ConnectorZooEntry,
     ClaudeApiConnectorEndpoint,
     ClaudeApiConnectorTestResponse,
@@ -56,6 +57,10 @@ from ...shared.models.APIModels import (
     Camera,
     FeedEndpoint,
     FeedLocation,
+    GoveeApiKeyRequest,
+    GoveeApiKeyTestResponse,
+    GoveeDeviceStateResponse,
+    GoveeDiscoveredDevice,
     InputSource,
     ModelBinding,
     ModelHealth,
@@ -66,6 +71,10 @@ from ...shared.models.APIModels import (
     DemoTriggerFireResponse,
     PluginBundleRecord,
     PluginComponentRecord,
+    RepoConnectorZooCatalog,
+    RepoConnectorZooInstallRequest,
+    RepoConnectorZooInstallResponse,
+    RepoConnectorZooEntry,
     MountedModelStage,
     MODEL_BINDING_STAGES,
     MonitoringOverview,
@@ -128,6 +137,7 @@ from ...shared.utils.claude_anomaly_model import (
 from ...shared.utils.connector_delivery_log import list_connector_delivery_events
 from ...shared.utils.connector_endpoints import (
     ACTION_CONNECTOR_KEYS,
+    CONNECTOR_KEY_GOVEE,
     CONNECTOR_KEY_APPLE_MESSAGES,
     CONNECTOR_KEY_CLAUDE_API,
     CONNECTOR_KEY_ROBOT_ACTION,
@@ -140,6 +150,13 @@ from ...shared.utils.connector_endpoints import (
     list_connector_endpoint_rows,
     redact_connector_endpoint_config,
     set_connector_endpoint_payload,
+)
+from ...shared.utils.govee_connector import (
+    discover_govee_devices,
+    ensure_govee_connector_tables,
+    get_govee_device_state,
+    send_test_govee_trigger_action,
+    test_govee_api_key,
 )
 from ...shared.utils.telegram_notifications import (
     ensure_telegram_subscription_tables,
@@ -202,6 +219,11 @@ from ...shared.utils.resource_monitor import (
     utc_now_iso,
 )
 from ...shared.utils.resource_drift import build_resource_drift
+from ...shared.utils.repo_connector_zoo import (
+    DEFAULT_CONNECTOR_ZOO_CATALOG_URL,
+    install_repo_connector_plugin,
+    load_repo_connector_catalog_from_url,
+)
 from ...shared.utils.monitoring_feed import (
     build_feed_endpoint_catalog,
     infer_run_status,
@@ -211,6 +233,8 @@ from ...shared.utils.monitoring_feed import (
 from ...shared.utils.security import resolve_safe_child_path
 from ...shared.utils.workspace_settings import (
     SETTING_KEY_APPEARANCE,
+    SETTING_KEY_CONNECTOR_ZOO_REPO,
+    SETTING_KEY_CONNECTOR_ZOO_REPO_CACHE,
     get_workspace_setting_value,
     set_workspace_setting_value,
 )
@@ -278,6 +302,27 @@ def build_default_appearance_settings() -> AppearanceSettings:
     return AppearanceSettings(theme_key="fidelity-light")
 
 
+def build_default_connector_zoo_repo_settings() -> ConnectorZooRepoSettings:
+    return ConnectorZooRepoSettings(catalog_url=DEFAULT_CONNECTOR_ZOO_CATALOG_URL)
+
+
+def normalize_connector_zoo_catalog_url(catalog_url: str | None) -> str:
+    normalized = str(catalog_url or "").strip()
+    if not normalized:
+        return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
+    if normalized in {
+        "https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml",
+        "https://github.com/lauretta-io/hearthlight/blob/main/shared/catalogs/connector_zoo_repo.yaml",
+    }:
+        return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
+    parsed = urllib_parse.urlparse(normalized)
+    if parsed.scheme == "file":
+        file_path = Path(urllib_request.url2pathname(parsed.path))
+        if not file_path.exists():
+            return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
+    return normalized
+
+
 def read_appearance_settings(db: Session) -> AppearanceSettings:
     payload = get_workspace_setting_value(
         db,
@@ -338,6 +383,96 @@ def write_claude_anomaly_model_settings(
     set_workspace_setting_value(db, SETTING_KEY_CLAUDE_ANOMALY_MODEL, normalized)
     db.commit()
     return read_claude_anomaly_model_settings(db)
+
+
+def read_connector_zoo_repo_settings(db: Session) -> ConnectorZooRepoSettings:
+    payload = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CONNECTOR_ZOO_REPO,
+        default=build_default_connector_zoo_repo_settings().model_dump(),
+    )
+    if not isinstance(payload, dict):
+        payload = build_default_connector_zoo_repo_settings().model_dump()
+    payload = dict(payload)
+    payload["catalog_url"] = normalize_connector_zoo_catalog_url(payload.get("catalog_url"))
+    try:
+        return ConnectorZooRepoSettings.model_validate(payload)
+    except Exception:
+        return build_default_connector_zoo_repo_settings()
+
+
+def write_connector_zoo_repo_settings(
+    db: Session,
+    payload: ConnectorZooRepoSettings,
+) -> ConnectorZooRepoSettings:
+    settings = ConnectorZooRepoSettings.model_validate(payload)
+    settings = ConnectorZooRepoSettings(
+        catalog_url=normalize_connector_zoo_catalog_url(settings.catalog_url),
+    )
+    set_workspace_setting_value(
+        db,
+        SETTING_KEY_CONNECTOR_ZOO_REPO,
+        settings.model_dump(),
+    )
+    db.commit()
+    return read_connector_zoo_repo_settings(db)
+
+
+def _serialize_repo_connector_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(catalog or {})
+    payload["last_refreshed_at"] = utc_now_iso()
+    payload["connectors"] = [
+        RepoConnectorZooEntry.model_validate(entry).model_dump()
+        for entry in list(payload.get("connectors") or [])
+    ]
+    return payload
+
+
+def _read_cached_repo_connector_catalog(db: Session) -> RepoConnectorZooCatalog:
+    payload = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CONNECTOR_ZOO_REPO_CACHE,
+        default=RepoConnectorZooCatalog().model_dump(),
+    )
+    if not isinstance(payload, dict):
+        payload = RepoConnectorZooCatalog().model_dump()
+    try:
+        return RepoConnectorZooCatalog.model_validate(payload)
+    except Exception:
+        return RepoConnectorZooCatalog()
+
+
+def _write_cached_repo_connector_catalog(
+    db: Session,
+    catalog: dict[str, Any],
+) -> RepoConnectorZooCatalog:
+    payload = _serialize_repo_connector_catalog(catalog)
+    set_workspace_setting_value(db, SETTING_KEY_CONNECTOR_ZOO_REPO_CACHE, payload)
+    db.commit()
+    return RepoConnectorZooCatalog.model_validate(payload)
+
+
+def _build_repo_connector_catalog_response(db: Session) -> RepoConnectorZooCatalog:
+    settings = read_connector_zoo_repo_settings(db)
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    installed_plugin_keys = {
+        str(plugin.get("key") or "").strip()
+        for plugin in list(bundle.get("plugin_catalog", {}).get("plugins") or [])
+        if str(plugin.get("key") or "").strip()
+    }
+    cached = _read_cached_repo_connector_catalog(db)
+    try:
+        live_catalog = load_repo_connector_catalog_from_url(
+            settings.catalog_url,
+            installed_plugin_keys=installed_plugin_keys,
+        )
+        return _write_cached_repo_connector_catalog(db, live_catalog)
+    except Exception as exc:
+        fallback = cached.model_copy(deep=True)
+        fallback.catalog_url = settings.catalog_url
+        fallback.error = str(exc)
+        fallback.from_cache = True
+        return fallback
 
 
 def build_host_upload_path(upload_path: str | None) -> str | None:
@@ -2191,7 +2326,7 @@ def get_connector_endpoint_rows(db: Session, connector_key: str | None = None):
     return list_connector_endpoint_rows(db, connector_key=connector_key, enabled_only=False)
 
 
-def build_connector_endpoint_responses(db: Session):
+def build_connector_endpoint_responses(db: Session, connector_key: str | None = None):
     bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
     plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
     connector_components = plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {})
@@ -2212,19 +2347,29 @@ def build_connector_endpoint_responses(db: Session):
             created_at=row.created_at.isoformat() if row.created_at is not None else None,
             updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
         )
-        for row in get_connector_endpoint_rows(db)
+        for row in get_connector_endpoint_rows(db, connector_key=connector_key)
     ]
 
 
-def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint]):
+def replace_connector_endpoints(
+    db: Session,
+    endpoints: list[ConnectorEndpoint],
+    *,
+    connector_key: str | None = None,
+):
     ensure_connector_endpoint_tables()
     bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
     plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
-    existing_rows = get_connector_endpoint_rows(db)
+    existing_rows = get_connector_endpoint_rows(db, connector_key=connector_key)
     existing_by_id = {row.id: row for row in existing_rows}
     seen_ids = set()
     persisted_rows = []
     for endpoint in endpoints:
+        if connector_key is not None and endpoint.connector_key != connector_key:
+            raise HTTPException(
+                status_code=400,
+                detail=f"connector_key must be {connector_key}",
+            )
         if endpoint.connector_key not in plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {}):
             raise HTTPException(
                 status_code=400,
@@ -2262,7 +2407,48 @@ def replace_connector_endpoints(db: Session, endpoints: list[ConnectorEndpoint])
             row.is_deleted = True
             row.deleted_at = datetime.utcnow()
     db.commit()
-    return build_connector_endpoint_responses(db)
+    return build_connector_endpoint_responses(db, connector_key=connector_key)
+
+
+def create_connector_endpoint_row(
+    db: Session,
+    *,
+    connector_key: str,
+    label: str | None = None,
+    delivery_capabilities: list[str] | None = None,
+    config: dict[str, Any] | None = None,
+) -> ConnectorEndpoint:
+    ensure_connector_endpoint_tables()
+    row = SQLModels.ConnectorEndpoint()
+    db.add(row)
+    set_connector_endpoint_payload(
+        row,
+        connector_key=connector_key,
+        label=label,
+        enabled=True,
+        config=dict(config or {}),
+        delivery_capabilities=list(delivery_capabilities or []),
+    )
+    db.commit()
+    return ConnectorEndpoint.model_validate(
+        build_connector_endpoint_responses(db, connector_key=connector_key)[-1]
+    )
+
+
+def get_govee_connector_rows(db: Session):
+    ensure_govee_connector_tables()
+    return get_connector_endpoint_rows(db, CONNECTOR_KEY_GOVEE)
+
+
+def _extract_govee_api_key(request: Request, db: Session, endpoint_id: int | None = None) -> str:
+    header_value = str(request.headers.get("x-govee-api-key", "") or "").strip()
+    if header_value:
+        return header_value
+    if endpoint_id is not None:
+        row = next((row for row in get_govee_connector_rows(db) if row.id == endpoint_id), None)
+        if row is not None:
+            return str(get_connector_endpoint_config(row).get("api_key", "") or "").strip()
+    raise HTTPException(status_code=400, detail="Govee API key is required")
 
 
 def get_telegram_trigger_subscription_rows(db: Session):
@@ -3490,6 +3676,43 @@ def get_connector_zoo(db: Session = Depends(get_db)):
     return [ConnectorZooEntry.model_validate(entry) for entry in connector_entries]
 
 
+@external_router.get("/connector-zoo/repo", response_model=RepoConnectorZooCatalog)
+def get_repo_connector_zoo(db: Session = Depends(get_db)):
+    return _build_repo_connector_catalog_response(db)
+
+
+@external_router.post("/connector-zoo/repo/install", response_model=RepoConnectorZooInstallResponse)
+def install_repo_connector_zoo_entry(
+    payload: RepoConnectorZooInstallRequest,
+    db: Session = Depends(get_db),
+):
+    catalog = _build_repo_connector_catalog_response(db)
+    entry = next(
+        (item for item in catalog.connectors if item.key == payload.connector_key),
+        None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"connector zoo entry {payload.connector_key} not found")
+
+    plugin_key = install_repo_connector_plugin(entry.model_dump())
+    bundle = load_plugin_catalog()
+    sync_plugin_catalog_to_db(db, bundle, SQLModels)
+    db.commit()
+    endpoint = create_connector_endpoint_row(
+        db,
+        connector_key=entry.key,
+        label=entry.label,
+        delivery_capabilities=entry.delivery_capabilities,
+    )
+    return RepoConnectorZooInstallResponse(
+        connector_key=entry.key,
+        plugin_key=plugin_key,
+        connector_endpoint_id=endpoint.id,
+        restart_required=True,
+        message=f"{entry.label} was added. Restart Hearthlight to activate the plugin runtime.",
+    )
+
+
 @external_router.get("/rule-set-zoo", response_model=list[RuleSetZooEntry])
 def get_rule_set_zoo(db: Session = Depends(get_db)):
     bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
@@ -3604,6 +3827,19 @@ def test_settings_claude_anomaly_model(
     )
 
 
+@external_router.get("/settings/connector-zoo-repo", response_model=ConnectorZooRepoSettings)
+def get_settings_connector_zoo_repo(db: Session = Depends(get_db)):
+    return read_connector_zoo_repo_settings(db)
+
+
+@external_router.put("/settings/connector-zoo-repo", response_model=ConnectorZooRepoSettings)
+def update_settings_connector_zoo_repo(
+    payload: ConnectorZooRepoSettings,
+    db: Session = Depends(get_db),
+):
+    return write_connector_zoo_repo_settings(db, payload)
+
+
 @external_router.put("/settings/trigger-rules", response_model=list[TriggerRule])
 def update_settings_trigger_rules(
     rules: list[TriggerRule],
@@ -3623,6 +3859,101 @@ def update_settings_connector_endpoints(
     db: Session = Depends(get_db),
 ):
     return replace_connector_endpoints(db, endpoints)
+
+
+@external_router.get("/settings/govee-connector-endpoints", response_model=list[ConnectorEndpoint])
+def get_settings_govee_connector_endpoints(db: Session = Depends(get_db)):
+    return build_connector_endpoint_responses(db, connector_key=CONNECTOR_KEY_GOVEE)
+
+
+@external_router.put("/settings/govee-connector-endpoints", response_model=list[ConnectorEndpoint])
+def update_settings_govee_connector_endpoints(
+    endpoints: list[ConnectorEndpoint],
+    db: Session = Depends(get_db),
+):
+    return replace_connector_endpoints(db, endpoints, connector_key=CONNECTOR_KEY_GOVEE)
+
+
+@external_router.post("/settings/govee/test", response_model=GoveeApiKeyTestResponse)
+def post_settings_govee_test(
+    payload: GoveeApiKeyRequest,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    api_key = payload.api_key
+    if str(api_key or "").strip() == MASKED_SECRET_VALUE and endpoint_id is not None:
+        row = next((row for row in get_govee_connector_rows(db) if row.id == endpoint_id), None)
+        if row is not None:
+            api_key = str(get_connector_endpoint_config(row).get("api_key", "") or "").strip()
+    try:
+        result = test_govee_api_key(api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GoveeApiKeyTestResponse.model_validate(result)
+
+
+@external_router.get("/settings/govee/devices", response_model=list[GoveeDiscoveredDevice])
+def get_settings_govee_devices(
+    request: Request,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    api_key = _extract_govee_api_key(request, db, endpoint_id=endpoint_id)
+    try:
+        devices = discover_govee_devices(api_key)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return [GoveeDiscoveredDevice.model_validate(device) for device in devices]
+
+
+@external_router.get("/settings/govee/devices/{sku}/{device}/state", response_model=GoveeDeviceStateResponse)
+def get_settings_govee_device_state(
+    sku: str,
+    device: str,
+    request: Request,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    api_key = _extract_govee_api_key(request, db, endpoint_id=endpoint_id)
+    try:
+        payload = get_govee_device_state(api_key=api_key, sku=sku, device=device)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return GoveeDeviceStateResponse(
+        sku=str(payload.get("sku") or sku),
+        device=str(payload.get("device") or device),
+        capabilities=list(payload.get("capabilities") or []),
+    )
+
+
+@external_router.post("/settings/govee-connector-endpoints/test")
+def post_settings_govee_connector_endpoint_test(
+    endpoint: ConnectorEndpoint,
+    endpoint_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    row = SQLModels.ConnectorEndpoint()
+    config = merge_connector_endpoint_secret_config({}, dict(endpoint.config or {}))
+    if str(config.get("api_key", "") or "").strip() == MASKED_SECRET_VALUE and endpoint_id is not None:
+        existing_row = next((item for item in get_govee_connector_rows(db) if item.id == endpoint_id), None)
+        if existing_row is not None:
+            config = merge_connector_endpoint_secret_config(
+                get_connector_endpoint_config(existing_row),
+                config,
+            )
+    set_connector_endpoint_payload(
+        row,
+        connector_key=CONNECTOR_KEY_GOVEE,
+        label=endpoint.label,
+        enabled=endpoint.enabled,
+        config=config,
+        delivery_capabilities=list(endpoint.delivery_capabilities or []),
+    )
+    try:
+        send_test_govee_trigger_action(row)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"detail": "Govee trigger action sent."}
 
 
 @external_router.get("/settings/alert-rules", response_model=list[AlertRule])

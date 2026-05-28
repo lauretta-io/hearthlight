@@ -16,10 +16,19 @@ class PluginLoaderTests(unittest.TestCase):
         catalog = load_plugin_catalog()
         plugin_keys = {entry["key"] for entry in catalog["plugins"]}
         self.assertIn("core_builtin", plugin_keys)
+        self.assertIn("govee_light_connection", plugin_keys)
         self.assertIn("builtin_yolox_s_cpu", catalog["models"]["detector"])
         self.assertIn("alert_rule_trigger", {entry["key"] for entry in catalog["triggers"]})
         self.assertIn("telegram", {entry["key"] for entry in catalog["connectors"]})
+        self.assertIn("govee", {entry["key"] for entry in catalog["connectors"]})
         self.assertIn("starter_detection_rules", {entry["key"] for entry in catalog["rule_sets"]})
+
+        connector_plugins = {
+            entry["key"]: entry["plugin_key"]
+            for entry in catalog["connectors"]
+        }
+        self.assertEqual(connector_plugins["govee"], "govee_light_connection")
+        self.assertEqual(connector_plugins["telegram"], "core_builtin")
 
         component_types = {entry["component_type"] for entry in catalog["components"]}
         self.assertIn(COMPONENT_TYPE_MODEL, component_types)

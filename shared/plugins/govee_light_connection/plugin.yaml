@@ -1,0 +1,8 @@
+key: govee_light_connection
+label: Govee Light Connection
+version: "0.8.0"
+provider: Govee
+description: Optional Govee light connector plugin for trigger-driven light actions.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

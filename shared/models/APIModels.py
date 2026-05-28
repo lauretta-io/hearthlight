@@ -56,6 +56,7 @@ CONNECTOR_KEYS = {
     "robot_action",
     "webhook",
     "slack",
+    "govee",
 }
 ACTION_CONNECTOR_KEYS = {
     "philips_hue",
@@ -126,6 +127,17 @@ class AppearanceSettings(BaseModel):
         if normalized not in APPEARANCE_THEME_KEYS:
             raise ValueError("unsupported theme_key")
         return normalized
+
+
+class ConnectorZooRepoSettings(BaseModel):
+    catalog_url: str | None = None
+
+    @field_validator("catalog_url")
+    def validate_catalog_url(cls, value):
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
 
 
 class InputSource(BaseModel):
@@ -706,6 +718,41 @@ class ConnectorZooEntry(BaseModel):
     source_path: str | None = None
 
 
+class RepoConnectorZooEntry(ConnectorZooEntry):
+    plugin_version: str | None = None
+    plugin_manifest_url: str | None = None
+    plugin_bundle_url: str | None = None
+    plugin_files: dict[str, str] = Field(default_factory=dict)
+    source_url: str | None = None
+    installed: bool = False
+
+
+class RepoConnectorZooCatalog(BaseModel):
+    catalog_url: str | None = None
+    source_url: str | None = None
+    generated_at: str | None = None
+    last_refreshed_at: str | None = None
+    error: str | None = None
+    from_cache: bool = False
+    connectors: list[RepoConnectorZooEntry] = Field(default_factory=list)
+
+
+class RepoConnectorZooInstallRequest(BaseModel):
+    connector_key: str
+
+    @field_validator("connector_key")
+    def validate_connector_key(cls, value):
+        return validate_non_empty_string(value, "connector_key").lower()
+
+
+class RepoConnectorZooInstallResponse(BaseModel):
+    connector_key: str
+    plugin_key: str
+    connector_endpoint_id: int | None = None
+    restart_required: bool = True
+    message: str = ""
+
+
 class RuleSetZooEntry(BaseModel):
     key: str
     label: str
@@ -767,6 +814,46 @@ class ConnectorEndpoint(BaseModel):
             return value
         stripped = value.strip()
         return stripped or None
+
+
+class GoveeApiKeyRequest(BaseModel):
+    api_key: str
+
+    @field_validator("api_key")
+    def validate_api_key(cls, value):
+        return validate_non_empty_string(value, "api_key")
+
+
+class GoveeApiKeyTestResponse(BaseModel):
+    valid: bool = True
+    device_count: int = 0
+    light_device_count: int = 0
+    message: str = ""
+
+
+class GoveeCapabilityOption(BaseModel):
+    key: str
+    label: str
+    capability_type: str
+    instance: str
+    input_kind: str
+    values: list[dict] = Field(default_factory=list)
+    range: dict = Field(default_factory=dict)
+    default_value: int | str | None = None
+
+
+class GoveeDiscoveredDevice(BaseModel):
+    sku: str
+    device: str
+    device_name: str
+    device_type: str | None = None
+    capability_options: list[GoveeCapabilityOption] = Field(default_factory=list)
+
+
+class GoveeDeviceStateResponse(BaseModel):
+    sku: str
+    device: str
+    capabilities: list[dict] = Field(default_factory=list)
 
 
 class TelegramTriggerSubscription(BaseModel):

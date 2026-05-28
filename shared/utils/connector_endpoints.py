@@ -17,12 +17,14 @@ ACTION_CONNECTOR_KEYS = {
     CONNECTOR_KEY_MUSIC_API,
     CONNECTOR_KEY_ROBOT_ACTION,
 }
+CONNECTOR_KEY_GOVEE = "govee"
 MASKED_SECRET_VALUE = "********"
 SECRET_CONFIG_KEYS = {
     "auth_token",
     "bot_token",
     "bearer_token",
     "secret",
+    "api_key",
 }
 
 
