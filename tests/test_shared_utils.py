@@ -82,6 +82,7 @@ try:
         build_model_option_catalog,
         build_model_display_name,
         build_default_bindings,
+        collect_required_mounted_models,
         build_runtime_binding_block,
         is_registration_available,
         load_registry_bundle,
@@ -97,6 +98,7 @@ except ModuleNotFoundError:
     build_model_option_catalog = None
     build_model_display_name = None
     build_default_bindings = None
+    collect_required_mounted_models = None
     build_runtime_binding_block = None
     is_registration_available = None
     load_registry_bundle = None
@@ -1066,6 +1068,23 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertIn("builtin_yolox_s_cpu", mounted["detector"])
         self.assertIn("builtin_bytetrack", mounted["tracker"])
         self.assertNotIn("reid", mounted)
+
+    @unittest.skipIf(collect_required_mounted_models is None, "omegaconf is not installed")
+    def test_collect_required_mounted_models_ignores_retired_reid_stage(self):
+        bundle = load_registry_bundle()
+        required = collect_required_mounted_models(
+            bundle,
+            [],
+            defaults={
+                "detector": "builtin_yolox_s_cpu",
+                "tracker": "builtin_bytetrack",
+                "reid": "builtin_transreid_person_hybrid_bag",
+                "anomaly_stage_1": "siglip_stage_1_cpu",
+                "anomaly_stage_2": "smolvlm_stage_2_cpu",
+            },
+        )
+        self.assertNotIn("reid", required)
+        self.assertEqual(required["anomaly_stage_2"], {"smolvlm_stage_2_cpu"})
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_load_model_registries_merges_upstream_master_with_local_entries(self):

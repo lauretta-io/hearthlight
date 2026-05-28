@@ -46,6 +46,10 @@ const MODEL_LIBRARY_SUB_TABS = [
   { key: 'inventory', label: 'Model Inventory' },
   { key: 'library', label: 'Model Library' },
 ];
+const CONNECTOR_SUB_TABS = [
+  { key: 'connections', label: 'Connections' },
+  { key: 'connector-zoo', label: 'Connector Zoo' },
+];
 const EMPTY_PROMPT_SETTINGS = {
   anomaly_items: [],
   anomaly_behaviors: [],
@@ -91,18 +95,21 @@ const normalizeBindingsPayload = (payload) => {
   return [];
 };
 
-const normalizeZooPayload = (payload, collectionKey) => {
-  if (Array.isArray(payload)) return payload;
-  if (Array.isArray(payload?.[collectionKey])) return payload[collectionKey];
-  if (Array.isArray(payload?.items)) return payload.items;
-  return [];
-};
-
 const normalizeListPayload = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.items)) return payload.items;
   return [];
 };
+
+const normalizeRepoConnectorZooPayload = (payload) => ({
+  catalog_url: payload?.catalog_url ?? '',
+  source_url: payload?.source_url ?? '',
+  generated_at: payload?.generated_at ?? null,
+  last_refreshed_at: payload?.last_refreshed_at ?? null,
+  error: payload?.error ?? null,
+  from_cache: Boolean(payload?.from_cache),
+  connectors: Array.isArray(payload?.connectors) ? payload.connectors : [],
+});
 
 const createSourceDraft = (kind = 'camera_url') => ({
   clientKey: `settings-source-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -564,6 +571,7 @@ const SettingsPage = ({
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
   const [isSavingGoveeEndpoints, setIsSavingGoveeEndpoints] = useState(false);
+  const [isSavingConnectorZooRepoSettings, setIsSavingConnectorZooRepoSettings] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
   const [rowErrors, setRowErrors] = useState({});
@@ -583,10 +591,13 @@ const SettingsPage = ({
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
   const [goveeEndpoints, setGoveeEndpoints] = useState([]);
+  const [genericConnectorEndpoints, setGenericConnectorEndpoints] = useState([]);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
-  const [triggerZoo, setTriggerZoo] = useState([]);
-  const [connectorZoo, setConnectorZoo] = useState([]);
+  const [connectorSubTab, setConnectorSubTab] = useState('connections');
+  const [connectorZooRepoSettings, setConnectorZooRepoSettings] = useState({ catalog_url: '' });
+  const [repoConnectorZooCatalog, setRepoConnectorZooCatalog] = useState(normalizeRepoConnectorZooPayload({}));
+  const [installingRepoConnectorKey, setInstallingRepoConnectorKey] = useState('');
   const [anomalyItems, setAnomalyItems] = useState([]);
   const [anomalyBehaviors, setAnomalyBehaviors] = useState([]);
   const [standardPromptSettings, setStandardPromptSettings] = useState(EMPTY_PROMPT_SETTINGS);
@@ -738,6 +749,53 @@ const SettingsPage = ({
     setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
   };
 
+  const reloadGenericConnectorEndpointState = async () => {
+    const response = await fetch(`${BaseURL}/settings/connector-endpoints`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load connector endpoints');
+    }
+    const data = await response.json();
+    setGenericConnectorEndpoints(
+      normalizeListPayload(data).filter(
+        (endpoint) => !['telegram', 'apple_messages', 'govee'].includes(endpoint.connector_key),
+      ),
+    );
+  };
+
+  const reloadConnectorZooRepoSettings = async () => {
+    const response = await fetch(`${BaseURL}/settings/connector-zoo-repo`);
+    if (!response.ok) {
+      throw new Error('Failed to load Connector Zoo repo settings');
+    }
+    const data = await response.json();
+    setConnectorZooRepoSettings({
+      catalog_url: data?.catalog_url ?? '',
+    });
+  };
+
+  const reloadRepoConnectorZooCatalog = async () => {
+    const response = await fetch(`${BaseURL}/connector-zoo/repo`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to refresh Connector Zoo');
+    }
+    const data = await response.json();
+    setRepoConnectorZooCatalog(normalizeRepoConnectorZooPayload(data));
+  };
+
   useEffect(() => {
     const loadSources = async () => {
       try {
@@ -778,6 +836,8 @@ const SettingsPage = ({
         await reloadTelegramSubscriptionState();
         await reloadAppleMessageSubscriptionState();
         await reloadGoveeEndpointState();
+        await reloadGenericConnectorEndpointState();
+        await reloadConnectorZooRepoSettings();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
         });
@@ -786,26 +846,17 @@ const SettingsPage = ({
       }
     };
 
-    const loadZoos = async () => {
-      try {
-        const [triggerResponse, connectorResponse] = await Promise.all([
-          fetch(`${BaseURL}/trigger-zoo`),
-          fetch(`${BaseURL}/connector-zoo`),
-        ]);
-        if (triggerResponse.ok) {
-          setTriggerZoo(normalizeZooPayload(await triggerResponse.json(), 'triggers'));
-        }
-        if (connectorResponse.ok) {
-          setConnectorZoo(normalizeZooPayload(await connectorResponse.json(), 'connectors'));
-        }
-      } catch {
-        // Keep the page usable if the zoo catalogs are temporarily unavailable.
-      }
-    };
-
     loadSources();
-    loadZoos();
   }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'connectors' || connectorSubTab !== 'connector-zoo') {
+      return;
+    }
+    reloadRepoConnectorZooCatalog().catch((error) => {
+      setBanner({ kind: 'error', text: error.message });
+    });
+  }, [activeTab, connectorSubTab]);
 
   const setSourceField = (clientKey, field, value) => {
     setSources((previous) =>
@@ -1862,6 +1913,65 @@ const SettingsPage = ({
     }
   };
 
+  const saveConnectorZooRepoSettings = async () => {
+    setIsSavingConnectorZooRepoSettings(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/connector-zoo-repo`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          catalog_url: connectorZooRepoSettings.catalog_url.trim() || null,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to save Connector Zoo repo settings');
+      }
+      setConnectorZooRepoSettings({
+        catalog_url: data?.catalog_url ?? '',
+      });
+      await reloadRepoConnectorZooCatalog();
+      setBanner({ kind: 'success', text: 'Connector Zoo catalog settings updated.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingConnectorZooRepoSettings(false);
+    }
+  };
+
+  const installRepoConnector = async (connectorKey) => {
+    setInstallingRepoConnectorKey(connectorKey);
+    try {
+      const response = await fetch(`${BaseURL}/connector-zoo/repo/install`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ connector_key: connectorKey }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || 'Failed to add connector from Connector Zoo');
+      }
+      await Promise.all([
+        reloadGenericConnectorEndpointState(),
+        reloadGoveeEndpointState(),
+        reloadRepoConnectorZooCatalog(),
+      ]);
+      setConnectorSubTab('connections');
+      setBanner({
+        kind: 'success',
+        text: data.message || 'Connector added. Restart Hearthlight to activate the plugin runtime.',
+      });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setInstallingRepoConnectorKey('');
+    }
+  };
+
   const modelOptionsByStage = MODEL_STAGE_OPTIONS.reduce((result, option) => {
     const stageEntry = (modelOptionCatalog.stages || []).find((entry) => entry.stage === option.stage);
     result[option.stage] = stageEntry?.options || [];
@@ -1899,8 +2009,6 @@ const SettingsPage = ({
       && subscription.recipient_handle.trim()
       && ['iMessage', 'SMS'].includes(subscription.service),
   );
-  const normalizedConnectorZoo = Array.isArray(connectorZoo) ? connectorZoo : [];
-  const goveeConnectorZooEntry = normalizedConnectorZoo.find((entry) => entry.key === 'govee');
   const isGoveeConnectorConfigured = goveeEndpoints.some(
     (endpoint) =>
       endpoint.enabled
@@ -1909,6 +2017,12 @@ const SettingsPage = ({
       && endpoint.capability_type
       && endpoint.capability_instance
       && endpoint.api_key.trim(),
+  );
+  const repoConnectorEntries = Array.isArray(repoConnectorZooCatalog.connectors)
+    ? repoConnectorZooCatalog.connectors
+    : [];
+  const genericInstalledConnectorEndpoints = genericConnectorEndpoints.filter(
+    (endpoint) => endpoint.connector_key !== 'govee',
   );
   const stageLibraryEntries = MODEL_STAGE_OPTIONS.map((option) => {
     const stageOptions = modelOptionsByStage[option.stage] || [];
@@ -2811,7 +2925,7 @@ const SettingsPage = ({
                       </button>
                     </div>
                   </div>
-              </section>
+                </section>
             </>
           )}
 
@@ -2823,30 +2937,53 @@ const SettingsPage = ({
                 </div>
               )}
 
-              <section className="control-grid connectors-grid">
-                  {goveeConnectorZooEntry && (
+              <div className="settings-subtabs">
+                {CONNECTOR_SUB_TABS.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    className={connectorSubTab === tab.key ? 'settings-subtab active' : 'settings-subtab'}
+                    onClick={() => setConnectorSubTab(tab.key)}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {connectorSubTab === 'connections' && (
+                <section className="control-grid connectors-grid">
+                  {genericInstalledConnectorEndpoints.length > 0 && (
                     <div className="card">
                       <div className="card-header">
                         <div>
                           <div className="connector-header-line">
-                            <h3>Connector Zoo</h3>
+                            <h3>Installed Connector Plugins</h3>
                           </div>
-                          <p>Optional connector plugins can be added here without being part of the default built-in connector set.</p>
+                          <p>Connectors added from the Connector Zoo appear here after they are added to this workspace.</p>
                         </div>
                       </div>
                       <div className="source-list">
-                        <div className="source-row">
-                          <div className="source-row-header">
-                            <div>
-                              <strong>{goveeConnectorZooEntry.label}</strong>
-                              <div className="muted-text">{goveeConnectorZooEntry.description}</div>
+                        {genericInstalledConnectorEndpoints.map((endpoint, index) => (
+                          <div key={`generic-connector-${endpoint.id || index}`} className="source-row">
+                            <div className="source-row-header">
+                              <div>
+                                <strong>{endpoint.label || endpoint.connector_key}</strong>
+                                <div className="muted-text">Connector key: {endpoint.connector_key}</div>
+                              </div>
+                              <span className={`connector-status-badge ${endpoint.resolved ? 'connector-status-badge-ok' : 'connector-status-badge-pending'}`}>
+                                {endpoint.resolved ? 'Installed' : 'Restart required'}
+                              </span>
                             </div>
-                            <button type="button" onClick={addGoveeEndpoint} className="secondary-button">
-                              Add Connection
-                            </button>
+                            {endpoint.unavailable_reason && (
+                              <div className="row-error">{endpoint.unavailable_reason}</div>
+                            )}
+                            <div className="muted-text">
+                              {endpoint.resolved
+                                ? 'This connector is installed and managed through the generic connector endpoint registry.'
+                                : 'This connector row was added, but the plugin runtime is not active yet. Restart Hearthlight to activate it.'}
+                            </div>
                           </div>
-                          <div className="muted-text">Plugin: {goveeConnectorZooEntry.plugin_key || 'external'}</div>
-                        </div>
+                        ))}
                       </div>
                     </div>
                   )}
@@ -3290,7 +3427,111 @@ const SettingsPage = ({
                       <div className="muted-text">Apple Messages is host-local and depends on the macOS Messages app.</div>
                     </div>
                   </div>
-              </section>
+                </section>
+              )}
+
+              {connectorSubTab === 'connector-zoo' && (
+                <section className="control-grid connectors-grid">
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <div className="connector-header-line">
+                          <h3>Connector Zoo</h3>
+                        </div>
+                        <p>Optional connector plugins can be added here without being part of the default built-in connector set.</p>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => reloadRepoConnectorZooCatalog().catch((error) => setBanner({ kind: 'error', text: error.message }))}
+                        className="secondary-button"
+                      >
+                        Refresh Zoo
+                      </button>
+                    </div>
+
+                    <div className="model-binding-grid">
+                      <label>
+                        <span>Catalog URL</span>
+                        <input
+                          type="url"
+                          value={connectorZooRepoSettings.catalog_url}
+                          onChange={(event) => setConnectorZooRepoSettings({ catalog_url: event.target.value })}
+                          placeholder="https://raw.githubusercontent.com/.../connector_zoo.yaml"
+                        />
+                      </label>
+                    </div>
+
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={saveConnectorZooRepoSettings}
+                        className="secondary-button"
+                        disabled={isSavingConnectorZooRepoSettings}
+                      >
+                        {isSavingConnectorZooRepoSettings ? 'Saving...' : 'Save Connector Zoo URL'}
+                      </button>
+                    </div>
+
+                    <div className="empty-state endpoint-info">
+                      <div className="muted-text">Source URL: {repoConnectorZooCatalog.source_url || connectorZooRepoSettings.catalog_url || 'Not configured yet'}</div>
+                      <div className="muted-text">Last refreshed: {repoConnectorZooCatalog.last_refreshed_at || 'Not fetched yet'}</div>
+                      {repoConnectorZooCatalog.generated_at && (
+                        <div className="muted-text">Catalog generated: {repoConnectorZooCatalog.generated_at}</div>
+                      )}
+                      {repoConnectorZooCatalog.from_cache && (
+                        <div className="muted-text">Showing cached results because the live repo fetch failed.</div>
+                      )}
+                      {repoConnectorZooCatalog.error && (
+                        <div className="row-error">{repoConnectorZooCatalog.error}</div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <div className="connector-header-line">
+                          <h3>Available Connectors</h3>
+                        </div>
+                        <p>Each entry comes from the remote repo catalog and can be added into this workspace.</p>
+                      </div>
+                    </div>
+
+                    {repoConnectorEntries.length === 0 ? (
+                      <div className="empty-state">No repo-backed connector entries are available yet. Save a catalog URL and refresh the zoo.</div>
+                    ) : (
+                      <div className="source-list">
+                        {repoConnectorEntries.map((entry) => (
+                          <div key={`repo-connector-${entry.key}`} className="source-row">
+                            <div className="source-row-header">
+                              <div>
+                                <strong>{entry.label}</strong>
+                                <div className="muted-text">{entry.description}</div>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => installRepoConnector(entry.key)}
+                                className="secondary-button"
+                                disabled={installingRepoConnectorKey === entry.key}
+                              >
+                                {installingRepoConnectorKey === entry.key
+                                  ? 'Adding...'
+                                  : (entry.installed ? 'Add Connection' : 'Add to System')}
+                              </button>
+                            </div>
+                            <div className="muted-text">Plugin: {entry.plugin_key}{entry.plugin_version ? ` · ${entry.plugin_version}` : ''}</div>
+                            {entry.source_url && (
+                              <div className="muted-text">
+                                <a href={entry.source_url} target="_blank" rel="noreferrer">Open source listing</a>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </section>
+              )}
             </>
           )}
 

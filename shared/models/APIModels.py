@@ -120,6 +120,17 @@ class AppearanceSettings(BaseModel):
         return normalized
 
 
+class ConnectorZooRepoSettings(BaseModel):
+    catalog_url: str | None = None
+
+    @field_validator("catalog_url")
+    def validate_catalog_url(cls, value):
+        if value is None:
+            return None
+        stripped = value.strip()
+        return stripped or None
+
+
 class InputSource(BaseModel):
     id: int | None = None
     kind: str
@@ -689,6 +700,41 @@ class ConnectorZooEntry(BaseModel):
     delivery_capabilities: list[str] = Field(default_factory=list)
     plugin_key: str | None = None
     source_path: str | None = None
+
+
+class RepoConnectorZooEntry(ConnectorZooEntry):
+    plugin_version: str | None = None
+    plugin_manifest_url: str | None = None
+    plugin_bundle_url: str | None = None
+    plugin_files: dict[str, str] = Field(default_factory=dict)
+    source_url: str | None = None
+    installed: bool = False
+
+
+class RepoConnectorZooCatalog(BaseModel):
+    catalog_url: str | None = None
+    source_url: str | None = None
+    generated_at: str | None = None
+    last_refreshed_at: str | None = None
+    error: str | None = None
+    from_cache: bool = False
+    connectors: list[RepoConnectorZooEntry] = Field(default_factory=list)
+
+
+class RepoConnectorZooInstallRequest(BaseModel):
+    connector_key: str
+
+    @field_validator("connector_key")
+    def validate_connector_key(cls, value):
+        return validate_non_empty_string(value, "connector_key").lower()
+
+
+class RepoConnectorZooInstallResponse(BaseModel):
+    connector_key: str
+    plugin_key: str
+    connector_endpoint_id: int | None = None
+    restart_required: bool = True
+    message: str = ""
 
 
 class RuleSetZooEntry(BaseModel):

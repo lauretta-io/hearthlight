@@ -305,11 +305,11 @@ def collect_required_mounted_models(
         stage: set() for stage in OPERATOR_MODEL_STAGES
     }
     for stage, model_key in resolved_defaults.items():
-        if model_key:
+        if stage in required and model_key:
             required[stage].add(model_key)
     for source_row in source_rows:
         for stage, model_key in build_source_binding_overrides(source_row).items():
-            if model_key:
+            if stage in required and model_key:
                 required[stage].add(model_key)
     return required
 

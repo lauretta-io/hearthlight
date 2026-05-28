@@ -9,6 +9,32 @@ const buildJsonResponse = (body) =>
   });
 
 beforeEach(() => {
+  let connectorZooRepoSettings = {
+    catalog_url: 'file:///workspace/shared/catalogs/connector_zoo_repo.yaml',
+  };
+  let repoConnectorZooCatalog = {
+    catalog_url: connectorZooRepoSettings.catalog_url,
+    source_url: connectorZooRepoSettings.catalog_url,
+    generated_at: '2026-05-27T00:00:00Z',
+    last_refreshed_at: '2026-05-27T00:00:00Z',
+    error: null,
+    from_cache: false,
+    connectors: [
+      {
+        key: 'govee',
+        label: 'Govee Light Connection',
+        description: 'Optional Govee light connector plugin.',
+        category: 'integrations',
+        enabled: true,
+        plugin_key: 'govee_light_connection',
+        plugin_version: '0.8.0',
+        source_url: 'file:///workspace/shared/plugins/govee_light_connection/',
+        installed: false,
+      },
+    ],
+  };
+  let goveeEndpoints = [];
+  let genericConnectorEndpoints = [];
   global.fetch = jest.fn((url, options = {}) => {
     if (url.endsWith('/settings/input-sources') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
@@ -203,7 +229,10 @@ beforeEach(() => {
       ]);
     }
     if (url.endsWith('/settings/govee-connector-endpoints') && (!options.method || options.method === 'GET')) {
-      return buildJsonResponse([]);
+      return buildJsonResponse(goveeEndpoints);
+    }
+    if (url.endsWith('/settings/connector-endpoints') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse(genericConnectorEndpoints);
     }
     if (url.endsWith('/trigger-zoo')) {
       return buildJsonResponse([]);
@@ -217,15 +246,13 @@ beforeEach(() => {
           category: 'messaging',
           enabled: true,
         },
-        {
-          key: 'govee',
-          label: 'Govee Light Connection',
-          description: 'Optional Govee light connector plugin.',
-          category: 'integrations',
-          enabled: true,
-          plugin_key: 'govee_light_connection',
-        },
       ]);
+    }
+    if (url.endsWith('/settings/connector-zoo-repo') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse(connectorZooRepoSettings);
+    }
+    if (url.endsWith('/connector-zoo/repo') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse(repoConnectorZooCatalog);
     }
     if (url.endsWith('/settings/input-sources') && options.method === 'PUT') {
       return buildJsonResponse([
@@ -351,14 +378,15 @@ beforeEach(() => {
     }
     if (url.endsWith('/settings/govee-connector-endpoints') && options.method === 'PUT') {
       const payload = JSON.parse(options.body);
-      return buildJsonResponse(payload.map((item, index) => ({
+      goveeEndpoints = payload.map((item, index) => ({
         id: 71 + index,
         connector_key: 'govee',
         label: item.label,
         enabled: item.enabled,
         config: item.config,
         delivery_capabilities: item.delivery_capabilities,
-      })));
+      }));
+      return buildJsonResponse(goveeEndpoints);
     }
     if (url.includes('/settings/govee-connector-endpoints/test') && options.method === 'POST') {
       return buildJsonResponse({
@@ -376,6 +404,65 @@ beforeEach(() => {
     if (url.endsWith('/settings/appearance') && options.method === 'PUT') {
       return buildJsonResponse({
         theme_key: 'fidelity-dark',
+      });
+    }
+    if (url.endsWith('/settings/connector-zoo-repo') && options.method === 'PUT') {
+      connectorZooRepoSettings = JSON.parse(options.body);
+      repoConnectorZooCatalog = {
+        ...repoConnectorZooCatalog,
+        catalog_url: connectorZooRepoSettings.catalog_url,
+        source_url: connectorZooRepoSettings.catalog_url,
+      };
+      return buildJsonResponse(connectorZooRepoSettings);
+    }
+    if (url.endsWith('/connector-zoo/repo/install') && options.method === 'POST') {
+      const payload = JSON.parse(options.body);
+      repoConnectorZooCatalog = {
+        ...repoConnectorZooCatalog,
+        connectors: repoConnectorZooCatalog.connectors.map((entry) =>
+          entry.key === payload.connector_key ? { ...entry, installed: true } : entry
+        ),
+      };
+      genericConnectorEndpoints = [
+        {
+          id: 81,
+          connector_key: payload.connector_key,
+          label: 'Govee Light Connection',
+          enabled: true,
+          config: {},
+          delivery_capabilities: ['light_control'],
+          resolved: false,
+          unavailable_reason: 'connector plugin component govee is unavailable',
+        },
+      ];
+      goveeEndpoints = [
+        {
+          id: 82,
+          connector_key: 'govee',
+          label: 'Govee Light Connection',
+          enabled: true,
+          config: {
+            api_key: '',
+            sku: '',
+            device: '',
+            device_name: '',
+            capability_key: '',
+            capability_type: '',
+            capability_instance: '',
+            capability_value: '',
+            capability_value_label: '',
+          },
+          delivery_capabilities: ['light_control'],
+          resolved: false,
+          unavailable_reason: 'connector plugin component govee is unavailable',
+        },
+      ];
+      return buildJsonResponse({
+        connector_key: payload.connector_key,
+        plugin_key: 'govee_light_connection',
+        connector_endpoint_id: 82,
+        restart_required: true,
+        message: 'Govee Light Connection was added. Restart Hearthlight to activate the plugin runtime.',
       });
     }
     return buildJsonResponse({});
@@ -517,7 +604,6 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   expect(await screen.findByText('Telegram')).toBeTruthy();
-  expect(screen.getByText('Govee Light Connection')).toBeTruthy();
   expect(screen.getAllByText('Configured').length).toBeGreaterThan(0);
   expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
   expect(screen.getByDisplayValue('Ops Chat')).toBeTruthy();
@@ -555,8 +641,30 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   await act(async () => {
-    fireEvent.click(screen.getAllByText('Add Connection')[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Connector Zoo' }));
   });
+
+  expect(await screen.findByText('Available Connectors')).toBeTruthy();
+  expect(screen.getByDisplayValue('file:///workspace/shared/catalogs/connector_zoo_repo.yaml')).toBeTruthy();
+  expect(screen.getByText('Govee Light Connection')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Add to System' }));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/connector-zoo\/repo\/install$/),
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Connections' }));
+  });
+
+  expect(await screen.findByText('Govee Light Connection')).toBeTruthy();
+  expect(screen.getByText(/restart hearthlight to activate the plugin runtime/i)).toBeTruthy();
   expect(screen.getByPlaceholderText('Govee API key')).toBeTruthy();
 
   await act(async () => {

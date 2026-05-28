@@ -40,6 +40,7 @@ from ...shared.models.APIModels import (
     AlertRule,
     AlertRuleOptionCatalog,
     ConnectorEndpoint,
+    ConnectorZooRepoSettings,
     ConnectorZooEntry,
     AlgorithmEntityFeedItem,
     AlgorithmFeed,
@@ -62,6 +63,10 @@ from ...shared.models.APIModels import (
     ModelRegistration,
     PluginBundleRecord,
     PluginComponentRecord,
+    RepoConnectorZooCatalog,
+    RepoConnectorZooInstallRequest,
+    RepoConnectorZooInstallResponse,
+    RepoConnectorZooEntry,
     MountedModelStage,
     MODEL_BINDING_STAGES,
     MonitoringOverview,
@@ -181,6 +186,11 @@ from ...shared.utils.resource_monitor import (
     utc_now_iso,
 )
 from ...shared.utils.resource_drift import build_resource_drift
+from ...shared.utils.repo_connector_zoo import (
+    DEFAULT_CONNECTOR_ZOO_CATALOG_URL,
+    install_repo_connector_plugin,
+    load_repo_connector_catalog_from_url,
+)
 from ...shared.utils.monitoring_feed import (
     build_feed_endpoint_catalog,
     infer_run_status,
@@ -190,6 +200,8 @@ from ...shared.utils.monitoring_feed import (
 from ...shared.utils.security import resolve_safe_child_path
 from ...shared.utils.workspace_settings import (
     SETTING_KEY_APPEARANCE,
+    SETTING_KEY_CONNECTOR_ZOO_REPO,
+    SETTING_KEY_CONNECTOR_ZOO_REPO_CACHE,
     get_workspace_setting_value,
     set_workspace_setting_value,
 )
@@ -250,6 +262,27 @@ def build_default_appearance_settings() -> AppearanceSettings:
     return AppearanceSettings(theme_key="fidelity-light")
 
 
+def build_default_connector_zoo_repo_settings() -> ConnectorZooRepoSettings:
+    return ConnectorZooRepoSettings(catalog_url=DEFAULT_CONNECTOR_ZOO_CATALOG_URL)
+
+
+def normalize_connector_zoo_catalog_url(catalog_url: str | None) -> str:
+    normalized = str(catalog_url or "").strip()
+    if not normalized:
+        return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
+    if normalized in {
+        "https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml",
+        "https://github.com/lauretta-io/hearthlight/blob/main/shared/catalogs/connector_zoo_repo.yaml",
+    }:
+        return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
+    parsed = urllib_parse.urlparse(normalized)
+    if parsed.scheme == "file":
+        file_path = Path(urllib_request.url2pathname(parsed.path))
+        if not file_path.exists():
+            return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
+    return normalized
+
+
 def read_appearance_settings(db: Session) -> AppearanceSettings:
     payload = get_workspace_setting_value(
         db,
@@ -273,6 +306,96 @@ def write_appearance_settings(db: Session, payload: AppearanceSettings) -> Appea
     )
     db.commit()
     return read_appearance_settings(db)
+
+
+def read_connector_zoo_repo_settings(db: Session) -> ConnectorZooRepoSettings:
+    payload = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CONNECTOR_ZOO_REPO,
+        default=build_default_connector_zoo_repo_settings().model_dump(),
+    )
+    if not isinstance(payload, dict):
+        payload = build_default_connector_zoo_repo_settings().model_dump()
+    payload = dict(payload)
+    payload["catalog_url"] = normalize_connector_zoo_catalog_url(payload.get("catalog_url"))
+    try:
+        return ConnectorZooRepoSettings.model_validate(payload)
+    except Exception:
+        return build_default_connector_zoo_repo_settings()
+
+
+def write_connector_zoo_repo_settings(
+    db: Session,
+    payload: ConnectorZooRepoSettings,
+) -> ConnectorZooRepoSettings:
+    settings = ConnectorZooRepoSettings.model_validate(payload)
+    settings = ConnectorZooRepoSettings(
+        catalog_url=normalize_connector_zoo_catalog_url(settings.catalog_url),
+    )
+    set_workspace_setting_value(
+        db,
+        SETTING_KEY_CONNECTOR_ZOO_REPO,
+        settings.model_dump(),
+    )
+    db.commit()
+    return read_connector_zoo_repo_settings(db)
+
+
+def _serialize_repo_connector_catalog(catalog: dict[str, Any]) -> dict[str, Any]:
+    payload = dict(catalog or {})
+    payload["last_refreshed_at"] = utc_now_iso()
+    payload["connectors"] = [
+        RepoConnectorZooEntry.model_validate(entry).model_dump()
+        for entry in list(payload.get("connectors") or [])
+    ]
+    return payload
+
+
+def _read_cached_repo_connector_catalog(db: Session) -> RepoConnectorZooCatalog:
+    payload = get_workspace_setting_value(
+        db,
+        SETTING_KEY_CONNECTOR_ZOO_REPO_CACHE,
+        default=RepoConnectorZooCatalog().model_dump(),
+    )
+    if not isinstance(payload, dict):
+        payload = RepoConnectorZooCatalog().model_dump()
+    try:
+        return RepoConnectorZooCatalog.model_validate(payload)
+    except Exception:
+        return RepoConnectorZooCatalog()
+
+
+def _write_cached_repo_connector_catalog(
+    db: Session,
+    catalog: dict[str, Any],
+) -> RepoConnectorZooCatalog:
+    payload = _serialize_repo_connector_catalog(catalog)
+    set_workspace_setting_value(db, SETTING_KEY_CONNECTOR_ZOO_REPO_CACHE, payload)
+    db.commit()
+    return RepoConnectorZooCatalog.model_validate(payload)
+
+
+def _build_repo_connector_catalog_response(db: Session) -> RepoConnectorZooCatalog:
+    settings = read_connector_zoo_repo_settings(db)
+    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    installed_plugin_keys = {
+        str(plugin.get("key") or "").strip()
+        for plugin in list(bundle.get("plugin_catalog", {}).get("plugins") or [])
+        if str(plugin.get("key") or "").strip()
+    }
+    cached = _read_cached_repo_connector_catalog(db)
+    try:
+        live_catalog = load_repo_connector_catalog_from_url(
+            settings.catalog_url,
+            installed_plugin_keys=installed_plugin_keys,
+        )
+        return _write_cached_repo_connector_catalog(db, live_catalog)
+    except Exception as exc:
+        fallback = cached.model_copy(deep=True)
+        fallback.catalog_url = settings.catalog_url
+        fallback.error = str(exc)
+        fallback.from_cache = True
+        return fallback
 
 
 def build_host_upload_path(upload_path: str | None) -> str | None:
@@ -2196,6 +2319,31 @@ def replace_connector_endpoints(
     return build_connector_endpoint_responses(db, connector_key=connector_key)
 
 
+def create_connector_endpoint_row(
+    db: Session,
+    *,
+    connector_key: str,
+    label: str | None = None,
+    delivery_capabilities: list[str] | None = None,
+    config: dict[str, Any] | None = None,
+) -> ConnectorEndpoint:
+    ensure_connector_endpoint_tables()
+    row = SQLModels.ConnectorEndpoint()
+    db.add(row)
+    set_connector_endpoint_payload(
+        row,
+        connector_key=connector_key,
+        label=label,
+        enabled=True,
+        config=dict(config or {}),
+        delivery_capabilities=list(delivery_capabilities or []),
+    )
+    db.commit()
+    return ConnectorEndpoint.model_validate(
+        build_connector_endpoint_responses(db, connector_key=connector_key)[-1]
+    )
+
+
 def get_govee_connector_rows(db: Session):
     ensure_govee_connector_tables()
     return get_connector_endpoint_rows(db, CONNECTOR_KEY_GOVEE)
@@ -3245,6 +3393,43 @@ def get_connector_zoo(db: Session = Depends(get_db)):
     return [ConnectorZooEntry.model_validate(entry) for entry in connector_entries]
 
 
+@external_router.get("/connector-zoo/repo", response_model=RepoConnectorZooCatalog)
+def get_repo_connector_zoo(db: Session = Depends(get_db)):
+    return _build_repo_connector_catalog_response(db)
+
+
+@external_router.post("/connector-zoo/repo/install", response_model=RepoConnectorZooInstallResponse)
+def install_repo_connector_zoo_entry(
+    payload: RepoConnectorZooInstallRequest,
+    db: Session = Depends(get_db),
+):
+    catalog = _build_repo_connector_catalog_response(db)
+    entry = next(
+        (item for item in catalog.connectors if item.key == payload.connector_key),
+        None,
+    )
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"connector zoo entry {payload.connector_key} not found")
+
+    plugin_key = install_repo_connector_plugin(entry.model_dump())
+    bundle = load_plugin_catalog()
+    sync_plugin_catalog_to_db(db, bundle, SQLModels)
+    db.commit()
+    endpoint = create_connector_endpoint_row(
+        db,
+        connector_key=entry.key,
+        label=entry.label,
+        delivery_capabilities=entry.delivery_capabilities,
+    )
+    return RepoConnectorZooInstallResponse(
+        connector_key=entry.key,
+        plugin_key=plugin_key,
+        connector_endpoint_id=endpoint.id,
+        restart_required=True,
+        message=f"{entry.label} was added. Restart Hearthlight to activate the plugin runtime.",
+    )
+
+
 @external_router.get("/rule-set-zoo", response_model=list[RuleSetZooEntry])
 def get_rule_set_zoo(db: Session = Depends(get_db)):
     bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
@@ -3289,6 +3474,19 @@ def update_settings_appearance(
     db: Session = Depends(get_db),
 ):
     return write_appearance_settings(db, payload)
+
+
+@external_router.get("/settings/connector-zoo-repo", response_model=ConnectorZooRepoSettings)
+def get_settings_connector_zoo_repo(db: Session = Depends(get_db)):
+    return read_connector_zoo_repo_settings(db)
+
+
+@external_router.put("/settings/connector-zoo-repo", response_model=ConnectorZooRepoSettings)
+def update_settings_connector_zoo_repo(
+    payload: ConnectorZooRepoSettings,
+    db: Session = Depends(get_db),
+):
+    return write_connector_zoo_repo_settings(db, payload)
 
 
 @external_router.put("/settings/trigger-rules", response_model=list[TriggerRule])

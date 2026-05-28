@@ -60,6 +60,12 @@ ALLOW_REMOTE_WITHOUT_API_KEY = os.environ.get("WEBAPP_ALLOW_REMOTE_WITHOUT_API_K
     "yes",
     "on",
 }
+LOCAL_STACK_MODE = os.environ.get("HEARTHLIGHT_LOCAL_STACK", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 PUBLIC_PATHS = {
     "/healthz",
     "/readyz",
@@ -100,10 +106,15 @@ def _extract_hostname(header_value: str | None) -> str | None:
     return raw_value.split(":", 1)[0]
 
 
+def _extract_forwarded_hosts(header_value: str | None) -> list[str]:
+    raw_value = str(header_value or "").strip()
+    if not raw_value:
+        return []
+    return [item.strip() for item in raw_value.split(",") if item.strip()]
+
+
 def request_is_local_only(request: Request) -> bool:
     client_host = getattr(getattr(request, "client", None), "host", None)
-    if not _is_loopback_host(client_host):
-        return False
 
     origin_host = _extract_hostname(request.headers.get("origin"))
     host_header = request.headers.get("host")
@@ -111,8 +122,20 @@ def request_is_local_only(request: Request) -> bool:
 
     explicit_hosts = [host for host in (origin_host, host_name) if host]
     if explicit_hosts:
-        return all(_is_loopback_host(host) for host in explicit_hosts)
-    return True
+        if not all(_is_loopback_host(host) for host in explicit_hosts):
+            return False
+        if LOCAL_STACK_MODE:
+            return True
+
+    if _is_loopback_host(client_host):
+        return True
+
+    real_ip = request.headers.get("x-real-ip")
+    forwarded_hosts = _extract_forwarded_hosts(request.headers.get("x-forwarded-for"))
+    if _is_loopback_host(real_ip) and forwarded_hosts and all(_is_loopback_host(host) for host in forwarded_hosts):
+        return True
+
+    return not explicit_hosts
 
 
 @app.middleware("http")

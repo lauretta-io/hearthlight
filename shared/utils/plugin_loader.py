@@ -276,21 +276,25 @@ def build_plugin_component_lookup(plugin_catalog: dict[str, Any]) -> dict[str, d
 def sync_plugin_catalog_to_db(db, plugin_catalog: dict[str, Any], sql_models) -> None:
     active_plugin_keys: set[str] = set()
     active_component_keys: set[tuple[str, str]] = set()
+    existing_plugin_rows = {
+        row.plugin_key: row
+        for row in db.query(sql_models.PluginBundle).order_by(sql_models.PluginBundle.id.asc()).all()
+    }
+    existing_component_rows = {
+        (row.component_type, row.component_key): row
+        for row in db.query(sql_models.PluginComponent).order_by(sql_models.PluginComponent.id.asc()).all()
+    }
 
     for plugin in plugin_catalog.get("plugins", []):
         plugin_key = str(plugin.get("key") or "").strip()
         if not plugin_key:
             continue
         active_plugin_keys.add(plugin_key)
-        row = (
-            db.query(sql_models.PluginBundle)
-            .filter(sql_models.PluginBundle.plugin_key == plugin_key)
-            .order_by(sql_models.PluginBundle.id.asc())
-            .first()
-        )
+        row = existing_plugin_rows.get(plugin_key)
         if row is None:
             row = sql_models.PluginBundle(plugin_key=plugin_key)
             db.add(row)
+            existing_plugin_rows[plugin_key] = row
         row.label = plugin.get("label")
         row.version = plugin.get("version")
         row.provider = plugin.get("provider")
@@ -310,21 +314,14 @@ def sync_plugin_catalog_to_db(db, plugin_catalog: dict[str, Any], sql_models) ->
         if not component_type or not component_key or not plugin_key:
             continue
         active_component_keys.add((component_type, component_key))
-        row = (
-            db.query(sql_models.PluginComponent)
-            .filter(
-                sql_models.PluginComponent.component_type == component_type,
-                sql_models.PluginComponent.component_key == component_key,
-            )
-            .order_by(sql_models.PluginComponent.id.asc())
-            .first()
-        )
+        row = existing_component_rows.get((component_type, component_key))
         if row is None:
             row = sql_models.PluginComponent(
                 component_type=component_type,
                 component_key=component_key,
             )
             db.add(row)
+            existing_component_rows[(component_type, component_key)] = row
         row.plugin_key = plugin_key
         row.stage = component.get("stage")
         row.category = component.get("category")
