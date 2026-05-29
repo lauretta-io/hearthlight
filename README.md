@@ -103,7 +103,7 @@ Use this README plus `docs/architecture.md`, `docs/repository.md`, and
 - source-level AI overrides hide automatically when `Enable Video AI` is turned off
 - the Rules page is now split into `Detection Rules` and `Anomaly Detection Rules`, with multi-camera targeting and per-rule anomaly cutoff values
 - the model library now shows qualitative processing-rate guidance, and Model Logs surfaces recent measured cadence by model stage
-- anomaly detection Stage 2 now supports third-party API-backed model entries for `Chatgpt`, `Claude`, and a generic `Lauretta API` endpoint when their credentials are configured
+- anomaly detection Stage 2 now supports third-party API-backed model entries for `Chatgpt`, `Claude`, `LM Studio`, and a generic `Lauretta API` endpoint when their credentials are configured
 - the compose/CLI path can now pull published service images such as `your-namespace/hearthlight-webapp:0.8.0` instead of building locally when those image refs are configured
 - theme selection now lives in `Settings > Appearance`, with a workspace-wide backend setting plus browser startup cache
 - the frontend now runs on Vite instead of `react-scripts`
@@ -122,6 +122,8 @@ Optional remote anomaly-model credentials:
 
 - `OPENAI_API_KEY` and optional `OPENAI_MODEL_NAME` for the `Chatgpt` model option
 - `ANTHROPIC_API_KEY` and optional `ANTHROPIC_MODEL_NAME` for the `Claude` model option
+- `LM_STUDIO_API_BASE_URL` and `LM_STUDIO_MODEL_NAME` for the `LM Studio` model option
+- optional `LM_STUDIO_API_KEY` only if LM Studio server authentication is enabled
 - `LAURETTA_API_KEY` and `LAURETTA_API_BASE_URL` for the `Lauretta API` model option
 
 Minimum practical local tooling:
@@ -183,7 +185,7 @@ The onboarding flow can:
 - copy `shared/configs/example_config.yaml` to `shared/configs/config.yaml`
 - install service `requirements.txt` files
 - optionally seed the central mounted model inventory with `--mount-default-models` or repeated `--mount-model` flags
-- require API credentials during CLI onboarding when mounting `chatgpt_api_stage_2`, `claude_api_stage_2`, or `lauretta_api_stage_2`, and allow provider-specific model name strings
+- require API credentials during CLI onboarding when mounting `chatgpt_api_stage_2`, `claude_api_stage_2`, or `lauretta_api_stage_2`, and support optional local LM Studio configuration with provider-specific model name strings
 - detect CUDA and write CPU/GPU launcher defaults
 - write `.env` notification defaults for Telegram and Apple Messages
 - seed Telegram and Apple Messages trigger subscriptions from `.env` after `reset-db`
@@ -231,7 +233,7 @@ after a server restart loads the active plugin set:
 1. Model Zoo
    - contains detector, tracker, heuristic filter, and anomaly detection model options
    - feeds the mounted model inventory and the per-stage bindings used by cameras
-   - supports built-in models, third-party API-backed models such as Chatgpt and Claude, and future external plugin models
+   - supports built-in models, third-party API-backed models such as Chatgpt, Claude, and LM Studio, and future external plugin models
 
 2. Trigger Zoo
    - contains the trigger types that rules can use, such as detector-driven or anomaly-driven triggers

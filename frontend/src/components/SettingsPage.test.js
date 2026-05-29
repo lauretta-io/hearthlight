@@ -8,6 +8,13 @@ const buildJsonResponse = (body) =>
     json: () => Promise.resolve(body),
   });
 
+const buildErrorResponse = (status, body) =>
+  Promise.resolve({
+    ok: false,
+    status,
+    json: () => Promise.resolve(body),
+  });
+
 beforeEach(() => {
   let connectorZooRepoSettings = {
     catalog_url: 'file:///workspace/shared/catalogs/connector_zoo_repo.yaml',
@@ -721,6 +728,65 @@ test('renders model library with readable stage and model descriptions', async (
   expect(screen.getAllByText(/Prompt Rules Stage 2/).length).toBeGreaterThan(0);
   expect(screen.queryByText('Person ReID Models')).toBeNull();
   expect(screen.getByText(/GET .*\/model-options/)).toBeTruthy();
+});
+
+test('confirms before forcibly unmounting models that are still in use', async () => {
+  const baseFetch = global.fetch;
+  global.fetch = jest.fn((url, options = {}) => {
+    if (url.includes('/mounted-models') && options.method === 'PUT') {
+      if (url.includes('force=true')) {
+        return buildJsonResponse([
+          { stage: 'detector', mounted_model_keys: [] },
+          { stage: 'tracker', mounted_model_keys: ['builtin_bytetrack'] },
+          { stage: 'anomaly_stage_1', mounted_model_keys: ['heuristic_presence_stage_1'] },
+          { stage: 'anomaly_stage_2', mounted_model_keys: ['prompt_rules_stage_2'] },
+        ]);
+      }
+      return buildErrorResponse(409, {
+        detail: {
+          message: 'cannot unmount models currently in use: detector: builtin_yolox_s_gpu',
+          requires_force: true,
+          active_run: true,
+          in_use_models: {
+            detector: ['builtin_yolox_s_gpu'],
+          },
+        },
+      });
+    }
+    return baseFetch(url, options);
+  });
+
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=model-library']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  await screen.findAllByText('Model Inventory');
+  await act(async () => {
+    fireEvent.click(screen.getByRole('checkbox', { name: /YOLOX Small \(GPU\) · Mounted/i }));
+  });
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Remount Models' }));
+  });
+
+  expect(await screen.findByRole('dialog')).toBeTruthy();
+  expect(screen.getByText('Models Currently In Use')).toBeTruthy();
+  expect(screen.getByText(/stop the current run and clear any bindings/i)).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Stop and Remove Models' }));
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining('/mounted-models?force=true'),
+      expect.objectContaining({ method: 'PUT' }),
+    );
+  });
+  expect(await screen.findByText('Mounted model inventory updated.')).toBeTruthy();
 });
 
 test('renders appearance settings and saves workspace theme selection', async () => {

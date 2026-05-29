@@ -181,7 +181,7 @@ test('renders monitoring overview and feed endpoint catalog', async () => {
     render(<MonitoringPage />);
   });
 
-  expect(await screen.findByText('Monitoring')).toBeTruthy();
+  expect(await screen.findByText('Monitor Run')).toBeTruthy();
   expect(screen.getByText('Feed Endpoints')).toBeTruthy();
   expect(screen.getByText('Checkpoint A')).toBeTruthy();
   expect(screen.getByText('GUN-20260314-7')).toBeTruthy();

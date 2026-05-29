@@ -1002,6 +1002,14 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(
             build_model_display_name(
                 "anomaly_stage_2",
+                "lm_studio_stage_2",
+                {"artifact_ref": "lm-studio-openai-compat", "adapter": "openai_compatible_stage_2", "runtime": {"provider": "lm_studio"}},
+            ),
+            "LM Studio",
+        )
+        self.assertEqual(
+            build_model_display_name(
+                "anomaly_stage_2",
                 "lauretta_api_stage_2",
                 {"artifact_ref": "lauretta-api", "adapter": "openai_compatible_stage_2", "runtime": {"provider": "lauretta"}},
             ),
@@ -1035,6 +1043,7 @@ class ModelRegistryTests(unittest.TestCase):
         stage_two = bundle["models"]["anomaly_stage_2"]
         self.assertEqual(stage_two["chatgpt_api_stage_2"]["runtime"]["model_name"], "gpt-5.4-mini")
         self.assertEqual(stage_two["claude_api_stage_2"]["runtime"]["model_name"], "claude-sonnet-4-6")
+        self.assertEqual(stage_two["lm_studio_stage_2"]["runtime"]["model_name"], "local-model")
 
     @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")
     def test_build_model_option_catalog_enriches_detector_classes_from_model_zoo_artifacts(self):

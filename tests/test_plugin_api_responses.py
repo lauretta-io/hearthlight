@@ -30,9 +30,17 @@ class _QueryStub:
 class _DBStub:
     def __init__(self, query_rows):
         self._query_rows = list(query_rows)
+        self.committed = False
+        self.rolled_back = False
 
     def query(self, _model):
         return _QueryStub(self._query_rows)
+
+    def commit(self):
+        self.committed = True
+
+    def rollback(self):
+        self.rolled_back = True
 
 
 class PluginApiResponseTests(unittest.TestCase):
@@ -158,6 +166,91 @@ class PluginApiResponseTests(unittest.TestCase):
         self.assertEqual(len(responses), 1)
         self.assertFalse(responses[0].resolved)
         self.assertIn("connector plugin component telegram is unavailable", responses[0].unavailable_reason)
+
+    @patch.object(external_routes, "build_mounted_model_stage_responses", return_value=[])
+    @patch.object(external_routes, "persist_mounted_models")
+    @patch.object(external_routes, "persist_model_bindings")
+    @patch.object(external_routes, "publish_system_message")
+    @patch.object(external_routes, "sync_upload_lifecycle_states")
+    @patch.object(external_routes, "get_registry_bundle")
+    @patch.object(external_routes, "get_active_source_rows")
+    @patch.object(external_routes, "refresh_runtime_status", side_effect=[external_routes.SystemStatus.RUNNING, external_routes.SystemStatus.RUNNING])
+    def test_update_mounted_models_force_clears_bindings_and_stops_run(
+        self,
+        _mock_status,
+        mock_sources,
+        mock_bundle,
+        mock_sync_uploads,
+        mock_publish_system_message,
+        mock_persist_bindings,
+        mock_persist_mounted,
+        _mock_build_response,
+    ):
+        source_row = SimpleNamespace(
+            id=4,
+            detector_model_key=None,
+            tracker_model_key=None,
+            anomaly_stage_1_model_key=None,
+            anomaly_stage_2_model_key="smolvlm_stage_2_cpu",
+        )
+        mock_sources.return_value = [source_row]
+        mock_bundle.return_value = {
+            "models": {
+                "detector": {
+                    "builtin_yolox_s_cpu": {"adapter": "yolox_detector", "stage": "detector"},
+                },
+                "tracker": {
+                    "builtin_bytetrack": {"adapter": "bytetrack_tracker", "stage": "tracker"},
+                },
+                "anomaly_stage_1": {
+                    "siglip_stage_1_cpu": {"adapter": "siglip_stage_1", "stage": "anomaly_stage_1"},
+                },
+                "anomaly_stage_2": {
+                    "smolvlm_stage_2_cpu": {"adapter": "smolvlm_stage_2", "stage": "anomaly_stage_2"},
+                },
+            },
+            "bindings": {
+                "defaults": {
+                    "detector": "builtin_yolox_s_cpu",
+                    "tracker": "builtin_bytetrack",
+                    "anomaly_stage_1": "siglip_stage_1_cpu",
+                    "anomaly_stage_2": "smolvlm_stage_2_cpu",
+                }
+            },
+            "mounted_models": {
+                "detector": ["builtin_yolox_s_cpu"],
+                "tracker": ["builtin_bytetrack"],
+                "anomaly_stage_1": ["siglip_stage_1_cpu"],
+                "anomaly_stage_2": ["smolvlm_stage_2_cpu"],
+            },
+        }
+        db = _DBStub([])
+
+        external_routes.update_mounted_models(
+            stages=[
+                external_routes.MountedModelStage(stage="detector", mounted_model_keys=[]),
+                external_routes.MountedModelStage(stage="tracker", mounted_model_keys=["builtin_bytetrack"]),
+                external_routes.MountedModelStage(stage="anomaly_stage_1", mounted_model_keys=[]),
+                external_routes.MountedModelStage(stage="anomaly_stage_2", mounted_model_keys=[]),
+            ],
+            force=True,
+            db=db,
+        )
+
+        mock_publish_system_message.assert_called_once()
+        mock_sync_uploads.assert_called_once()
+        mock_persist_mounted.assert_called_once()
+        mock_persist_bindings.assert_called_once_with(
+            {
+                "detector": None,
+                "tracker": "builtin_bytetrack",
+                "reid": None,
+                "anomaly_stage_1": None,
+                "anomaly_stage_2": None,
+            }
+        )
+        self.assertIsNone(source_row.anomaly_stage_2_model_key)
+        self.assertTrue(db.committed)
 
 
 if __name__ == "__main__":

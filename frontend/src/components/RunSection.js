@@ -8,7 +8,6 @@ import {
 } from '../utils/videoUpload';
 import '../styles/CameraConfig.css';
 
-const TASK_OPTIONS = ['PERSON', 'BAG'];
 const MODULES = ['INGESTOR', 'ANOMALY'];
 const SOURCE_KIND_OPTIONS = [
   { value: 'camera_url', label: 'Camera URL' },
@@ -42,7 +41,7 @@ const createSourceDraft = (kind = 'camera_url') => ({
   id: null,
   kind,
   label: '',
-  tasks: [...TASK_OPTIONS],
+  tasks: ['PERSON', 'BAG'],
   enabled: true,
   order: 0,
   source_value: kind === 'webcam' ? 0 : '',
@@ -55,7 +54,7 @@ const hydrateSource = (source, fallbackIndex = 0) => ({
   id: source.id ?? null,
   kind: source.kind ?? 'camera_url',
   label: source.label ?? '',
-  tasks: source.tasks ?? [...TASK_OPTIONS],
+  tasks: source.tasks ?? ['PERSON', 'BAG'],
   enabled: source.enabled ?? true,
   order: source.order ?? fallbackIndex,
   source_value:
@@ -242,23 +241,6 @@ const RunSection = ({ embedded = false, pollingEnabled = true, showHeader = true
     );
   };
 
-  const toggleTask = (clientKey, task) => {
-    setSources((previous) =>
-      previous.map((source) => {
-        if (source.clientKey !== clientKey) {
-          return source;
-        }
-        const tasks = source.tasks.includes(task)
-          ? source.tasks.filter((value) => value !== task)
-          : [...source.tasks, task];
-        return {
-          ...source,
-          tasks,
-        };
-      })
-    );
-  };
-
   const addSource = () => {
     setSources((previous) => [...previous, createSourceDraft()]);
   };
@@ -278,9 +260,7 @@ const RunSection = ({ embedded = false, pollingEnabled = true, showHeader = true
   const validateSources = () => {
     const nextErrors = {};
     sources.forEach((source) => {
-      if (source.tasks.length === 0) {
-        nextErrors[source.clientKey] = 'Select at least one task.';
-      } else if (source.kind === 'video_upload' && !source.upload_id) {
+      if (source.kind === 'video_upload' && !source.upload_id) {
         nextErrors[source.clientKey] = 'Upload a video file before saving.';
       } else if (source.kind !== 'video_upload' && `${source.source_value ?? ''}`.trim() === '') {
         nextErrors[source.clientKey] = 'Source value is required.';
@@ -567,19 +547,6 @@ const RunSection = ({ embedded = false, pollingEnabled = true, showHeader = true
                         onChange={(event) => setSourceField(source.clientKey, 'enabled', event.target.checked)}
                       />
                     </label>
-                  </div>
-
-                  <div className="task-list">
-                    {TASK_OPTIONS.map((task) => (
-                      <label key={task} className={`task-chip ${source.tasks.includes(task) ? 'task-chip-active' : ''}`}>
-                        <input
-                          type="checkbox"
-                          checked={source.tasks.includes(task)}
-                          onChange={() => toggleTask(source.clientKey, task)}
-                        />
-                        <span>{task}</span>
-                      </label>
-                    ))}
                   </div>
 
                   {rowErrors[source.clientKey] && (

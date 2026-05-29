@@ -211,6 +211,35 @@ claude_api_stage_2:
     cpu_cores: 1
     rate_guidance: moderate
 
+lm_studio_stage_2:
+  stage: anomaly_stage_2
+  adapter: openai_compatible_stage_2
+  artifact_ref: lm-studio-openai-compat
+  runtime:
+    provider: lm_studio
+    model_name: local-model
+    model_name_env: LM_STUDIO_MODEL_NAME
+    base_url: http://localhost:1234/v1
+    base_url_env: LM_STUDIO_API_BASE_URL
+    api_key_env: LM_STUDIO_API_KEY
+    auth_optional: true
+    timeout_seconds: 30
+    prompt_mode: api
+  capabilities:
+    prompt_support: true
+    runtime_targets:
+      - local_api
+      - remote_api
+    source_kinds:
+      - camera_url
+      - video_upload
+      - webcam
+  healthcheck: {}
+  requires_gpu: false
+  resource_profile:
+    cpu_cores: 1
+    rate_guidance: moderate
+
 lauretta_api_stage_2:
   stage: anomaly_stage_2
   adapter: openai_compatible_stage_2

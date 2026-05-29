@@ -1,5 +1,6 @@
 from dataclasses import replace
 import json
+import tempfile
 import unittest
 from urllib import error
 from unittest.mock import patch
@@ -150,6 +151,106 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
         self.assertEqual(event.category, "loitering")
         self.assertIn("network down", event.reasoning or "")
+
+    def test_lm_studio_adapter_works_without_auth_header(self):
+        candidate = replace(self.candidate, stage_2_model_key="lm_studio_stage_2")
+        adapter = OpenAICompatibleStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "lm_studio",
+                    "model_name": "qwen-local",
+                    "model_name_env": "LM_STUDIO_MODEL_NAME",
+                    "api_key_env": "LM_STUDIO_API_KEY",
+                    "base_url": "http://localhost:1234/v1",
+                    "base_url_env": "LM_STUDIO_API_BASE_URL",
+                    "auth_optional": True,
+                }
+            }
+        )
+        opener = _CaptureURLopener(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "title": "Local anomaly",
+                                    "category": "loitering",
+                                    "score": 0.6,
+                                    "reasoning": "Local model flagged loitering.",
+                                    "visible_items": ["person", "backpack"],
+                                    "visible_activities": ["loitering"],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+        with patch.dict(
+            "os.environ",
+            {"LM_STUDIO_MODEL_NAME": "qwen3-local", "LM_STUDIO_API_BASE_URL": "http://localhost:1234/v1"},
+            clear=False,
+        ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
+            event = adapter.build_event(candidate=candidate, prompts=self.prompts)
+        self.assertEqual(event.model_key, "lm_studio_stage_2")
+        self.assertEqual(opener.last_request.full_url, "http://localhost:1234/v1/chat/completions")
+        header_map = {key.lower(): value for key, value in opener.last_request.header_items()}
+        self.assertNotIn("authorization", header_map)
+        payload = json.loads(opener.last_request.data.decode("utf-8"))
+        self.assertEqual(payload["model"], "qwen3-local")
+
+    def test_lauretta_provider_posts_submission_payload_with_inline_images(self):
+        with tempfile.NamedTemporaryFile(suffix=".jpg") as frame_file:
+            frame_file.write(b"frame-bytes")
+            frame_file.flush()
+            candidate = replace(
+                self.candidate,
+                stage_2_model_key="lauretta_api_stage_2",
+                asset_references=[
+                    AssetReference(uri=frame_file.name, media_type="image/jpeg", producer="ANOMALY")
+                ],
+            )
+            adapter = OpenAICompatibleStageTwoAdapter(
+                {
+                    "runtime": {
+                        "provider": "lauretta",
+                        "model_name": "lauretta-anomaly-stage-2",
+                        "api_key_env": "LAURETTA_API_KEY",
+                        "base_url_env": "LAURETTA_API_BASE_URL",
+                    }
+                }
+            )
+            opener = _CaptureURLopener(
+                {
+                    "result": {
+                        "title": "Potential loitering near bag",
+                        "category": "loitering",
+                        "score": 0.8,
+                        "reasoning": "The person stayed in frame near the bag.",
+                        "visible_items": ["person", "backpack"],
+                        "visible_activities": ["loitering"],
+                    }
+                }
+            )
+            with patch.dict(
+                "os.environ",
+                {
+                    "LAURETTA_API_KEY": "test-key",
+                    "LAURETTA_API_BASE_URL": "https://lauretta.example",
+                    "LAURETTA_USER_ID": "user-77",
+                },
+                clear=False,
+            ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
+                event = adapter.build_event(candidate=candidate, prompts=self.prompts)
+        self.assertEqual(event.model_key, "lauretta_api_stage_2")
+        self.assertEqual(opener.last_request.full_url, "https://lauretta.example/v1/hearthlight/anomaly-submissions")
+        self.assertEqual(opener.last_request.get_header("Authorization"), "Bearer test-key")
+        payload = json.loads(opener.last_request.data.decode("utf-8"))
+        self.assertEqual(payload["user_id"], "user-77")
+        self.assertEqual(payload["camera_id"], 1)
+        self.assertEqual(len(payload["image_attachments"]), 1)
+        self.assertEqual(payload["image_attachments"][0]["media_type"], "image/jpeg")
 
     def test_claude_adapter_falls_back_when_api_key_missing(self):
         candidate = replace(self.candidate, stage_2_model_key="claude_api_stage_2")

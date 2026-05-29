@@ -60,6 +60,13 @@ THIRD_PARTY_MODEL_REQUIREMENTS = {
     },
 }
 
+THIRD_PARTY_MODEL_OPTIONAL_ENV = {
+    "lm_studio_stage_2": {
+        "LM_STUDIO_API_BASE_URL": ("lm_studio_api_base_url", "http://localhost:1234/v1"),
+        "LM_STUDIO_MODEL_NAME": ("lm_studio_model_name", "local-model"),
+    },
+}
+
 
 @dataclass(frozen=True)
 class SystemPackagePlan:
@@ -325,7 +332,8 @@ def configure_selected_third_party_model_env(workspace: Path, mounted_models: di
     for model_key in sorted(selected_keys):
         requirements = THIRD_PARTY_MODEL_REQUIREMENTS.get(model_key)
         if not requirements:
-            continue
+            requirements = {}
+        optional_requirements = THIRD_PARTY_MODEL_OPTIONAL_ENV.get(model_key, {})
         for env_name, arg_attr in requirements.items():
             value = str(getattr(args, arg_attr, "") or "").strip()
             if not value:
@@ -340,6 +348,26 @@ def configure_selected_third_party_model_env(workspace: Path, mounted_models: di
                     f"{model_key} requires {env_name}. Provide it with --{arg_attr.replace('_', '-')} or set {env_name} before onboarding."
                 )
             updates[env_name] = value
+        for env_name, (arg_attr, default_value) in optional_requirements.items():
+            value = str(getattr(args, arg_attr, "") or "").strip()
+            if not value:
+                value = str(os.environ.get(env_name, "") or "").strip()
+            if not value:
+                value = str(existing_assignments.get(env_name, "") or "").strip()
+            if not value and not getattr(args, "yes", False):
+                prompt_label = env_name.replace("_", " ").title()
+                value = _prompt_text(f"   {prompt_label} for {model_key}", default=default_value)
+            if not value:
+                value = default_value
+            updates[env_name] = value
+        if model_key == "lm_studio_stage_2":
+            optional_api_key = str(getattr(args, "lm_studio_api_key", "") or "").strip()
+            if not optional_api_key:
+                optional_api_key = str(os.environ.get("LM_STUDIO_API_KEY", "") or "").strip()
+            if not optional_api_key:
+                optional_api_key = str(existing_assignments.get("LM_STUDIO_API_KEY", "") or "").strip()
+            if optional_api_key:
+                updates["LM_STUDIO_API_KEY"] = optional_api_key
     return updates
 
 

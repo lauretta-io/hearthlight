@@ -17,7 +17,7 @@ from urllib import request as urllib_request
 
 import cv2
 import numpy as np
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
 from fastapi.responses import StreamingResponse
 from omegaconf import OmegaConf
 from sqlalchemy import func, text
@@ -1675,6 +1675,92 @@ def persist_model_bindings(defaults: dict[str, str | None]):
     bindings = {"defaults": dict(defaults)}
     MODEL_BINDINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(config=OmegaConf.create(bindings), f=str(MODEL_BINDINGS_PATH))
+
+
+def ensure_run_row(
+    db: Session,
+    *,
+    run_identifier: str,
+    output_dir: str | None,
+    start_timestamp: float | None = None,
+    start_datetime: datetime | None = None,
+) -> SQLModels.Run:
+    existing = db.query(SQLModels.Run).filter_by(run_identifier=run_identifier).first()
+    if existing is not None:
+        if output_dir and not existing.output_dir:
+            existing.output_dir = output_dir
+        if start_timestamp is not None and existing.start_timestamp is None:
+            existing.start_timestamp = start_timestamp
+        if start_datetime is not None and existing.start_datetime is None:
+            existing.start_datetime = start_datetime
+        return existing
+
+    run_row = SQLModels.Run(
+        run_identifier=run_identifier,
+        output_dir=output_dir,
+        start_timestamp=start_timestamp,
+        start_datetime=start_datetime,
+    )
+    db.add(run_row)
+    db.flush()
+    return run_row
+
+
+def _build_in_use_model_conflict(
+    missing_by_stage: dict[str, list[str]],
+    *,
+    active_run: bool,
+) -> dict[str, Any]:
+    formatted = "; ".join(
+        f"{stage}: {', '.join(keys)}"
+        for stage, keys in missing_by_stage.items()
+    )
+    return {
+        "message": f"cannot unmount models currently in use: {formatted}",
+        "requires_force": True,
+        "active_run": active_run,
+        "in_use_models": missing_by_stage,
+    }
+
+
+def _clear_removed_model_bindings(
+    source_rows: list[SQLModels.InputSourceTemplate],
+    defaults: dict[str, str | None],
+    removed_by_stage: dict[str, list[str]],
+) -> dict[str, str | None]:
+    normalized_defaults = dict(defaults)
+    for stage, removed_keys in removed_by_stage.items():
+        removed_key_set = set(removed_keys)
+        if normalized_defaults.get(stage) in removed_key_set:
+            normalized_defaults[stage] = None
+        field_name = get_stage_field_name(stage)
+        for source_row in source_rows:
+            if getattr(source_row, field_name, None) in removed_key_set:
+                setattr(source_row, field_name, None)
+    return normalized_defaults
+
+
+def _stop_active_run_for_model_unmount(db: Session) -> bool:
+    global status
+
+    current_status = refresh_runtime_status()
+    with state_lock:
+        if current_status == SystemStatus.IDLE:
+            return False
+        status = SystemStatus.STOPPING
+    publish_system_message(
+        DataModels.SystemMessage(command=DataModels.SystemCommand.STOP)
+    )
+    sync_upload_lifecycle_states(db, active_upload_ids=set())
+    log_resource_event(
+        PersistedEvent(
+            event_type="system_stop",
+            severity="info",
+            message="system stop published for forced model unmount",
+            metadata={"run_id": run_id},
+        )
+    )
+    return True
 
 
 def validate_upload_references(db: Session, sources: list[InputSource]):
@@ -3488,6 +3574,15 @@ async def start(db: Session = Depends(get_db)):
 
     next_run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     runtime_cfg, source_rows = build_runtime_cfg(db, next_run_id)
+    run_start_timestamp = time.time()
+    run_start_datetime = datetime.utcfromtimestamp(run_start_timestamp)
+    ensure_run_row(
+        db,
+        run_identifier=next_run_id,
+        output_dir=getattr(getattr(runtime_cfg, "output", None), "output_dir", None),
+        start_timestamp=run_start_timestamp,
+        start_datetime=run_start_datetime,
+    )
     active_upload_ids = {
         row.upload_id for row in source_rows if row.upload_id is not None
     }
@@ -3523,6 +3618,10 @@ async def start(db: Session = Depends(get_db)):
         )
     except Exception as exc:
         sync_upload_lifecycle_states(db, source_rows=source_rows, active_upload_ids=set())
+        run_row = db.query(SQLModels.Run).filter_by(run_identifier=next_run_id).first()
+        if run_row is not None:
+            run_row.is_deleted = True
+            run_row.deleted_at = datetime.utcnow()
         db.commit()
         with state_lock:
             status = SystemStatus.IDLE
@@ -4498,7 +4597,11 @@ def update_model_bindings(bindings: list[ModelBinding], db: Session = Depends(ge
 
 
 @external_router.put("/mounted-models", response_model=list[MountedModelStage])
-def update_mounted_models(stages: list[MountedModelStage], db: Session = Depends(get_db)):
+def update_mounted_models(
+    stages: list[MountedModelStage],
+    force: bool = Query(default=False),
+    db: Session = Depends(get_db),
+):
     source_rows = get_active_source_rows(db)
     bundle = get_registry_bundle(db, source_rows=source_rows)
     mounted_models = {stage: [] for stage in OPERATOR_MODEL_STAGES}
@@ -4526,22 +4629,37 @@ def update_mounted_models(stages: list[MountedModelStage], db: Session = Depends
         if missing:
             missing_by_stage[stage] = missing
     if missing_by_stage:
-        formatted = "; ".join(
-            f"{stage}: {', '.join(keys)}"
-            for stage, keys in missing_by_stage.items()
-        )
-        raise HTTPException(
-            status_code=400,
-            detail=f"cannot unmount models currently in use: {formatted}",
-        )
+        active_run = refresh_runtime_status() != SystemStatus.IDLE
+        if not force:
+            raise HTTPException(
+                status_code=409,
+                detail=_build_in_use_model_conflict(
+                    missing_by_stage,
+                    active_run=active_run,
+                ),
+            )
+        try:
+            if active_run:
+                _stop_active_run_for_model_unmount(db)
+            defaults = _clear_removed_model_bindings(source_rows, defaults, missing_by_stage)
+            persist_model_bindings(defaults)
+        except Exception as exc:
+            logger.exception("Failed to clear model bindings for forced unmount")
+            raise HTTPException(
+                status_code=500,
+                detail=f"failed to clear model bindings for forced unmount: {exc}",
+            ) from exc
 
     try:
         persist_mounted_models(mounted_models)
+        db.commit()
     except Exception as exc:
+        db.rollback()
         logger.exception("Failed to persist mounted model inventory")
         raise HTTPException(status_code=500, detail=f"failed to persist mounted models: {exc}") from exc
     try:
-        refreshed_bundle = get_registry_bundle(db, source_rows=source_rows)
+        refreshed_sources = get_active_source_rows(db)
+        refreshed_bundle = get_registry_bundle(db, source_rows=refreshed_sources)
         return build_mounted_model_stage_responses(refreshed_bundle)
     except Exception as exc:
         logger.exception("Failed to reload mounted model inventory")

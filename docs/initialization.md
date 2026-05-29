@@ -44,6 +44,7 @@ required credentials:
 
 - `chatgpt_api_stage_2` requires `--openai-api-key` and accepts `--openai-model-name`
 - `claude_api_stage_2` requires `--anthropic-api-key` and accepts `--anthropic-model-name`
+- `lm_studio_stage_2` accepts `--lm-studio-api-base-url` and `--lm-studio-model-name`, and can also take an optional `--lm-studio-api-key` if LM Studio authentication is enabled
 - `lauretta_api_stage_2` requires both `--lauretta-api-key` and `--lauretta-api-base-url`, and accepts `--lauretta-model-name`
 
 If you need to do the config step manually:

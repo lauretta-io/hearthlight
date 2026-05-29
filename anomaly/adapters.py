@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from collections import defaultdict
 from dataclasses import dataclass
 from importlib import import_module
@@ -10,19 +11,20 @@ import os
 from pathlib import Path
 from typing import Any
 from urllib import error, request
+from urllib.parse import urlparse
 
 from omegaconf import OmegaConf
 
-from ..shared.database.database import SessionLocal
-from ..shared.models.DataModels import AnomalyEvent, AssetReference
-from ..shared.utils.claude_anomaly_model import (
+from shared.database.database import SessionLocal
+from shared.models.DataModels import AnomalyEvent, AssetReference
+from shared.utils.claude_anomaly_model import (
     SETTING_KEY_CLAUDE_ANOMALY_MODEL,
     build_claude_anomaly_request,
     default_claude_anomaly_model_config,
     send_claude_anomaly_request,
     validate_claude_anomaly_model_config,
 )
-from ..shared.utils.workspace_settings import get_workspace_setting_value
+from shared.utils.workspace_settings import get_workspace_setting_value
 
 logger = logging.getLogger(__name__)
 
@@ -495,15 +497,46 @@ class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
 class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
     def __init__(self, registration: dict):
         super().__init__(registration)
+        self.provider = str(self.runtime.get("provider") or "").strip().lower()
         self.model_name = str(self.runtime.get("model_name") or "").strip()
         self.model_name_env = str(self.runtime.get("model_name_env") or "").strip()
         self.api_key_env = str(self.runtime.get("api_key_env") or "").strip()
         self.base_url_env = str(self.runtime.get("base_url_env") or "").strip()
         self.default_base_url = str(self.runtime.get("base_url") or "https://api.openai.com/v1").strip()
+        self.auth_optional = bool(self.runtime.get("auth_optional", False))
         self.system_prompt = str(
             self.runtime.get("system_prompt")
             or "You are an anomaly detection analyst. Return strict JSON with keys title, category, score, reasoning, visible_items, visible_activities."
         ).strip()
+
+    @staticmethod
+    def _resolve_local_asset_path(uri: str | None) -> Path | None:
+        raw = str(uri or "").strip()
+        if not raw:
+            return None
+        if raw.startswith("file://"):
+            parsed = urlparse(raw)
+            raw = parsed.path
+        elif "://" in raw:
+            return None
+        path = Path(raw).expanduser()
+        return path if path.exists() and path.is_file() else None
+
+    def _collect_inline_images(self, candidate: StageOneCandidate) -> list[dict[str, Any]]:
+        attachments = []
+        for index, asset in enumerate(candidate.asset_references):
+            asset_path = self._resolve_local_asset_path(asset.uri)
+            if asset_path is None:
+                continue
+            encoded = base64.b64encode(asset_path.read_bytes()).decode("ascii")
+            attachments.append(
+                {
+                    "filename": asset_path.name or f"frame-{index}.bin",
+                    "media_type": asset.media_type or "application/octet-stream",
+                    "data_base64": encoded,
+                }
+            )
+        return attachments
 
     def build_event(
         self,
@@ -512,9 +545,50 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
         prompts: PromptBundle,
     ) -> AnomalyEvent:
         api_key = os.environ.get(self.api_key_env, "").strip()
-        if not api_key:
+        if not api_key and not self.auth_optional:
             return self._fallback_event(candidate=candidate, prompts=prompts, detail=f"missing {self.api_key_env}")
         base_url = os.environ.get(self.base_url_env, "").strip() or self.default_base_url
+        if self.provider == "lauretta":
+            endpoint = f"{base_url.rstrip('/')}/v1/hearthlight/anomaly-submissions"
+            request_body = {
+                "event_id": candidate.event_id,
+                "run_id": candidate.run_id,
+                "source_id": candidate.source_id,
+                "camera_id": candidate.camera_id,
+                "frame_id": candidate.frame_id,
+                "user_id": os.environ.get("LAURETTA_USER_ID", "").strip() or None,
+                "model": os.environ.get(self.model_name_env, "").strip() if self.model_name_env else self.model_name,
+                "stage_1_score": candidate.score,
+                "stage_1_category": candidate.category,
+                "visible_items": list(candidate.visible_items),
+                "visible_activities": list(candidate.visible_activities),
+                "prompt_template": prompts.template,
+                "anomaly_objects": list(prompts.anomaly_object_list),
+                "anomaly_behaviors": list(prompts.anomaly_activity_list),
+                "asset_references": self._build_request_payload(candidate=candidate, prompts=prompts).get("asset_references", []),
+                "image_attachments": self._collect_inline_images(candidate),
+                "metadata": {
+                    "stage_2_model_key": candidate.stage_2_model_key,
+                    "provider": self.provider,
+                },
+            }
+            req = request.Request(
+                endpoint,
+                data=json.dumps(request_body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                method="POST",
+            )
+            try:
+                with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                    raw = json.loads(response.read().decode("utf-8"))
+                parsed = dict(raw.get("result") or raw)
+                return self._normalize_event(candidate=candidate, prompts=prompts, payload=parsed)
+            except (error.URLError, TimeoutError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
+                logger.warning("Lauretta anomaly adapter failed: %s", exc)
+                return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
         endpoint = f"{base_url.rstrip('/')}/chat/completions"
         payload = self._build_request_payload(candidate=candidate, prompts=prompts)
         model_name = os.environ.get(self.model_name_env, "").strip() if self.model_name_env else ""
@@ -528,13 +602,13 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
                 {"role": "user", "content": json.dumps(payload)},
             ],
         }
+        headers = {"Content-Type": "application/json"}
+        if api_key:
+            headers["Authorization"] = f"Bearer {api_key}"
         req = request.Request(
             endpoint,
             data=json.dumps(request_body).encode("utf-8"),
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {api_key}",
-            },
+            headers=headers,
             method="POST",
         )
         try:

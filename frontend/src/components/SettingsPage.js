@@ -55,10 +55,10 @@ const EMPTY_PROMPT_SETTINGS = {
   anomaly_behaviors: [],
 };
 const SETTINGS_TABS = [
+  { key: 'monitoring', label: 'Monitor Run' },
   { key: 'sources', label: 'Sources' },
   { key: 'model-library', label: 'Model Library' },
   { key: 'appearance', label: 'Appearance' },
-  { key: 'monitoring', label: 'Monitoring' },
   { key: 'initialization', label: 'Initialization' },
 ];
 const STANDALONE_PAGE_TABS = [
@@ -110,6 +110,33 @@ const normalizeRepoConnectorZooPayload = (payload) => ({
   from_cache: Boolean(payload?.from_cache),
   connectors: Array.isArray(payload?.connectors) ? payload.connectors : [],
 });
+
+const resolveApiErrorMessage = (payload, fallbackMessage) => {
+  if (typeof payload?.detail === 'string' && payload.detail.trim()) {
+    return payload.detail;
+  }
+  if (typeof payload?.detail?.message === 'string' && payload.detail.message.trim()) {
+    return payload.detail.message;
+  }
+  if (typeof payload?.message === 'string' && payload.message.trim()) {
+    return payload.message;
+  }
+  return fallbackMessage;
+};
+
+const normalizeMountedModelConflict = (payload) => {
+  const detail = payload?.detail;
+  if (!detail || typeof detail !== 'object' || !detail.requires_force) {
+    return null;
+  }
+  return {
+    message: resolveApiErrorMessage(payload, 'Mounted models are currently in use.'),
+    active_run: Boolean(detail.active_run),
+    in_use_models: detail.in_use_models && typeof detail.in_use_models === 'object'
+      ? detail.in_use_models
+      : {},
+  };
+};
 
 const createSourceDraft = (kind = 'camera_url') => ({
   clientKey: `settings-source-${Date.now()}-${Math.random().toString(16).slice(2)}`,
@@ -543,7 +570,7 @@ const SettingsPage = ({
   forcedTab = null,
   hideTabBar = false,
   pageTitle = 'Settings',
-  pageSubtitle = 'Configure sources, run control, monitoring, and repository initialization from one workspace.',
+  pageSubtitle = 'Configure monitor run, sources, models, and repository initialization from one workspace.',
   themeOptions = [],
   currentThemeKey = 'fidelity-light',
   appearanceLoaded = false,
@@ -621,6 +648,7 @@ const SettingsPage = ({
   const [appearanceMessage, setAppearanceMessage] = useState(null);
   const [goveeDiscoveryResults, setGoveeDiscoveryResults] = useState({});
   const [goveeDiscoveryMessages, setGoveeDiscoveryMessages] = useState({});
+  const [mountedModelConflict, setMountedModelConflict] = useState(null);
   const rawRequestedTab = forcedTab || searchParams.get('tab');
   const requestedTab = rawRequestedTab === 'run' ? 'monitoring' : rawRequestedTab;
   const allowedTabs = forcedTab ? [...SETTINGS_TABS, ...STANDALONE_PAGE_TABS] : SETTINGS_TABS;
@@ -637,7 +665,7 @@ const SettingsPage = ({
       return;
     }
     if (!requestedTab || !SETTINGS_TABS.some((tab) => tab.key === requestedTab)) {
-      setSearchParams({ tab: 'sources' }, { replace: true });
+      setSearchParams({ tab: 'monitoring' }, { replace: true });
     }
   }, [forcedTab, rawRequestedTab, requestedTab, setSearchParams]);
 
@@ -1328,7 +1356,12 @@ const SettingsPage = ({
         },
         body: JSON.stringify(payload),
       });
-      const data = await response.json();
+      let data = {};
+      try {
+        data = await response.json();
+      } catch (error) {
+        data = {};
+      }
       if (!response.ok) {
         throw new Error(data.detail || 'Failed to save default model bindings');
       }
@@ -1494,14 +1527,14 @@ const SettingsPage = ({
     }));
   };
 
-  const saveMountedModels = async () => {
+  const saveMountedModels = async ({ force = false } = {}) => {
     setIsSavingMountedModels(true);
     try {
       const payload = MODEL_STAGE_OPTIONS.map((option) => ({
         stage: option.stage,
         mounted_model_keys: mountedModels[option.stage] || [],
       }));
-      const response = await fetch(`${BaseURL}/mounted-models`, {
+      const response = await fetch(`${BaseURL}/mounted-models${force ? '?force=true' : ''}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
@@ -1510,8 +1543,14 @@ const SettingsPage = ({
       });
       const data = await response.json();
       if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save mounted models');
+        const conflict = normalizeMountedModelConflict(data);
+        if (conflict) {
+          setMountedModelConflict(conflict);
+          return;
+        }
+        throw new Error(resolveApiErrorMessage(data, 'Failed to save mounted models'));
       }
+      setMountedModelConflict(null);
       const nextMounted = {};
       (data || []).forEach((entry) => {
         nextMounted[entry.stage] = entry.mounted_model_keys || [];
@@ -1524,6 +1563,11 @@ const SettingsPage = ({
     } finally {
       setIsSavingMountedModels(false);
     }
+  };
+
+  const confirmForcedMountedModelSave = async () => {
+    setMountedModelConflict(null);
+    await saveMountedModels({ force: true });
   };
 
   const handleUpload = async (clientKey, file) => {
@@ -2060,6 +2104,9 @@ const SettingsPage = ({
     : mountedModelChanges.removed > 0
       ? 'Dismounting models...'
       : 'Mounting models...';
+  const mountedModelConflictEntries = mountedModelConflict
+    ? Object.entries(mountedModelConflict.in_use_models || {})
+    : [];
   const getProcessingRateGuidance = (option) => {
     if (option.stage === 'detector') {
       return option.requires_gpu ? 'Moderate' : 'Heavy';
@@ -2104,6 +2151,61 @@ const SettingsPage = ({
 
   return (
     <div className="settings-container">
+      {mountedModelConflict && (
+        <div className="settings-modal-backdrop" role="presentation">
+          <div
+            className="settings-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="mounted-model-conflict-title"
+          >
+            <div className="settings-modal-header">
+              <div>
+                <h3 id="mounted-model-conflict-title">Models Currently In Use</h3>
+                <p className="settings-modal-subtitle">
+                  {mountedModelConflict.active_run
+                    ? 'Removing these models will stop the current run and clear any bindings that still point at them.'
+                    : 'Removing these models will clear any default or camera bindings that still point at them.'}
+                </p>
+              </div>
+            </div>
+            <div className="settings-modal-body">
+              <p>{mountedModelConflict.message}</p>
+              {mountedModelConflictEntries.length > 0 && (
+                <div className="settings-modal-section">
+                  <span className="settings-modal-label">Models to remove</span>
+                  <ul className="settings-modal-list">
+                    {mountedModelConflictEntries.map(([stage, modelKeys]) => (
+                      <li key={`mounted-model-conflict-${stage}`}>
+                        <strong>{MODEL_STAGE_OPTIONS.find((option) => option.stage === stage)?.label || stage}</strong>
+                        <span>{Array.isArray(modelKeys) ? modelKeys.join(', ') : String(modelKeys)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+            </div>
+            <div className="control-actions settings-modal-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => setMountedModelConflict(null)}
+                disabled={isSavingMountedModels}
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="stop-button"
+                onClick={confirmForcedMountedModelSave}
+                disabled={isSavingMountedModels}
+              >
+                {isSavingMountedModels ? 'Stopping and Removing...' : 'Stop and Remove Models'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="settings-content">
         <div className="panel-header">
           <div>
@@ -2356,33 +2458,41 @@ const SettingsPage = ({
                         {anomalyItems.length === 0 ? (
                           <div className="empty-state">No anomaly items configured yet.</div>
                         ) : (
-                          <div className="source-list">
-                            {anomalyItems.map((item, index) => (
-                              <div key={item.clientKey} className="source-row">
-                                <div className="source-row-header">
-                                  <strong>Item {index + 1}</strong>
+                          <>
+                            <div className="anomaly-item-list">
+                              {anomalyItems.map((item, index) => (
+                                <div key={item.clientKey} className="anomaly-item-row">
+                                  <span className="anomaly-item-index">{index + 1}</span>
+                                  <input
+                                    type="text"
+                                    value={item.item}
+                                    onChange={(event) => setAnomalyItemField(item.clientKey, 'item', event.target.value)}
+                                    placeholder="weapon"
+                                    className="anomaly-item-input"
+                                    aria-label={`Anomaly item ${index + 1}`}
+                                  />
                                   <button
                                     type="button"
                                     onClick={() => removeAnomalyItem(item.clientKey)}
-                                    className="ghost-button"
+                                    className="anomaly-item-remove"
+                                    aria-label={`Remove anomaly item ${index + 1}`}
+                                    title="Remove anomaly item"
                                   >
-                                    Remove
+                                    ×
                                   </button>
                                 </div>
-                                <div className="model-binding-grid">
-                                  <label>
-                                    <span>Item</span>
-                                    <input
-                                      type="text"
-                                      value={item.item}
-                                      onChange={(event) => setAnomalyItemField(item.clientKey, 'item', event.target.value)}
-                                      placeholder="weapon"
-                                    />
-                                  </label>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
+                              ))}
+                            </div>
+                            <div className="compact-list-actions">
+                              <button
+                                type="button"
+                                onClick={addAnomalyItem}
+                                className="secondary-button"
+                              >
+                                Add Item
+                              </button>
+                            </div>
+                          </>
                         )}
                       </div>
 
@@ -2400,31 +2510,41 @@ const SettingsPage = ({
                         {anomalyBehaviors.length === 0 ? (
                           <div className="empty-state">No anomaly behaviors configured yet.</div>
                         ) : (
-                          <div className="source-list">
-                            {anomalyBehaviors.map((behavior, index) => (
-                              <div key={behavior.clientKey} className="source-row">
-                                <div className="source-row-header">
-                                  <strong>Behavior {index + 1}</strong>
-                                  <button
-                                    type="button"
-                                    onClick={() => removeAnomalyBehavior(behavior.clientKey)}
-                                    className="ghost-button"
-                                  >
-                                    Remove
-                                  </button>
-                                </div>
-                                <label>
-                                  <span>Name</span>
+                          <>
+                            <div className="anomaly-item-list">
+                              {anomalyBehaviors.map((behavior, index) => (
+                                <div key={behavior.clientKey} className="anomaly-item-row">
+                                  <span className="anomaly-item-index">{index + 1}</span>
                                   <input
                                     type="text"
                                     value={behavior.value}
                                     onChange={(event) => setAnomalyBehaviorField(behavior.clientKey, event.target.value)}
                                     placeholder="running away"
+                                    className="anomaly-item-input"
+                                    aria-label={`Anomaly behavior ${index + 1}`}
                                   />
-                                </label>
-                              </div>
-                            ))}
-                          </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => removeAnomalyBehavior(behavior.clientKey)}
+                                    className="anomaly-item-remove"
+                                    aria-label={`Remove anomaly behavior ${index + 1}`}
+                                    title="Remove anomaly behavior"
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                              ))}
+                            </div>
+                            <div className="compact-list-actions">
+                              <button
+                                type="button"
+                                onClick={addAnomalyBehavior}
+                                className="secondary-button"
+                              >
+                                Add Behavior
+                              </button>
+                            </div>
+                          </>
                         )}
                       </div>
                     </div>
@@ -2549,16 +2669,38 @@ const SettingsPage = ({
                                 <div className="model-library-grid">
                                   {visibleOptions.map((option) => {
                                     const isMounted = mountedKeys.has(option.model_key);
+                                    const detectorClasses = getModelClasses(option);
+                                    const runtimeTargets = getRuntimeTargets(option);
+                                    const backend = option.runtime?.backend || option.runtime?.tracker_name || option.runtime?.person_strategy || option.runtime?.package || null;
+                                    const canToggle = !isMounted || isExpanded;
                                     return (
-                                      <label key={`mounted-option-${option.model_key}`} className="model-mount-toggle">
+                                      <label
+                                        key={`mounted-option-${option.model_key}`}
+                                        className={`model-mount-toggle ${isMounted && !isExpanded ? 'model-mount-toggle-locked' : ''}`}
+                                      >
                                         <input
                                           type="checkbox"
                                           checked={isMounted}
+                                          disabled={!canToggle}
                                           onChange={(event) => toggleMountedModel(stage.stage, option.model_key, event.target.checked)}
+                                          title={!canToggle ? 'Expand this stage to unmount a model that is currently mounted.' : undefined}
                                         />
-                                        <span>
-                                          {option.display_name || option.model_key}
-                                          {isMounted ? ' · Mounted' : ' · Available'}
+                                        <span className="model-mount-toggle-body">
+                                          <span className="model-mount-toggle-title">
+                                            {option.display_name || option.model_key}
+                                            {isMounted ? ' · Mounted' : ' · Available'}
+                                          </span>
+                                          {isExpanded && (
+                                            <span className="model-mount-toggle-meta">
+                                              <span>{describeModelFit(option)}</span>
+                                              <span>Runs on: {runtimeTargets.length > 0 ? runtimeTargets.join(', ') : (option.requires_gpu ? 'CUDA' : 'CPU or CUDA')}</span>
+                                              <span>Backend: {backend || 'catalog entry'}</span>
+                                              <span>Rate: {getProcessingRateGuidance(option)}</span>
+                                              {option.stage === 'detector' && detectorClasses.length > 0 && (
+                                                <span>Classes: {formatDetectorClassSummary(detectorClasses)}</span>
+                                              )}
+                                            </span>
+                                          )}
                                         </span>
                                       </label>
                                     );

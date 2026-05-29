@@ -118,42 +118,42 @@ const ModelLogsPage = () => {
       <section className="control-column">
         <div>
           <div className="card">
-            <div className="card-header">
-              <div>
+            <div className="card-header model-log-filter-toolbar">
+              <div className="model-log-filter-copy">
                 <h3>Filters</h3>
                 <p>Filter by model stage, camera, or result text.</p>
               </div>
-            </div>
-            <div className="model-binding-grid">
-              <label>
-                <span>Model Type</span>
-                <select value={filters.stage} onChange={(event) => updateFilter('stage', event.target.value)}>
-                  <option value="">All model types</option>
-                  {Object.entries(STAGE_LABELS).map(([stage, label]) => (
-                    <option key={stage} value={stage}>{label}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Camera</span>
-                <select value={filters.source_id} onChange={(event) => updateFilter('source_id', event.target.value)}>
-                  <option value="">All cameras</option>
-                  {sources.map((source) => (
-                    <option key={source.id} value={source.id}>
-                      {source.label || `Source ${source.id}`}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                <span>Results</span>
-                <input
-                  type="text"
-                  value={filters.result_query}
-                  onChange={(event) => updateFilter('result_query', event.target.value)}
-                  placeholder="Search summaries, models, or cameras"
-                />
-              </label>
+              <div className="model-log-filter-row">
+                <label className="model-log-filter-field">
+                  <span>Model Type</span>
+                  <select value={filters.stage} onChange={(event) => updateFilter('stage', event.target.value)}>
+                    <option value="">All model types</option>
+                    {Object.entries(STAGE_LABELS).map(([stage, label]) => (
+                      <option key={stage} value={stage}>{label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="model-log-filter-field">
+                  <span>Camera</span>
+                  <select value={filters.source_id} onChange={(event) => updateFilter('source_id', event.target.value)}>
+                    <option value="">All cameras</option>
+                    {sources.map((source) => (
+                      <option key={source.id} value={source.id}>
+                        {source.label || `Source ${source.id}`}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="model-log-filter-field model-log-filter-field-search">
+                  <span>Results</span>
+                  <input
+                    type="text"
+                    value={filters.result_query}
+                    onChange={(event) => updateFilter('result_query', event.target.value)}
+                    placeholder="Search summaries, models, or cameras"
+                  />
+                </label>
+              </div>
             </div>
           </div>
 

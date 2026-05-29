@@ -866,15 +866,32 @@ class DatabaseWorker:
         self.create(camera)
 
     def publish_run(self, run: DataModels.Run):
-        run = SQLModels.Run(
+        existing = (
+            self.db.query(SQLModels.Run)
+            .filter_by(run_identifier=run.run_identifier, is_deleted=False)
+            .first()
+        )
+        if existing is not None:
+            if run.start_timestamp is not None and existing.start_timestamp is None:
+                existing.start_timestamp = run.start_timestamp
+            if run.start_datetime is not None and existing.start_datetime is None:
+                existing.start_datetime = run.start_datetime
+            if run.output_dir and not existing.output_dir:
+                existing.output_dir = run.output_dir
+            updated = self.update(existing)
+            assert updated is not None, "failed to update existing run"
+            DatabaseWorker.run_id = updated.id
+            return
+
+        run_row = SQLModels.Run(
             run_identifier=run.run_identifier,
             start_timestamp=run.start_timestamp,
             start_datetime=run.start_datetime,
             output_dir=run.output_dir,
         )
-        run = self.create(run)
-        assert run is not None, "failed to create run"
-        DatabaseWorker.run_id = run.id
+        run_row = self.create(run_row)
+        assert run_row is not None, "failed to create run"
+        DatabaseWorker.run_id = run_row.id
 
     def create_bag(self, id: int):
         bag = SQLModels.Bag(id=id, run_id=DatabaseWorker.run_id)

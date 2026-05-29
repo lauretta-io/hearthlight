@@ -507,6 +507,8 @@ def build_model_display_name(stage: str, model_key: str, registration: dict[str,
             return "Claude-Compatible Anomaly API"
         if adapter == "openai_compatible_stage_2":
             provider = str(runtime.get("provider") or "").strip().lower()
+            if provider == "lm_studio":
+                return "LM Studio"
             if provider == "lauretta":
                 return "Lauretta API"
             if provider == "openai":

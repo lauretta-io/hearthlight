@@ -42,6 +42,10 @@ class OnboardingTests(unittest.TestCase):
                 "test-key",
                 "--openai-model-name",
                 "gpt-5.4-mini",
+                "--lm-studio-api-base-url",
+                "http://localhost:1234/v1",
+                "--lm-studio-model-name",
+                "qwen3-local",
             ]
         )
         self.assertEqual(args.command, "onboard")
@@ -52,6 +56,8 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(args.mount_model, ["chatgpt_api_stage_2"])
         self.assertEqual(args.openai_api_key, "test-key")
         self.assertEqual(args.openai_model_name, "gpt-5.4-mini")
+        self.assertEqual(args.lm_studio_api_base_url, "http://localhost:1234/v1")
+        self.assertEqual(args.lm_studio_model_name, "qwen3-local")
 
     def test_detect_system_package_plan_for_apt(self):
         with (
@@ -227,6 +233,35 @@ class OnboardingTests(unittest.TestCase):
                 "LAURETTA_API_KEY": "lauretta-test",
                 "LAURETTA_API_BASE_URL": "https://api.lauretta.test/v1",
                 "LAURETTA_MODEL_NAME": "lauretta-anomaly-stage-2",
+            },
+        )
+
+    def test_configure_selected_lm_studio_env_uses_defaults_without_api_key(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            workspace = Path(temp_dir)
+            (workspace / ".env").write_text("")
+            updates = configure_selected_third_party_model_env(
+                workspace,
+                {"anomaly_stage_2": ["lm_studio_stage_2"]},
+                SimpleNamespace(
+                    yes=True,
+                    openai_api_key="",
+                    openai_model_name="",
+                    anthropic_api_key="",
+                    anthropic_model_name="",
+                    lm_studio_api_key="",
+                    lm_studio_api_base_url="",
+                    lm_studio_model_name="",
+                    lauretta_api_key="",
+                    lauretta_api_base_url="",
+                    lauretta_model_name="",
+                ),
+            )
+        self.assertEqual(
+            updates,
+            {
+                "LM_STUDIO_API_BASE_URL": "http://localhost:1234/v1",
+                "LM_STUDIO_MODEL_NAME": "local-model",
             },
         )
 

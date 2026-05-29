@@ -102,7 +102,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     <div className={embedded ? 'monitor-shell monitor-shell-embedded' : 'monitor-shell'}>
       <div className="monitor-header">
         <div>
-          <h2>Monitoring</h2>
+          <h2>Monitor Run</h2>
           <p className="monitor-subtitle">
             Observe live orchestration state and publish stable feed endpoints for downstream systems.
           </p>
