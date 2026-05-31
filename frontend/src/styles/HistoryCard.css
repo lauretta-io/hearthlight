@@ -41,6 +41,20 @@
   margin-top: 20px;
 }
 
+.history-connector-panel {
+  margin-top: 20px;
+  padding: 18px 20px;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-soft);
+  text-align: left;
+}
+
+.history-connector-panel p {
+  margin: 0;
+  color: var(--color-text);
+}
+
 .history-card {
   width: 100%;
   max-width: 800px;
@@ -203,6 +217,15 @@
   border-radius: 6px;
   overflow: hidden;
   box-shadow: 0 2px 8px var(--color-shadow);
+}
+
+.history-detail-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 70vh;
+  object-fit: contain;
+  background: var(--color-bg-card-strong);
 }
 
 /* Empty state message */

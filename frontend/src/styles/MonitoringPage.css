@@ -77,6 +77,12 @@
   color: var(--color-danger-text);
 }
 
+.monitor-alert-info {
+  background: var(--color-info-bg);
+  border: 1px solid color-mix(in srgb, var(--color-info-text) 18%, var(--color-info-bg) 82%);
+  color: var(--color-info-text);
+}
+
 .monitor-summary-grid,
 .monitor-grid {
   display: grid;
@@ -142,6 +148,7 @@
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .monitor-pill {

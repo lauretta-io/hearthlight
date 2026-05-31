@@ -55,11 +55,13 @@ class IncidentUpdate(BaseModel):
 
 
 class IncidentCard(BaseModel):
+    run_identifier: Optional[str] = None
     incident_id: str
     incident_type: str
     display_title: Optional[str] = None
     alert_level: Optional[str] = None
     metadata: Optional[dict] = None
+    delivery_summary: Optional[str] = None
     incident_time: str
     status: str
     location: Location
@@ -105,11 +107,15 @@ class AssociatedEntity(BaseModel):
 
 
 class Incident(BaseModel):
+    run_identifier: Optional[str] = None
     incident_id: str
     incident_type: str
     display_title: Optional[str] = None
     alert_level: Optional[str] = None
     metadata: Optional[dict] = None
+    delivery_summary: Optional[str] = None
+    media_type: Optional[str] = None
+    media_event_id: Optional[str] = None
     incident_time: str
     status: str
     location: Location

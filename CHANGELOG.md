@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.1 - 2026-05-31
+
+- finalized the operator workflow refresh across Monitoring, Rules, Incidents, and Model Logs, including compact rule editors, read-only saved rules with explicit edit mode, richer trigger detail media, and a more stable always-warm UI refresh model
+- expanded connector and trigger delivery behavior so rules can target saved connector endpoints directly, trigger detail pages can show connector delivery outcomes, and the Connector Zoo defaults to the GitHub-backed catalog path
+- hardened anomaly and detector alert handling so detector and anomaly incidents produce clearer titles, model logs persist non-alerting model returns, and alert persistence/filtering works correctly across restarts
+- improved local-runtime operation with hybrid-local-cpu startup fixes, direct local worker health integration, smoother live preview behavior, and source-processing controls that better separate uploaded video from webcam and CCTV handling
+- tightened runtime robustness with bounded queue helpers, file-retention controls, shared frontend polling and SSE coordination, server-side cached operations events, and soak-test harnesses for long-run resource validation
+- repaired several container/runtime packaging issues, including RabbitMQ init behavior, Docker dependency conflicts, and the removal of `reid` from the active Docker stack definition
+
 ## 0.8.0 - 2026-05-15
 
 - bumped the project version to `0.8.0` across the Python package, frontend package metadata, macOS bundle metadata, and FastAPI OpenAPI metadata

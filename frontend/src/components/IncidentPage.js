@@ -4,14 +4,21 @@ import IncidentCard from './IncidentCard';
 import ErrorAlert from './ErrorAlert';
 import LoadingAlert from './LoadingAlert';
 import { BaseURL } from '../config';
+import { subscribeToOperationsEvent } from '../utils/sharedEvents';
+import { subscribeToSharedPoll } from '../utils/sharedPolling';
 
 const FALLBACK_REFRESH_INTERVAL_MS = 15000;
+const ALERT_FILTER_OPTIONS = [
+  { value: 'new_this_run', label: 'New This Run' },
+  { value: 'all', label: 'All Alerts' },
+];
 
 const IncidentPage = () => {
   const [incidents, setIncidents] = useState([]);
   const [anomalies, setAnomalies] = useState([]);
   const [runIdentifiers, setRunIdentifiers] = useState([]);
   const [selectedRunIdentifier, setSelectedRunIdentifier] = useState('');
+  const [alertFilterMode, setAlertFilterMode] = useState('new_this_run');
   const [selectedAnomaly, setSelectedAnomaly] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isLoadingRuns, setIsLoadingRuns] = useState(true);
@@ -92,7 +99,7 @@ const IncidentPage = () => {
   fetchIncidentDataRef.current = async (
     runIdentifier = selectedRunIdentifierRef.current,
   ) => {
-    if (!runIdentifier) {
+    if (!runIdentifier && alertFilterMode !== 'all') {
       setIncidents([]);
       setAnomalies([]);
       setIsLoading(false);
@@ -100,24 +107,25 @@ const IncidentPage = () => {
     }
 
     try {
-      const [incidentResponse, feedResponse] = await Promise.all([
-        fetch(
-          `${BaseURL}/operations/incidents?run_identifier=${runIdentifier}&include_crop=true`,
-        ),
-        fetch(`${BaseURL}/feeds/algorithm?run_identifier=${runIdentifier}&limit=50`),
-      ]);
+      const incidentParams = new URLSearchParams({ include_crop: 'true', filter_mode: alertFilterMode });
+      if (alertFilterMode !== 'all' && runIdentifier) {
+        incidentParams.set('run_identifier', runIdentifier);
+      }
+      const requests = [fetch(`${BaseURL}/operations/incidents?${incidentParams.toString()}`)];
+      if (runIdentifier) {
+        requests.push(fetch(`${BaseURL}/feeds/algorithm?run_identifier=${runIdentifier}&limit=50`));
+      }
+      const [incidentResponse, feedResponse] = await Promise.all(requests);
 
       if (!incidentResponse.ok) {
         throw new Error('Failed to fetch triggers; is the backend running?');
       }
-      if (!feedResponse.ok) {
+      if (feedResponse && !feedResponse.ok) {
         throw new Error('Failed to fetch anomaly events; is the backend running?');
       }
 
-      const [incidentData, feedData] = await Promise.all([
-        incidentResponse.json(),
-        feedResponse.json(),
-      ]);
+      const incidentData = await incidentResponse.json();
+      const feedData = feedResponse ? await feedResponse.json() : { anomalies: [] };
       setIncidents(incidentData);
       setAnomalies(Array.isArray(feedData.anomalies) ? feedData.anomalies : []);
       setError(null);
@@ -129,34 +137,30 @@ const IncidentPage = () => {
   };
 
   useEffect(() => {
-    fetchRunIdentifiersRef.current();
-    const intervalId = setInterval(
-      () => fetchRunIdentifiersRef.current(),
+    const unsubscribe = subscribeToSharedPoll(
+      'incident-runs',
       FALLBACK_REFRESH_INTERVAL_MS,
+      () => fetchRunIdentifiersRef.current(),
+      { runImmediately: true },
     );
-    return () => clearInterval(intervalId);
+    return () => unsubscribe();
   }, []);
 
   useEffect(() => {
-    fetchIncidentDataRef.current(selectedRunIdentifier);
-    const intervalId = setInterval(
-      () => fetchIncidentDataRef.current(selectedRunIdentifier),
+    const unsubscribe = subscribeToSharedPoll(
+      'incident-data',
       FALLBACK_REFRESH_INTERVAL_MS,
+      () => fetchIncidentDataRef.current(selectedRunIdentifier),
+      { runImmediately: true },
     );
-    return () => clearInterval(intervalId);
-  }, [selectedRunIdentifier]);
+    return () => unsubscribe();
+  }, [selectedRunIdentifier, alertFilterMode]);
 
   useEffect(() => {
     setSelectedAnomaly(null);
   }, [selectedRunIdentifier]);
 
   useEffect(() => {
-    if (typeof EventSource === 'undefined') {
-      return undefined;
-    }
-
-    const eventSource = new EventSource(`${BaseURL}/operations/events`);
-
     const refreshRuns = () => {
       fetchRunIdentifiersRef.current();
     };
@@ -168,14 +172,16 @@ const IncidentPage = () => {
       refreshIncidentData();
     };
 
-    eventSource.addEventListener('snapshot', refreshAll);
-    eventSource.addEventListener('runs.updated', refreshRuns);
-    eventSource.addEventListener('incidents.updated', refreshIncidentData);
-    eventSource.addEventListener('anomalies.updated', refreshIncidentData);
-    eventSource.onerror = () => {};
+    const unsubscribeSnapshot = subscribeToOperationsEvent('snapshot', refreshAll);
+    const unsubscribeRuns = subscribeToOperationsEvent('runs.updated', refreshRuns);
+    const unsubscribeIncidents = subscribeToOperationsEvent('incidents.updated', refreshIncidentData);
+    const unsubscribeAnomalies = subscribeToOperationsEvent('anomalies.updated', refreshIncidentData);
 
     return () => {
-      eventSource.close();
+      unsubscribeSnapshot();
+      unsubscribeRuns();
+      unsubscribeIncidents();
+      unsubscribeAnomalies();
     };
   }, []);
 
@@ -211,6 +217,18 @@ const IncidentPage = () => {
             </select>
           </div>
         ) : null}
+        <div className="run-selector">
+          <label htmlFor="alert-filter-select">Alert View:</label>
+          <select
+            id="alert-filter-select"
+            value={alertFilterMode}
+            onChange={(event) => setAlertFilterMode(event.target.value)}
+          >
+            {ALERT_FILTER_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {runIdentifiers.length === 0 ? (
@@ -232,15 +250,16 @@ const IncidentPage = () => {
             </div>
             {incidents.length === 0 ? (
               <div className="empty-state compact-empty-state">
-                No trigger records found for this run.
+                {alertFilterMode === 'all'
+                  ? 'No persisted alerts have been recorded yet.'
+                  : 'No trigger records found for this run.'}
               </div>
             ) : (
               <div className="incidents-list">
-                {incidents.slice().reverse().map((incident) => (
+                {incidents.map((incident) => (
                   <IncidentCard
                     key={incident.incident_id}
                     incident={incident}
-                    includeResolve
                   />
                 ))}
               </div>
@@ -266,7 +285,7 @@ const IncidentPage = () => {
                     onClick={() => setSelectedAnomaly(anomaly)}
                   >
                     <div>
-                      <strong>{anomaly.category}</strong>
+                      <strong>{getAnomalyTitle(anomaly)}</strong>
                       <div className="incident-anomaly-meta">
                         {formatAnomalyTime(anomaly.event_time)}
                         {' · '}

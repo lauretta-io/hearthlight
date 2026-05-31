@@ -13,6 +13,7 @@ from threading import Thread
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
+from .connector_delivery_log import record_connector_delivery_event
 from .connector_endpoints import (
     CONNECTOR_KEY_TELEGRAM,
     ensure_connector_endpoint_tables,
@@ -268,6 +269,8 @@ def queue_telegram_trigger_notifications(
     subscription_rows: list,
     *,
     trigger_text: str,
+    trigger_id: str | None = None,
+    trigger_type: str | None = None,
     media: dict | None = None,
 ) -> None:
     if not subscription_rows:
@@ -275,11 +278,37 @@ def queue_telegram_trigger_notifications(
 
     def worker() -> None:
         try:
-            deliver_telegram_trigger_notifications(
+            errors = deliver_telegram_trigger_notifications(
                 subscription_rows,
                 trigger_text=trigger_text,
                 media=media,
             )
+            failed_labels = {
+                error_entry.split(":", 1)[0].strip()
+                for error_entry in errors
+                if ":" in error_entry
+            }
+            for row in subscription_rows:
+                normalized = _normalize_subscription_row(row)
+                label = normalized["subscription_label"] or normalized["chat_id"] or "Telegram"
+                if label in failed_labels:
+                    record_connector_delivery_event(
+                        connector_key=CONNECTOR_KEY_TELEGRAM,
+                        connector_label=label,
+                        status="error",
+                        trigger_id=trigger_id,
+                        trigger_type=trigger_type,
+                        message=f"{label} delivery failed",
+                    )
+                else:
+                    record_connector_delivery_event(
+                        connector_key=CONNECTOR_KEY_TELEGRAM,
+                        connector_label=label,
+                        status="sent",
+                        trigger_id=trigger_id,
+                        trigger_type=trigger_type,
+                        message=f"{label} telegram message sent",
+                    )
         except Exception:
             logger.exception("Failed to dispatch Telegram trigger notifications")
 

@@ -102,10 +102,14 @@ def resolve_local_worker_env(root_dir: Path = ROOT_DIR) -> dict[str, str]:
     rabbit_host = env.get("RABBITMQ_HOST", "").strip().lower()
     rabbit_port = env.get("RABBITMQ_PORT", "").strip()
     rabbit_host_port = env.get("RABBITMQ_HOST_PORT", "").strip()
+    rewrote_rabbit_host = False
     if rabbit_host in {"", "rabbitmq"}:
         env["RABBITMQ_HOST"] = DEFAULT_RABBIT_HOST
+        rewrote_rabbit_host = True
     if rabbit_host_port:
         env["RABBITMQ_PORT"] = rabbit_host_port
+    elif rewrote_rabbit_host and (not rabbit_port or rabbit_port == "5672"):
+        env["RABBITMQ_PORT"] = DEFAULT_RABBIT_PORT
     elif not rabbit_port:
         env["RABBITMQ_PORT"] = DEFAULT_RABBIT_PORT
 
@@ -208,7 +212,6 @@ def compose_status(root_dir: Path = ROOT_DIR, use_cuda: bool = False) -> int:
         "rabbitmq",
         "webapp",
         "ingestor",
-        "reid",
         "association",
         "anomaly",
     ]

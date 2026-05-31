@@ -1,4 +1,5 @@
 import os
+import queue
 import sys
 import tempfile
 import unittest
@@ -26,6 +27,7 @@ from shared.utils.input_sources import (
     derive_source_error,
     derive_upload_lifecycle_state,
     format_supported_video_extensions,
+    normalize_frame_processing_settings,
     probe_source_connection,
     validate_uploaded_video_file,
 )
@@ -34,6 +36,7 @@ from shared.utils.logger import (
     get_run_log_dir,
     set_bootstrap_logging,
 )
+from shared.utils.file_retention import directory_size_bytes, prune_directory_files
 from shared.utils.local_worker_runtime import (
     WORKER_RUNTIME_DOCKER,
     WORKER_RUNTIME_HYBRID_LOCAL_CPU,
@@ -48,6 +51,7 @@ from shared.utils.monitoring_feed import (
     parse_serialized_json,
 )
 from shared.utils.resource_monitor import collect_resource_snapshot, evaluate_admission
+from shared.utils.queueing import DROP_NEWEST, bounded_put
 from shared.utils.resource_drift import build_resource_drift
 from shared.utils.runtime_guard import (
     get_dead_thread_names,
@@ -423,6 +427,9 @@ class InputSourceUtilsTests(unittest.TestCase):
                 kind="camera_url",
                 source_value="rtsp://north",
                 upload_id=None,
+                frame_processing_mode="target_frame_rate",
+                target_frame_rate=6.0,
+                process_every_n_frames=1,
             ),
             SimpleNamespace(
                 id=11,
@@ -431,6 +438,9 @@ class InputSourceUtilsTests(unittest.TestCase):
                 kind="video_upload",
                 source_value=None,
                 upload_id=7,
+                frame_processing_mode="target_frame_rate",
+                target_frame_rate=4.0,
+                process_every_n_frames=3,
             ),
         ]
 
@@ -438,8 +448,29 @@ class InputSourceUtilsTests(unittest.TestCase):
 
         self.assertEqual(camera_map[0]["source"], "rtsp://north")
         self.assertEqual(camera_map[0]["source_template_id"], 10)
+        self.assertEqual(camera_map[0]["frame_processing_mode"], "target_frame_rate")
+        self.assertEqual(camera_map[0]["target_frame_rate"], 6.0)
         self.assertEqual(camera_map[1]["source"], "/tmp/clip.mp4")
         self.assertEqual(camera_map[1]["upload_id"], 7)
+        self.assertEqual(camera_map[1]["frame_processing_mode"], "frame_skip")
+        self.assertIsNone(camera_map[1]["target_frame_rate"])
+        self.assertEqual(camera_map[1]["process_every_n_frames"], 3)
+
+    def test_normalize_frame_processing_settings_forces_uploaded_video_to_frame_skip(self):
+        normalized = normalize_frame_processing_settings(
+            kind="video_upload",
+            frame_processing_mode="target_frame_rate",
+            process_every_n_frames=4,
+            target_frame_rate=2.5,
+        )
+        self.assertEqual(
+            normalized,
+            {
+                "frame_processing_mode": "frame_skip",
+                "process_every_n_frames": 4,
+                "target_frame_rate": None,
+            },
+        )
 
     def test_derive_upload_lifecycle_state_prioritizes_active_and_deleted(self):
         self.assertEqual(
@@ -613,6 +644,7 @@ class ResourceMonitorTests(unittest.TestCase):
         self.assertEqual(snapshot["disk_percent"], 25.0)
         self.assertEqual(snapshot["module_status"]["WEBAPP"], "running")
         self.assertEqual(snapshot["module_status"]["INGESTOR"], "idle")
+        self.assertIn("process_python_heap_mb", snapshot)
 
     def test_evaluate_admission_blocks_missing_sources(self):
         admission = evaluate_admission(
@@ -667,6 +699,57 @@ class ResourceMonitorTests(unittest.TestCase):
         )
         self.assertFalse(admission["allowed"])
         self.assertEqual(admission["reason"], "database: connection refused")
+
+
+class QueueingTests(unittest.TestCase):
+    def test_bounded_put_drops_oldest_when_full(self):
+        target_queue = queue.Queue(maxsize=2)
+        target_queue.put_nowait("oldest")
+        target_queue.put_nowait("middle")
+
+        inserted, dropped_existing = bounded_put(target_queue, "newest")
+
+        self.assertTrue(inserted)
+        self.assertTrue(dropped_existing)
+        self.assertEqual(target_queue.get_nowait(), "middle")
+        self.assertEqual(target_queue.get_nowait(), "newest")
+
+    def test_bounded_put_can_drop_newest(self):
+        target_queue = queue.Queue(maxsize=1)
+        target_queue.put_nowait("kept")
+
+        inserted, dropped_existing = bounded_put(
+            target_queue,
+            "discarded",
+            overflow_policy=DROP_NEWEST,
+        )
+
+        self.assertFalse(inserted)
+        self.assertFalse(dropped_existing)
+        self.assertEqual(target_queue.get_nowait(), "kept")
+
+
+class FileRetentionTests(unittest.TestCase):
+    def test_directory_size_bytes_and_prune_directory_files(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            oldest = root / "a.txt"
+            middle = root / "b.txt"
+            newest = root / "c.txt"
+            oldest.write_text("1")
+            middle.write_text("22")
+            newest.write_text("333")
+            os.utime(oldest, (1, 1))
+            os.utime(middle, (2, 2))
+            os.utime(newest, (3, 3))
+
+            self.assertEqual(directory_size_bytes(root), 6)
+            removed = prune_directory_files(root, max_files=2)
+
+            self.assertEqual(removed, 1)
+            self.assertFalse(oldest.exists())
+            self.assertTrue(middle.exists())
+            self.assertTrue(newest.exists())
 
 
 class ResourceDriftTests(unittest.TestCase):
@@ -1200,6 +1283,27 @@ class ModelRegistryTests(unittest.TestCase):
         errors = validate_source_bindings(bundle, source_row, defaults)
 
         self.assertFalse(any("tracker model builtin_bytetrack" in error for error in errors))
+
+    @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
+    def test_validate_source_bindings_allows_missing_detector_model(self):
+        bundle = load_registry_bundle()
+        defaults = build_default_bindings(bundle)
+        defaults[MODEL_STAGE_DETECTOR] = None
+        source_row = SimpleNamespace(
+            id=12,
+            label="Demo Video",
+            kind="video_upload",
+            tasks=["PERSON", "BAG"],
+            detector_model_key=None,
+            tracker_model_key="builtin_bytetrack",
+            reid_model_key="builtin_transreid_person_hybrid_bag",
+            anomaly_stage_1_model_key="heuristic_presence_stage_1",
+            anomaly_stage_2_model_key="prompt_rules_stage_2",
+        )
+
+        errors = validate_source_bindings(bundle, source_row, defaults)
+
+        self.assertEqual(errors, [])
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_build_runtime_binding_block_includes_source_overrides(self):

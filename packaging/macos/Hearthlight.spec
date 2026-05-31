@@ -57,8 +57,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Hearthlight",
         "CFBundleDisplayName": "Hearthlight",
-        "CFBundleShortVersionString": "0.8.0",
-        "CFBundleVersion": "0.8.0",
+        "CFBundleShortVersionString": "0.8.1",
+        "CFBundleVersion": "0.8.1",
         "LSMinimumSystemVersion": "12.0",
         "NSHighResolutionCapable": True,
         "NSHumanReadableCopyright": "Lauretta IO",

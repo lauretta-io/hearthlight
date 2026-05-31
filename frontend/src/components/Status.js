@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BaseURL } from '../config';
+import { subscribeToOperationsEvent } from '../utils/sharedEvents';
+import { subscribeToSharedPoll } from '../utils/sharedPolling';
 
 const formatPercent = (value) => (
   value === null || value === undefined ? 'n/a' : `${value.toFixed(1)}%`
@@ -66,9 +68,23 @@ const Status = () => {
       }
     };
 
-    fetchStatus();
-    const intervalId = window.setInterval(fetchStatus, 1000);
-    return () => window.clearInterval(intervalId);
+    const unsubscribePoll = subscribeToSharedPoll(
+      'status',
+      1000,
+      fetchStatus,
+      { runImmediately: true },
+    );
+    const unsubscribeSnapshot = subscribeToOperationsEvent('snapshot', fetchStatus);
+    const unsubscribeRuns = subscribeToOperationsEvent('runs.updated', fetchStatus);
+    const unsubscribeIncidents = subscribeToOperationsEvent('incidents.updated', fetchStatus);
+    const unsubscribeAnomalies = subscribeToOperationsEvent('anomalies.updated', fetchStatus);
+    return () => {
+      unsubscribePoll();
+      unsubscribeSnapshot();
+      unsubscribeRuns();
+      unsubscribeIncidents();
+      unsubscribeAnomalies();
+    };
   }, []);
 
   const progressValue =

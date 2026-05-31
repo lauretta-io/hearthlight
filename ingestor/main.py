@@ -1,6 +1,7 @@
 import queue
 import time
 import os
+import math
 from threading import Thread
 import logging
 from collections import deque
@@ -19,6 +20,7 @@ from .input_media import MultiCapture, FramesThread
 from ..shared.slave import run_command_listener
 from ..shared.utils.logger import set_bootstrap_logging, set_run_logging
 from ..shared.utils.backpressure import summarize_queue_backpressure
+from ..shared.utils.queueing import DROP_OLDEST, bounded_put
 from ..shared.utils.runtime_guard import (
     get_dead_thread_names,
     get_missing_frame_failure_reason,
@@ -38,6 +40,18 @@ from ..shared.constants import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_process_every_n_frames(camera: dict, *, input_max_fps: float | int | None) -> int:
+    if str(camera.get("source_kind") or "").strip().lower() == "video_upload":
+        return max(1, int(camera.get("process_every_n_frames", 1) or 1))
+    frame_processing_mode = str(camera.get("frame_processing_mode") or "frame_skip").strip().lower()
+    if frame_processing_mode == "target_frame_rate":
+        target_frame_rate = float(camera.get("target_frame_rate") or 0)
+        effective_input_fps = float(input_max_fps or 0)
+        if target_frame_rate > 0 and effective_input_fps > 0:
+            return max(1, int(math.ceil(effective_input_fps / target_frame_rate)))
+    return max(1, int(camera.get("process_every_n_frames", 1) or 1))
 
 
 class Ingestor(Thread):
@@ -71,10 +85,24 @@ class Ingestor(Thread):
             self.frames_thread = FramesThread(self.capture, max_fps=cfg.input.max_fps)
             self.output_thread = OutputThread(cfg, self.capture.cameras)
             self.process_every_n_frames = {
-                cam_id: max(1, int(camera.get("process_every_n_frames", 1) or 1))
+                cam_id: _resolve_process_every_n_frames(
+                    camera,
+                    input_max_fps=cfg.input.max_fps,
+                )
                 for cam_id, camera in cfg.input.cameras.items()
             }
+            self.seen_frame_counts = {cam_id: 0 for cam_id in cfg.input.cameras}
             self.processed_frame_counts = {cam_id: 0 for cam_id in cfg.input.cameras}
+            self.skipped_frame_counts = {cam_id: 0 for cam_id in cfg.input.cameras}
+            self.source_runtime_stats = {
+                cam_id: {
+                    "capture_started_at": time.time(),
+                    "processed_started_at": time.time(),
+                    "last_capture_frame_id": 0,
+                    "last_processed_frame_id": 0,
+                }
+                for cam_id in cfg.input.cameras
+            }
             self.run_info = Run(
                 run_identifier=cfg.run_id,
                 output_dir=cfg.output.output_dir,
@@ -269,6 +297,30 @@ class Ingestor(Thread):
             last_frame_update = self._publish_frame_status_if_due(last_frame_update)
             current_time = time.time()
             if current_time - last_metrics_update > FRAME_UPDATE_INTERVAL:
+                source_runtime_details = {}
+                for cam_id, stats in self.source_runtime_stats.items():
+                    camera_cfg = self.cfg.input.cameras.get(cam_id, {})
+                    capture_elapsed = max(
+                        current_time - float(stats.get("capture_started_at") or current_time),
+                        1e-6,
+                    )
+                    processed_elapsed = max(
+                        current_time - float(stats.get("processed_started_at") or current_time),
+                        1e-6,
+                    )
+                    source_template_id = camera_cfg.get("source_template_id")
+                    if source_template_id is None:
+                        continue
+                    source_runtime_details[str(source_template_id)] = {
+                        "camera_id": cam_id,
+                        "capture_fps": round(self.seen_frame_counts.get(cam_id, 0) / capture_elapsed, 2),
+                        "processed_fps": round(self.processed_frame_counts.get(cam_id, 0) / processed_elapsed, 2),
+                        "processed_frames": self.processed_frame_counts.get(cam_id, 0),
+                        "skipped_frames": self.skipped_frame_counts.get(cam_id, 0),
+                        "process_every_n_frames": self.process_every_n_frames.get(cam_id, 1),
+                        "frame_processing_mode": str(camera_cfg.get("frame_processing_mode") or "frame_skip"),
+                        "source_kind": camera_cfg.get("source_kind"),
+                    }
                 self.status_publisher.publish(
                     StatusMessage(
                         status=Status.INFO,
@@ -276,16 +328,19 @@ class Ingestor(Thread):
                         extra={
                             "queue_depths": {
                                 "frames_thread": self.frames_thread.queue.qsize(),
-                                "output_thread": self.output_thread.queue.qsize(),
                                 "downstream_max": self.output_thread.get_limiting_queue_length(),
+                                **self.output_thread.get_queue_metrics(),
                             },
-                            "backpressure": summarize_queue_backpressure(
-                                {
-                                    "frames_thread": self.frames_thread.queue.qsize(),
-                                    "output_thread": self.output_thread.queue.qsize(),
-                                    "downstream_max": self.output_thread.get_limiting_queue_length(),
-                                }
-                            ),
+                            "backpressure": summarize_queue_backpressure({
+                                "frames_thread": self.frames_thread.queue.qsize(),
+                                "downstream_max": self.output_thread.get_limiting_queue_length(),
+                                **self.output_thread.get_queue_metrics(),
+                            }),
+                            "drop_counts": {
+                                "frames_thread": int(getattr(self.frames_thread, "frames_dropped", 0)),
+                                **self.output_thread.get_drop_metrics(),
+                            },
+                            "sources": source_runtime_details,
                         },
                     )
                 )
@@ -296,11 +351,15 @@ class Ingestor(Thread):
             subset_indexes = []
             for index, frame in enumerate(frames.frames):
                 skip_value = self.process_every_n_frames.get(frame.cam_id, 1)
-                self.processed_frame_counts[frame.cam_id] = self.processed_frame_counts.get(frame.cam_id, 0) + 1
-                if ((self.processed_frame_counts[frame.cam_id] - 1) % skip_value) == 0:
+                self.seen_frame_counts[frame.cam_id] = self.seen_frame_counts.get(frame.cam_id, 0) + 1
+                self.source_runtime_stats[frame.cam_id]["last_capture_frame_id"] = frames.frame_id
+                if ((self.seen_frame_counts[frame.cam_id] - 1) % skip_value) == 0:
+                    self.processed_frame_counts[frame.cam_id] = self.processed_frame_counts.get(frame.cam_id, 0) + 1
+                    self.source_runtime_stats[frame.cam_id]["last_processed_frame_id"] = frames.frame_id
                     frame_subset.append(frame)
                     subset_indexes.append(index)
                 else:
+                    self.skipped_frame_counts[frame.cam_id] = self.skipped_frame_counts.get(frame.cam_id, 0) + 1
                     frame.tracker_inputs = None
                     frame.detections = []
             if frame_subset:
@@ -323,7 +382,18 @@ class Ingestor(Thread):
                 frame.tracker_inputs = subset_tracker_inputs[subset_index]
                 frame.detections = subset_detections[subset_index]
 
-            self.output_thread.queue.put(frames)
+            try:
+                DatabaseWorker().publish_detector_logs(frame_subset, frames.frame_id)
+            except Exception:
+                logger.exception("Failed to publish detector model logs", extra={"task": self.name})
+
+            inserted, dropped_existing = bounded_put(
+                self.output_thread.queue,
+                frames,
+                overflow_policy=DROP_OLDEST,
+            )
+            if dropped_existing or not inserted:
+                self.output_thread.frames_dropped += 1
 
             timer.mark()
             while self.output_thread.get_limiting_queue_length() > 5 and self.process:

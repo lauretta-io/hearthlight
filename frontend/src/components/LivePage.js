@@ -1,6 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BaseURL } from '../config';
+import { subscribeToOperationsEvent } from '../utils/sharedEvents';
+import { subscribeToSharedPoll } from '../utils/sharedPolling';
 import '../styles/LivePage.css';
+
+const REFRESH_INTERVAL_MS = 1500;
 
 const getPreviewUrl = (source) => {
   if (!source.id) {
@@ -29,6 +33,35 @@ const getSourceDescription = (source) => {
   return source.source_value ?? 'n/a';
 };
 
+const areSourcesEquivalent = (left, right) => (
+  left?.id === right?.id
+  && left?.kind === right?.kind
+  && left?.label === right?.label
+  && Boolean(left?.enabled) === Boolean(right?.enabled)
+  && left?.source_value === right?.source_value
+  && left?.upload_id === right?.upload_id
+  && left?.order === right?.order
+  && left?.frame_processing_mode === right?.frame_processing_mode
+  && left?.process_every_n_frames === right?.process_every_n_frames
+  && left?.target_frame_rate === right?.target_frame_rate
+  && left?.detector_model_key === right?.detector_model_key
+  && left?.tracker_model_key === right?.tracker_model_key
+  && left?.anomaly_stage_1_model_key === right?.anomaly_stage_1_model_key
+  && left?.anomaly_stage_2_model_key === right?.anomaly_stage_2_model_key
+  && left?.upload?.original_filename === right?.upload?.original_filename
+);
+
+const mergeSources = (previousSources, nextSources) => {
+  const previousById = new Map(previousSources.map((source) => [source.id, source]));
+  return nextSources.map((source) => {
+    const previous = previousById.get(source.id);
+    if (previous && areSourcesEquivalent(previous, source)) {
+      return previous;
+    }
+    return source;
+  });
+};
+
 const LivePage = () => {
   const [sources, setSources] = useState([]);
   const [error, setError] = useState(null);
@@ -47,8 +80,7 @@ const LivePage = () => {
         if (!active) {
           return;
         }
-        setSources(Array.isArray(data) ? data : []);
-        setPreviewFailures({});
+        setSources((currentSources) => mergeSources(currentSources, Array.isArray(data) ? data : []));
         setError(null);
       } catch (loadError) {
         if (active) {
@@ -57,12 +89,25 @@ const LivePage = () => {
       }
     };
 
-    loadSources();
-    const intervalId = window.setInterval(loadSources, 5000);
+    const unsubscribePoll = subscribeToSharedPoll(
+      'live-sources',
+      REFRESH_INTERVAL_MS,
+      loadSources,
+      { runImmediately: true },
+    );
+    const refreshSources = () => {
+      loadSources();
+    };
+    const unsubscribeSnapshot = subscribeToOperationsEvent('snapshot', refreshSources);
+    const unsubscribeRuns = subscribeToOperationsEvent('runs.updated', refreshSources);
+    const unsubscribeIncidents = subscribeToOperationsEvent('incidents.updated', refreshSources);
 
     return () => {
       active = false;
-      window.clearInterval(intervalId);
+      unsubscribePoll();
+      unsubscribeSnapshot();
+      unsubscribeRuns();
+      unsubscribeIncidents();
     };
   }, []);
 
@@ -87,7 +132,7 @@ const LivePage = () => {
         </div>
         <div className="live-page__meta">
           <span>{liveSources.length} live source{liveSources.length === 1 ? '' : 's'}</span>
-          <span>Auto-refreshes every 5 seconds</span>
+          <span>Warm refreshes in the background</span>
         </div>
       </div>
 
@@ -148,6 +193,15 @@ const LivePage = () => {
 
                 <div className="live-card__details">
                   <span><strong>Source:</strong> {getSourceDescription(source)}</span>
+                  <span>
+                    <strong>Processing:</strong>{' '}
+                    {source.effective_frame_processing_mode === 'target_frame_rate'
+                      ? `Target ${source.target_frame_rate || source.processed_fps || 0} FPS`
+                      : `Every ${source.effective_process_every_n_frames || source.process_every_n_frames || 1} frame(s)`}
+                  </span>
+                  {source.processed_fps ? (
+                    <span><strong>Processed:</strong> {source.processed_fps} FPS</span>
+                  ) : null}
                 </div>
               </article>
             );

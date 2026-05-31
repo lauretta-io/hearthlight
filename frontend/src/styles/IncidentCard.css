@@ -3,9 +3,9 @@
   border: 1px solid var(--color-border);
   border-radius: 6px;
   color: var(--color-text-muted);
-  padding: 18px;
+  padding: 12px 16px;
   cursor: pointer;
-  margin-bottom: 20px;
+  margin-bottom: 0;
   display: flex;
   flex-direction: row;
   align-items: center;
@@ -13,61 +13,70 @@
   background-color: var(--color-bg-soft);
   box-shadow: 0 2px 4px var(--color-shadow-soft);
   transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+  gap: 16px;
 }
 
 .card:hover {
-  transform: translateY(-5px);
-  box-shadow: 0 5px 15px var(--color-shadow);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px var(--color-shadow);
   border-color: var(--color-border-strong);
 }
 
 .card-content {
   display: flex;
-  flex-direction: column;
-  justify-content: center;
+  align-items: center;
+  gap: 14px;
   flex-grow: 1;
-  min-width: 20px;
-  margin-right: 20px;
-  margin-bottom: 10px;
+  min-width: 0;
+  margin-right: 0;
+  margin-bottom: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
-.card p {
-  margin: 5px 0;
-  line-height: 1.4;
-}
-
-.card .status {
-  font-weight: 600;
-  display: inline-block;
-  padding: 3px 8px;
-  border-radius: 4px;
-}
-
-.card .timestamp {
-  color: var(--color-text-soft);
-  font-size: 14px;
-}
-
-.card .camera-id,
-.card .person-id,
-.card .incident-type {
+.incident-cell {
   font-size: 14px;
   color: var(--color-text-muted);
-  display: flex;
-  align-items: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
 }
 
-.card-content p {
-  margin: 5px 0;
-  font-size: 16px;
+.incident-title {
+  flex: 1.8;
+  min-width: 220px;
   color: var(--color-text);
+  font-size: 15px;
+  font-weight: 700;
 }
 
-.card-content p:first-child {
-  font-size: 18px;
-  font-weight: bold;
+.incident-time {
+  flex: 1.2;
+}
+
+.incident-delivery {
+  flex: 1;
+  color: var(--color-brand-secondary-strong, var(--color-text));
+  font-weight: 600;
+}
+
+.incident-camera,
+.incident-id,
+.incident-role {
+  flex: 0.85;
+}
+
+.incident-level {
+  flex: 0 0 auto;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--color-brand-secondary) 16%, transparent);
   color: var(--color-text);
-  margin-bottom: 8px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
 }
 
 .card.resolved {
@@ -75,32 +84,9 @@
   border-color: color-mix(in srgb, var(--color-success-text) 16%, var(--color-border) 84%);
 }
 
-.card .status.resolved {
-  color: var(--color-success-text);
-  background-color: color-mix(in srgb, var(--color-success-bg) 72%, transparent);
-}
-
-.card .status.unresolved {
-  color: var(--color-danger-text);
-  background-color: color-mix(in srgb, var(--color-danger-bg) 72%, transparent);
-}
-
-.card-content .person-info {
-  margin-top: 8px;
-  margin-bottom: 12px;
-  padding-top: 8px;
-  border-top: 1px solid color-mix(in srgb, var(--color-border) 45%, transparent);
-}
-
-.card-content .person-info p {
-  margin: 4px 0;
-  font-size: 14px;
-  color: var(--color-text-muted);
-}
-
 .media-container {
-  width: 150px;
-  margin-left: 20px;
+  width: 74px;
+  margin-left: 0;
   flex-shrink: 0;
   transition: transform 0.2s;
 }
@@ -111,7 +97,7 @@
 
 .image-wrapper {
   width: 100%;
-  padding-top: 100%;
+  padding-top: 70%;
   position: relative;
   border-radius: 6px;
   overflow: hidden;
@@ -188,4 +174,19 @@
   transform: none;
   box-shadow: 0 2px 4px var(--color-shadow-soft);
   border-color: var(--color-border);
+}
+
+@media (max-width: 960px) {
+  .card {
+    align-items: flex-start;
+  }
+
+  .card-content {
+    flex-wrap: wrap;
+    row-gap: 6px;
+  }
+
+  .incident-title {
+    min-width: 180px;
+  }
 }

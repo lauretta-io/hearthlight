@@ -338,7 +338,9 @@ class RemoteAPIMixin(PromptRulesStageTwoAdapter):
         detail = detail.strip()
         if detail:
             base_reasoning = event.reasoning or "Remote anomaly API call failed."
-            event.reasoning = f"{base_reasoning} Remote adapter detail: {detail}"
+            event.reasoning = (
+                f"{base_reasoning} Stage-2 remote model was unavailable, so Hearthlight used the fallback anomaly summary."
+            )
         return event
 
     def _build_request_payload(self, *, candidate: StageOneCandidate, prompts: PromptBundle) -> dict[str, Any]:

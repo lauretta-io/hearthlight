@@ -16,7 +16,7 @@ from .plugin_loader import PLUGIN_MANIFEST_FILENAME, PLUGIN_ROOT, load_plugin_ca
 
 DEFAULT_CONNECTOR_ZOO_CATALOG_URL = (
     str(os.environ.get("HEARTHLIGHT_CONNECTOR_ZOO_CATALOG_URL", "") or "").strip()
-    or (Path(__file__).resolve().parents[1] / "catalogs" / "connector_zoo_repo.yaml").as_uri()
+    or "https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml"
 )
 
 

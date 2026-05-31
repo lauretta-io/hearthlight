@@ -31,7 +31,7 @@ describe('App routing shell', () => {
       render(<App />);
     });
 
-    expect(await screen.findByText('Settings Page Mock')).toBeTruthy();
+    expect((await screen.findAllByText('Settings Page Mock')).length).toBeGreaterThan(0);
     expect(window.location.pathname).toBe('/settings');
     expect(window.location.search).toBe('?tab=monitoring');
 
@@ -48,6 +48,10 @@ describe('App routing shell', () => {
     expect(screen.getByText('Hearthlight')).toBeTruthy();
     expect(screen.getByAltText('Hearthlight logo')).toBeTruthy();
     expect(screen.queryByLabelText('Theme')).toBeNull();
+    expect(screen.getByText('Live Page Mock')).toBeTruthy();
+    expect(screen.getByText('Model Logs Mock')).toBeTruthy();
+    expect(screen.getByText('API Docs Mock')).toBeTruthy();
+    expect(screen.getByText('Triggers Mock')).toBeTruthy();
   });
 
   test('redirects monitoring route into settings monitoring tab', async () => {
@@ -57,7 +61,7 @@ describe('App routing shell', () => {
       render(<App />);
     });
 
-    expect(await screen.findByText('Settings Page Mock')).toBeTruthy();
+    expect((await screen.findAllByText('Settings Page Mock')).length).toBeGreaterThan(0);
     expect(window.location.pathname).toBe('/settings');
     expect(window.location.search).toBe('?tab=monitoring');
   });
@@ -69,7 +73,7 @@ describe('App routing shell', () => {
       render(<App />);
     });
 
-    expect(await screen.findByText('Settings Page Mock')).toBeTruthy();
+    expect((await screen.findAllByText('Settings Page Mock')).length).toBeGreaterThan(0);
     expect(window.location.pathname).toBe('/rules');
   });
 
@@ -80,7 +84,7 @@ describe('App routing shell', () => {
       render(<App />);
     });
 
-    expect(await screen.findByText('Settings Page Mock')).toBeTruthy();
+    expect((await screen.findAllByText('Settings Page Mock')).length).toBeGreaterThan(0);
     expect(window.location.pathname).toBe('/settings');
     expect(window.location.search).toBe('?tab=sources');
   });
@@ -92,7 +96,7 @@ describe('App routing shell', () => {
       render(<App />);
     });
 
-    expect(await screen.findByText('Settings Page Mock')).toBeTruthy();
+    expect((await screen.findAllByText('Settings Page Mock')).length).toBeGreaterThan(0);
     expect(window.location.pathname).toBe('/rules');
   });
 });

@@ -46,11 +46,10 @@ REGISTRY_DIR = ROOT_DIR / "shared" / "configs" / "registries"
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
 CUDA_COMPOSE_PATH = ROOT_DIR / "run" / "docker-compose.cuda.yaml"
 CORE_SERVICES = ["db", "rabbitmq", "webapp", "reverse_proxy"]
-FULL_STACK_SERVICES = CORE_SERVICES + ["ingestor", "reid", "association", "anomaly"]
+FULL_STACK_SERVICES = CORE_SERVICES + ["ingestor", "association", "anomaly"]
 REGISTRY_STAGE_LABELS = {
     "detector": "Detector",
     "tracker": "Tracker",
-    "reid": "Person ReID",
     "anomaly_stage_1": "Heuristic Filter",
     "anomaly_stage_2": "Anomaly Stage 2",
 }
@@ -58,7 +57,6 @@ PUBLISHED_IMAGE_ENV_BY_SERVICE = {
     "rabbitmq": "HEARTHLIGHT_RABBITMQ_IMAGE",
     "webapp": "HEARTHLIGHT_WEBAPP_IMAGE",
     "ingestor": "HEARTHLIGHT_INGESTOR_IMAGE",
-    "reid": "HEARTHLIGHT_REID_IMAGE",
     "association": "HEARTHLIGHT_ASSOCIATION_IMAGE",
     "anomaly": "HEARTHLIGHT_ANOMALY_IMAGE",
 }
@@ -451,6 +449,16 @@ def set_nested_scalar(text: str, path: list[str], key: str, value: str | bool | 
     replacement = " " * (parent_indent + 2) + f"{key}: {_render_yaml_scalar(value)}"
     insert_index = section_end
 
+    def _has_nested_children(start_index: int) -> bool:
+        for nested_index in range(start_index + 1, section_end):
+            nested_raw = lines[nested_index]
+            nested_stripped = nested_raw.strip()
+            if not nested_stripped:
+                continue
+            nested_indent = len(nested_raw) - len(nested_raw.lstrip(" "))
+            return nested_indent > parent_indent + 2
+        return False
+
     for index in range(section_index + 1, section_end):
         raw = lines[index]
         stripped = raw.strip()
@@ -461,7 +469,7 @@ def set_nested_scalar(text: str, path: list[str], key: str, value: str | bool | 
             lines[index] = replacement
             return "\n".join(lines) + "\n"
         if indent == parent_indent + 2:
-            insert_index = index + 1
+            insert_index = index if _has_nested_children(index) else index + 1
 
     lines.insert(insert_index, replacement)
     return "\n".join(lines) + "\n"
@@ -723,7 +731,7 @@ def build_interactive_selection() -> LaunchSelection:
     pose_enabled = prompt_bool("Enable pose estimation", default=current.get("pose_enable", "false").lower() == "true")
     show_video = prompt_bool("Show video windows", default=current.get("show_vid", "true").lower() == "true")
     reload = prompt_bool("Enable reload mode", default=False)
-    skip_reset_db = prompt_bool("Skip reset-db", default=False)
+    reset_database = prompt_bool("Reset database before startup", default=False)
     open_dashboard = prompt_bool("Open dashboard automatically", default=True)
 
     return LaunchSelection(
@@ -744,7 +752,7 @@ def build_interactive_selection() -> LaunchSelection:
         use_cuda=use_cuda,
         cuda_visible_devices=cuda_visible_devices,
         reload=reload,
-        skip_reset_db=skip_reset_db,
+        skip_reset_db=not reset_database,
         open_dashboard=open_dashboard,
     )
 

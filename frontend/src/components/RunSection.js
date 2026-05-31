@@ -1,5 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BaseURL } from '../config';
+import { subscribeToOperationsEvent } from '../utils/sharedEvents';
+import { subscribeToSharedPoll } from '../utils/sharedPolling';
 import {
   formatUploadedVideoSummary,
   SUPPORTED_VIDEO_LABEL,
@@ -187,16 +189,29 @@ const RunSection = ({ embedded = false, pollingEnabled = true, showHeader = true
       }
     };
 
-    loadSources();
-    loadStatus();
-    loadResources();
-
-    const intervalId = window.setInterval(() => {
+    const refreshRunSection = () => {
+      loadSources();
       loadStatus();
       loadResources();
-    }, 2000);
+    };
+    const unsubscribePoll = subscribeToSharedPoll(
+      'run-section',
+      2000,
+      refreshRunSection,
+      { runImmediately: true },
+    );
+    const unsubscribeSnapshot = subscribeToOperationsEvent('snapshot', refreshRunSection);
+    const unsubscribeRuns = subscribeToOperationsEvent('runs.updated', refreshRunSection);
+    const unsubscribeIncidents = subscribeToOperationsEvent('incidents.updated', refreshRunSection);
+    const unsubscribeAnomalies = subscribeToOperationsEvent('anomalies.updated', refreshRunSection);
 
-    return () => window.clearInterval(intervalId);
+    return () => {
+      unsubscribePoll();
+      unsubscribeSnapshot();
+      unsubscribeRuns();
+      unsubscribeIncidents();
+      unsubscribeAnomalies();
+    };
   }, [pollingEnabled]);
 
   const setSourceField = (clientKey, field, value) => {

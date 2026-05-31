@@ -28,6 +28,17 @@ class WebappSecurityTests(unittest.TestCase):
 
         self.assertTrue(webapp_main.request_is_local_only(request))
 
+    def test_request_is_local_only_accepts_localhost_origin_with_127_host(self):
+        request = SimpleNamespace(
+            headers={
+                "host": "127.0.0.1:8000",
+                "origin": "http://localhost:3000",
+            },
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+
+        self.assertTrue(webapp_main.request_is_local_only(request))
+
     def test_request_is_local_only_rejects_remote_hosts(self):
         request = SimpleNamespace(
             headers={
@@ -100,6 +111,27 @@ class WebappSecurityTests(unittest.TestCase):
         request = SimpleNamespace(
             method="GET",
             headers={"host": "localhost:8000"},
+            url=SimpleNamespace(path="/"),
+            client=SimpleNamespace(host="127.0.0.1"),
+        )
+
+        async def call_next(_request):
+            return SimpleNamespace(headers={})
+
+        response = asyncio.run(webapp_main.require_api_key(request, call_next))
+
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+
+    def test_local_requests_work_without_api_key_for_localhost_origin_and_127_host(self):
+        webapp_main.API_KEY = None
+        webapp_main.ALLOW_REMOTE_WITHOUT_API_KEY = False
+
+        request = SimpleNamespace(
+            method="GET",
+            headers={
+                "host": "127.0.0.1:8000",
+                "origin": "http://localhost:3000",
+            },
             url=SimpleNamespace(path="/"),
             client=SimpleNamespace(host="127.0.0.1"),
         )

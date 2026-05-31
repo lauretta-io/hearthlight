@@ -786,6 +786,8 @@ def validate_source_bindings(
     errors = []
     resolved = resolve_bindings_for_source(source_row, defaults)
     for stage, model_key in resolved.items():
+        if stage == MODEL_STAGE_DETECTOR and not model_key:
+            continue
         registration = get_registration(bundle, stage, model_key)
         if registration is None:
             errors.append(f"{source_row.label}: missing {stage} model registration {model_key}")

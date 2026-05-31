@@ -131,7 +131,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         ):
             event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "chatgpt_api_stage_2")
-        self.assertIn("Remote adapter detail", event.reasoning or "")
+        self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")
 
     def test_openai_compatible_adapter_falls_back_on_transport_error(self):
         adapter = OpenAICompatibleStageTwoAdapter(
@@ -150,7 +150,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         ):
             event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
         self.assertEqual(event.category, "loitering")
-        self.assertIn("network down", event.reasoning or "")
+        self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")
 
     def test_lm_studio_adapter_works_without_auth_header(self):
         candidate = replace(self.candidate, stage_2_model_key="lm_studio_stage_2")
@@ -267,7 +267,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True):
             event = adapter.build_event(candidate=candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "claude_api_stage_2")
-        self.assertIn("missing ANTHROPIC_API_KEY", event.reasoning or "")
+        self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")
 
     def test_claude_adapter_parses_remote_json_response_and_model_override(self):
         candidate = replace(self.candidate, stage_2_model_key="claude_api_stage_2")
@@ -336,4 +336,4 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         ):
             event = adapter.build_event(candidate=candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "claude_api_stage_2")
-        self.assertIn("Remote adapter detail", event.reasoning or "")
+        self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")

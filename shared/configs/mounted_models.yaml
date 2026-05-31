@@ -6,6 +6,6 @@ mounted:
   anomaly_stage_1:
   - siglip_stage_1_cpu
   anomaly_stage_2:
-  - lm_studio_stage_2
   - smolvlm_stage_2_cpu
   - smolvlm_stage_2_mlx
+  - lm_studio_stage_2

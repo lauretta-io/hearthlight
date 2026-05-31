@@ -76,7 +76,19 @@ def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--feature-device", help="Feature extractor device override, for example cpu or cuda:0")
     parser.add_argument("--cuda-visible-devices", help="CUDA_VISIBLE_DEVICES value when --profile cuda")
     parser.add_argument("--reload", action="store_true", help="Set RELOAD=1 for compose services")
-    parser.add_argument("--skip-reset-db", action="store_true", help="Skip reset-db before startup")
+    reset_group = parser.add_mutually_exclusive_group()
+    reset_group.add_argument(
+        "--reset-db",
+        dest="skip_reset_db",
+        action="store_false",
+        help="Run reset-db before startup.",
+    )
+    reset_group.add_argument(
+        "--skip-reset-db",
+        dest="skip_reset_db",
+        action="store_true",
+        help="Skip reset-db before startup. This is the default.",
+    )
     parser.add_argument("--open-dashboard", action="store_true", help="Open localhost:3000 when ready")
     parser.add_argument(
         "--dry-run",
@@ -87,7 +99,7 @@ def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--pose-disabled", dest="pose_enabled", action="store_false", help="Disable pose estimation")
     parser.add_argument("--show-video", dest="show_video", action="store_true", help="Enable local video windows")
     parser.add_argument("--hide-video", dest="show_video", action="store_false", help="Disable local video windows")
-    parser.set_defaults(pose_enabled=None, show_video=None)
+    parser.set_defaults(pose_enabled=None, show_video=None, skip_reset_db=True)
 
 
 def _add_workspace_arg(parser: argparse.ArgumentParser) -> None:

@@ -22,6 +22,8 @@ from ..shared.rabbit_messenger import (
 from ..shared.utils.bbox import crop_image, draw_bbox
 from ..shared.database.database_worker import DatabaseWorker
 from ..shared.utils.config import get_tasks
+from ..shared.utils.file_retention import prune_directory_files
+from ..shared.utils.queueing import DROP_NEWEST, DROP_OLDEST, bounded_put
 from ..shared.utils.timer import LoopTimer
 from ..shared.models.DataModels import Frames, Frame, AnomalyEvent, AnomalyEvents, AssetReference
 from ..shared.constants import (
@@ -35,6 +37,12 @@ from ..shared.constants import (
 )
 
 logger = logging.getLogger(__name__)
+OUTPUT_QUEUE_MAX = int(os.environ.get("HEARTHLIGHT_OUTPUT_QUEUE_MAX", "12"))
+WORKER_QUEUE_MAX = int(os.environ.get("HEARTHLIGHT_WORKER_QUEUE_MAX", "12"))
+CLIP_WRITER_QUEUE_MAX = int(os.environ.get("HEARTHLIGHT_ANOMALY_CLIP_QUEUE_MAX", "24"))
+ANOMALY_CLIP_RETAIN_MAX = int(os.environ.get("HEARTHLIGHT_ANOMALY_CLIP_RETAIN_MAX", "500"))
+FRAME_RETAIN_MAX = int(os.environ.get("HEARTHLIGHT_FRAME_RETAIN_MAX", "5000"))
+ANNOTATED_SEGMENT_RETAIN_MAX = int(os.environ.get("HEARTHLIGHT_ANNOTATED_SEGMENT_RETAIN_MAX", "200"))
 
 
 def _write_anomaly_clip(frames, path, fps):
@@ -49,13 +57,49 @@ def _write_anomaly_clip(frames, path, fps):
     logger.debug(f"Anomaly clip written: {path}")
 
 
+class AnomalyClipWriter(Thread):
+    def __init__(self, path: str, fps: float):
+        super().__init__(name="AnomalyClipWriter", daemon=True)
+        self.path = path
+        self.fps = fps
+        self.process = False
+        self.queue = queue.Queue(maxsize=max(1, CLIP_WRITER_QUEUE_MAX))
+        self.clips_dropped = 0
+
+    def run(self):
+        self.process = True
+        while self.process:
+            try:
+                frames, output_path = self.queue.get(timeout=QUEUE_TIMEOUT)
+            except queue.Empty:
+                continue
+            try:
+                _write_anomaly_clip(frames, output_path, self.fps)
+                prune_directory_files(self.path, max_files=ANOMALY_CLIP_RETAIN_MAX)
+            except Exception:
+                logger.exception("Failed to write anomaly clip", extra={"task": self.name})
+
+    def enqueue(self, frames, output_path: str):
+        inserted, dropped_existing = bounded_put(
+            self.queue,
+            (frames, output_path),
+            overflow_policy=DROP_OLDEST,
+        )
+        if dropped_existing or not inserted:
+            self.clips_dropped += 1
+
+    def stop(self):
+        self.process = False
+
+
 class OutputThread(Thread):
     def __init__(self, cfg, cameras):
         super().__init__(name=self.__class__.__name__)
         logger.debug("Initializing", extra={"task": self.name})
 
         self.process = False
-        self.queue = queue.Queue()
+        self.queue = queue.Queue(maxsize=max(1, OUTPUT_QUEUE_MAX))
+        self.frames_dropped = 0
 
         task_threads = {
             Tasks.PERSON: FeatureExtractorThread,
@@ -99,7 +143,13 @@ class OutputThread(Thread):
             except queue.Empty:
                 continue
             for _, thread in self.threads.items():
-                thread.queue.put(frames)
+                inserted, dropped_existing = bounded_put(
+                    thread.queue,
+                    frames,
+                    overflow_policy=DROP_OLDEST,
+                )
+                if dropped_existing or not inserted:
+                    self.frames_dropped += 1
 
         for _, thread in self.threads.items():
             thread.stop()
@@ -119,6 +169,30 @@ class OutputThread(Thread):
             lens.append(writer.get_max_worker_queue_depth())
         return max(lens) if lens else 0
 
+    def get_queue_metrics(self):
+        metrics = {
+            "output_thread": self.queue.qsize(),
+        }
+        for task, thread in self.threads.items():
+            metrics[f"{task}_queue"] = thread.queue.qsize()
+        writer = self.threads.get("write_annotated")
+        if writer is not None:
+            metrics["annotated_worker_max_queue"] = writer.get_max_worker_queue_depth()
+        return metrics
+
+    def get_drop_metrics(self):
+        metrics = {
+            "output_thread": int(self.frames_dropped),
+        }
+        for task, thread in self.threads.items():
+            for field_name in ("frames_dropped", "clips_dropped"):
+                if hasattr(thread, field_name):
+                    metrics[f"{task}_{field_name}"] = int(getattr(thread, field_name))
+        writer = self.threads.get("write_annotated")
+        if writer is not None:
+            metrics["annotated_worker_frames_dropped"] = writer.get_total_dropped_frames()
+        return metrics
+
     def stop(self):
         logger.debug("Stopping", extra={"task": self.name})
         self.process = False
@@ -129,10 +203,12 @@ class AnomalyDetectorThread(Thread):
         super().__init__(name=self.__class__.__name__)
         logger.debug("Initializing", extra={"task": self.name})
         self.process = False
-        self.queue = queue.Queue()
+        self.queue = queue.Queue(maxsize=max(1, WORKER_QUEUE_MAX))
+        self.frames_dropped = 0
         self.track_frames = {}
         self.track_time = {}
         self.cam_last_eval = {}
+        self.camera_runtime = {}
         self.eval_interval = cfg.anomaly.get("eval_interval", ANOMALY_EVAL_INTERVAL)
         self.frame_update_interval = cfg.anomaly.get("frame_update_interval", FRAME_UPDATE_INTERVAL)
         for camera in cameras:
@@ -140,6 +216,11 @@ class AnomalyDetectorThread(Thread):
             self.track_frames[cam_id] = deque(maxlen=30)
             self.track_time[cam_id] = 0
             self.cam_last_eval[cam_id] = None
+            self.camera_runtime[cam_id] = {
+                "source_id": getattr(camera, "source_template_id", None),
+                "stage_1_model_key": getattr(camera, "anomaly_stage_1_model_key", None),
+                "stage_2_model_key": getattr(camera, "anomaly_stage_2_model_key", None),
+            }
         self.anomaly_detector = AnomalyDescriber(cfg)
         self.anomaly_publisher = AnomalyPublisher()
         self.database_worker = DatabaseWorker()
@@ -147,11 +228,16 @@ class AnomalyDetectorThread(Thread):
         self.anomaly_video_fps = cfg.output.video.fps
         if self.anomaly_video_dir is not None:
             os.makedirs(self.anomaly_video_dir, exist_ok=True)
+            self.clip_writer = AnomalyClipWriter(self.anomaly_video_dir, self.anomaly_video_fps)
+        else:
+            self.clip_writer = None
         logger.debug("Initialized", extra={"task": self.name})
 
     def run(self):
         logger.debug("Starting", extra={"task": self.name})
         self.process = True
+        if self.clip_writer is not None:
+            self.clip_writer.start()
 
         timer = LoopTimer(log_interval=FPS_INTERVAL, task=self.name, abbrev="anom.")
         timer.start()
@@ -174,32 +260,51 @@ class AnomalyDetectorThread(Thread):
                         or (self.cam_last_eval[cam_id] is not None and frame.timestamp - self.cam_last_eval[cam_id] >= self.eval_interval)
                     ):
                         self.cam_last_eval[cam_id] = frame.timestamp
+                        runtime_details = self.camera_runtime.get(cam_id, {})
                         anomaly_detected, score, scene_summary, anomaly_category = self.anomaly_detector(list(self.track_frames[cam_id])[-self.eval_interval:])
                         if anomaly_detected:
                             anomaly_category = "suspicious activity" if anomaly_category == "" else anomaly_category
                             event = AnomalyEvent(
                                 event_id=str(uuid.uuid4()),
+                                source_id=runtime_details.get("source_id"),
+                                camera_id=cam_id,
                                 frame_id=frames.frame_id,
-                                model_key=self.anomaly_detector.vllm_agent.__class__.__name__,
+                                model_key=runtime_details.get("stage_2_model_key") or self.anomaly_detector.vllm_agent.__class__.__name__,
+                                stage_1_model_key=runtime_details.get("stage_1_model_key"),
+                                stage_2_model_key=runtime_details.get("stage_2_model_key"),
                                 category=anomaly_category,
                                 score=score,
+                                title=anomaly_category,
                                 reasoning=scene_summary,
                             )
                             self.anomaly_publisher.publish_events(
                                 AnomalyEvents(frame_id=frames.frame_id, events=[event])
                             )
                             self.database_worker.publish_anomaly_data([event])
-                            if self.anomaly_video_dir is not None:
+                            if self.clip_writer is not None:
                                 clip_frames = list(self.track_frames[cam_id])[-self.eval_interval:]
                                 path = os.path.join(self.anomaly_video_dir, f"{event.event_id}.mp4")
-                                Thread(
-                                    target=_write_anomaly_clip,
-                                    args=(clip_frames, path, self.anomaly_video_fps),
-                                    daemon=True,
-                                ).start()
+                                self.clip_writer.enqueue(clip_frames, path)
+                        else:
+                            self.database_worker.publish_anomaly_evaluation_log(
+                                source_id=runtime_details.get("source_id"),
+                                camera_id=cam_id,
+                                frame_id=frames.frame_id,
+                                stage_1_model_key=runtime_details.get("stage_1_model_key"),
+                                stage_2_model_key=runtime_details.get("stage_2_model_key"),
+                                score=score,
+                                category=anomaly_category,
+                                reasoning=scene_summary,
+                                promoted=False,
+                            )
 
             timer.time("eval")
             timer.loop()
+
+        if self.clip_writer is not None:
+            self.clip_writer.stop()
+            self.clip_writer.join(timeout=5)
+            self.frames_dropped += self.clip_writer.clips_dropped
 
     def stop(self):
         logger.debug("Stopping", extra={"task": self.name})
@@ -211,7 +316,8 @@ class FeatureExtractorThread(Thread):
         super().__init__(name=self.__class__.__name__)
         logger.debug("Initializing", extra={"task": self.name})
         self.process = False
-        self.queue = queue.Queue[Frames]()
+        self.queue = queue.Queue(maxsize=max(1, WORKER_QUEUE_MAX))
+        self.frames_dropped = 0
         self.task_cams = [camera.cam_id for camera in cameras if self.check_cam(camera)]
 
         self.tracker = Tracker(cfg.tracking, self.task_cams)
@@ -301,7 +407,8 @@ class GunThread(Thread):
         logger.debug("Initializing", extra={"task": self.name})
         self.process = False
         self.publisher = GunPublisher()
-        self.queue = queue.Queue()
+        self.queue = queue.Queue(maxsize=max(1, WORKER_QUEUE_MAX))
+        self.frames_dropped = 0
         self.task_cams = [
             camera.cam_id for camera in cameras if Tasks.GUN in camera.tasks
         ]
@@ -345,7 +452,8 @@ class FrameWriter(Thread):
         super().__init__(name=self.__class__.__name__)
         logger.debug("Initializing", extra={"task": self.name})
         self.process = False
-        self.queue = queue.Queue()
+        self.queue = queue.Queue(maxsize=max(1, WORKER_QUEUE_MAX))
+        self.frames_dropped = 0
         self.database_worker = DatabaseWorker()
         self.last_save = {camera.cam_id: float("-inf") for camera in cameras}
         self.save_interval = cfg.output.frames.save_interval
@@ -387,6 +495,8 @@ class FrameWriter(Thread):
                         self.last_save[cam_id] = timestamp
 
             self.database_worker.publish_frames(saved_frames, frames.frame_id)
+            if saved_frames:
+                prune_directory_files(self.directory, max_files=FRAME_RETAIN_MAX)
 
         logger.debug("Stopped", extra={"task": self.name})
 
@@ -403,10 +513,16 @@ class WriterWorker(Thread):
         super().__init__(name=self.__class__.__name__ + f" for {id}")
         logger.debug("Initializing", extra={"task": self.name})
         self.process = False
-        self.path = path
+        self.base_path = path
         self.queue = queue.Queue(maxsize=WRITER_WORKER_MAX_QUEUE)
         self.writer = None
         self.fps = cfg.output.video.fps
+        self.segment_frames = max(1, int(os.environ.get("HEARTHLIGHT_ANNOTATED_SEGMENT_FRAMES", str(int(self.fps * 300)))))
+        self.segment_index = 0
+        self.frames_written_in_segment = 0
+        self.output_dir = os.path.dirname(path)
+        self.output_prefix = os.path.splitext(os.path.basename(path))[0]
+        self.frames_dropped = 0
         logger.debug("Initialized", extra={"task": self.name})
 
     def run(self):
@@ -421,7 +537,10 @@ class WriterWorker(Thread):
             if self.writer is None:
                 self.writer = self.get_writer(frame)
             for _ in range(num_saves):
+                if self.frames_written_in_segment >= self.segment_frames:
+                    self.rotate_writer(frame)
                 self.writer.write(frame)
+                self.frames_written_in_segment += 1
 
         if self.writer is not None:
             self.writer.release()
@@ -430,7 +549,21 @@ class WriterWorker(Thread):
     def get_writer(self, frame):
         size = frame.shape[1], frame.shape[0]
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        return cv2.VideoWriter(self.path, fourcc, self.fps, size)
+        return cv2.VideoWriter(self._current_segment_path(), fourcc, self.fps, size)
+
+    def _current_segment_path(self):
+        return os.path.join(
+            self.output_dir,
+            f"{self.output_prefix}_segment_{self.segment_index:05d}.mp4",
+        )
+
+    def rotate_writer(self, frame):
+        if self.writer is not None:
+            self.writer.release()
+        self.segment_index += 1
+        self.frames_written_in_segment = 0
+        self.writer = self.get_writer(frame)
+        prune_directory_files(self.output_dir, max_files=ANNOTATED_SEGMENT_RETAIN_MAX)
 
     def stop(self):
         logger.debug("Stopping", extra={"task": self.name})
@@ -442,7 +575,8 @@ class AnnotationWriter(Thread):
         super().__init__(name=self.__class__.__name__)
         logger.debug("Initializing", extra={"task": self.name})
         self.process = False
-        self.queue = queue.Queue()
+        self.queue = queue.Queue(maxsize=max(1, WORKER_QUEUE_MAX))
+        self.frames_dropped = 0
         self.cam_ids = [camera.cam_id for camera in cameras]
         self.last_timestamps: dict[int, float | None] = {
             cam_id: None for cam_id in self.cam_ids
@@ -567,9 +701,13 @@ class AnnotationWriter(Thread):
                 saves = int(self.num_frames[cam_id])
                 if saves >= 0:
                     # annotated_frame = self.zone_illustrator.draw(annotated_frame, cam_id)
-                    try:
-                        self.workers[cam_id].queue.put_nowait((image, saves))
-                    except queue.Full:
+                    inserted, dropped_existing = bounded_put(
+                        self.workers[cam_id].queue,
+                        (image, saves),
+                        overflow_policy=DROP_OLDEST,
+                    )
+                    if dropped_existing or not inserted:
+                        self.workers[cam_id].frames_dropped += 1
                         logger.warning(
                             f"WriterWorker queue full for cam {cam_id}, dropping frame",
                             extra={"task": self.name},
@@ -678,6 +816,11 @@ class AnnotationWriter(Thread):
         if not self.write:
             return 0
         return max((w.queue.qsize() for w in self.workers.values()), default=0)
+
+    def get_total_dropped_frames(self):
+        if not self.write:
+            return 0
+        return sum(getattr(worker, "frames_dropped", 0) for worker in self.workers.values())
 
     def stop(self):
         logger.debug("Stopping", extra={"task": self.name})

@@ -1,5 +1,6 @@
 from collections import defaultdict
 from datetime import datetime
+import os
 from pathlib import Path
 import json
 from typing import TypeVar
@@ -69,6 +70,12 @@ from ..utils.telegram_notifications import (
 
 logger = logging.getLogger(__name__)
 SQLModel = TypeVar("SQLModel", bound=Base)
+MODEL_RESULT_LOG_RETAIN_MAX = int(
+    os.environ.get("HEARTHLIGHT_MODEL_RESULT_LOG_RETAIN_MAX", "50000")
+)
+MODEL_RESULT_LOG_PRUNE_INTERVAL = int(
+    os.environ.get("HEARTHLIGHT_MODEL_RESULT_LOG_PRUNE_INTERVAL", "100")
+)
 
 
 class DatabaseWorker:
@@ -100,8 +107,52 @@ class DatabaseWorker:
         self.source_rows_by_id = {}
         self.runtime_binding_defaults = None
         self.runtime_registry_bundle = None
+        self.active_run_db_id = None
+        self.model_log_writes_since_prune = 0
 
         self.SessionLocal = SessionLocal
+
+    def reset_runtime_caches(self):
+        self.confirmed_persons.clear()
+        self.confirmed_bags.clear()
+        self.journey_node_ids.clear()
+        self.source_template_ids_by_camera_id.clear()
+        self.source_rows_by_id.clear()
+        self.runtime_binding_defaults = None
+        self.runtime_registry_bundle = None
+
+    def _maybe_reset_for_run(self):
+        if DatabaseWorker.run_id != self.active_run_db_id:
+            self.reset_runtime_caches()
+            self.active_run_db_id = DatabaseWorker.run_id
+
+    def prune_model_result_logs(self):
+        if MODEL_RESULT_LOG_RETAIN_MAX <= 0:
+            return
+        retained_rows = (
+            self.db.query(SQLModels.ModelResultLog.id)
+            .filter_by(is_deleted=False)
+            .order_by(SQLModels.ModelResultLog.created_at.desc(), SQLModels.ModelResultLog.id.desc())
+            .offset(MODEL_RESULT_LOG_RETAIN_MAX)
+            .all()
+        )
+        stale_ids = [row[0] for row in retained_rows]
+        if not stale_ids:
+            return
+        current_time = datetime.now().isoformat()
+        (
+            self.db.query(SQLModels.ModelResultLog)
+            .filter(SQLModels.ModelResultLog.id.in_(stale_ids))
+            .update(
+                {
+                    SQLModels.ModelResultLog.is_deleted: True,
+                    SQLModels.ModelResultLog.deleted_at: current_time,
+                    SQLModels.ModelResultLog.updated_at: current_time,
+                },
+                synchronize_session=False,
+            )
+        )
+        self.db.commit()
 
     # CRUD operations
 
@@ -229,7 +280,7 @@ class DatabaseWorker:
     ):
         if not model_key or not result_summary:
             return None
-        return self.create(
+        log_row = self.create(
             SQLModels.ModelResultLog(
                 run_id=DatabaseWorker.run_id,
                 source_template_id=source_id,
@@ -243,6 +294,12 @@ class DatabaseWorker:
                 result_payload_json=json.dumps(result_payload),
             )
         )
+        if log_row is not None:
+            self.model_log_writes_since_prune += 1
+            if self.model_log_writes_since_prune >= max(1, MODEL_RESULT_LOG_PRUNE_INTERVAL):
+                self.prune_model_result_logs()
+                self.model_log_writes_since_prune = 0
+        return log_row
 
     def create_detector_model_log(self, frame: DataModels.Frame, frame_id: int):
         source_id = self.get_source_template_id_for_camera(frame.cam_id)
@@ -332,6 +389,59 @@ class DatabaseWorker:
             frame_id=event.frame_id,
             result_summary=self.build_anomaly_log_summary(event, include_reasoning=True),
             result_payload=payload,
+        )
+
+    def create_anomaly_evaluation_logs(
+        self,
+        *,
+        source_id: int | None,
+        camera_id: int | None,
+        frame_id: int | None,
+        stage_1_model_key: str | None,
+        stage_2_model_key: str | None,
+        score: float,
+        category: str | None,
+        reasoning: str | None,
+        promoted: bool,
+    ):
+        source_row = self.get_source_row_by_id(source_id)
+        base_payload = {
+            "score": round(float(score or 0.0), 4),
+            "category": category,
+            "reasoning": reasoning,
+            "promoted": promoted,
+            "visible_items": [],
+            "visible_activities": [],
+        }
+        stage_1_summary = (
+            f"Candidate score {float(score or 0.0):.2f} · {category or 'no category'}"
+            if promoted
+            else f"No anomaly candidate · Score {float(score or 0.0):.2f}"
+        )
+        stage_2_summary = (
+            f"Promoted anomaly candidate · Score {float(score or 0.0):.2f}"
+            if promoted
+            else f"No anomaly returned · Score {float(score or 0.0):.2f}"
+        )
+        self.create_model_result_log(
+            source_id=source_id,
+            source_label=getattr(source_row, "label", None),
+            camera_id=camera_id,
+            stage=MODEL_STAGE_ANOMALY_STAGE_1,
+            model_key=stage_1_model_key,
+            frame_id=frame_id,
+            result_summary=stage_1_summary,
+            result_payload=base_payload,
+        )
+        self.create_model_result_log(
+            source_id=source_id,
+            source_label=getattr(source_row, "label", None),
+            camera_id=camera_id,
+            stage=MODEL_STAGE_ANOMALY_STAGE_2,
+            model_key=stage_2_model_key,
+            frame_id=frame_id,
+            result_summary=stage_2_summary,
+            result_payload=base_payload,
         )
 
     def get_enabled_alert_rules(
@@ -476,7 +586,7 @@ class DatabaseWorker:
             matched_target=matched_target,
             confidence=confidence,
             alert_level=alert_level,
-            title=build_alert_incident_title(matched_target),
+            title=build_alert_incident_title(signal_family, matched_target),
             model_keys_json=json.dumps(model_keys),
             dedupe_key=dedupe_key,
         )
@@ -670,6 +780,8 @@ class DatabaseWorker:
             queue_telegram_trigger_notifications(
                 telegram_subscriptions,
                 trigger_text=trigger_text,
+                trigger_id=f"{incident_row.incident_type}-{incident_row.id}",
+                trigger_type=str(trigger_key or incident_row.incident_type),
                 media=media,
             )
         if apple_message_subscriptions:
@@ -734,7 +846,12 @@ class DatabaseWorker:
         source_id = self.get_source_template_id_for_camera(track.cam_id)
         if source_id is None:
             return
-        confidence = float(track.confidence or 0.0)
+        confidence = track.confidence
+        if confidence is None:
+            # Confirmed PERSON/BAG tracks are still valid detector matches even when
+            # the tracker/ReID handoff omits the original detector score.
+            confidence = 1.0 if (track.confirmed or track.real_id is not None) else 0.0
+        confidence = float(confidence)
         matched_target = str(track.clss or "").strip().upper()
         if not matched_target:
             return
@@ -881,6 +998,7 @@ class DatabaseWorker:
             updated = self.update(existing)
             assert updated is not None, "failed to update existing run"
             DatabaseWorker.run_id = updated.id
+            self._maybe_reset_for_run()
             return
 
         run_row = SQLModels.Run(
@@ -892,6 +1010,7 @@ class DatabaseWorker:
         run_row = self.create(run_row)
         assert run_row is not None, "failed to create run"
         DatabaseWorker.run_id = run_row.id
+        self._maybe_reset_for_run()
 
     def create_bag(self, id: int):
         bag = SQLModels.Bag(id=id, run_id=DatabaseWorker.run_id)
@@ -1179,6 +1298,7 @@ class DatabaseWorker:
         if DatabaseWorker.run_id is None:
             logger.warning("Skipping reid database publish because run id is not set")
             return
+        self._maybe_reset_for_run()
         self.source_rows_by_id.clear()
         with self.SessionLocal() as self.db:
             for clss in tracks:
@@ -1194,6 +1314,7 @@ class DatabaseWorker:
         new_nodes: list[DataModels.JourneyNode],
         completed_nodes: list[DataModels.JourneyNode],
     ):
+        self._maybe_reset_for_run()
         with self.SessionLocal() as self.db:
             for node in completed_nodes:
                 track = node.track_instance
@@ -1225,9 +1346,20 @@ class DatabaseWorker:
                 self.create_person_bag_mapping(bag_id, owner_id)
 
     def publish_frames(self, frames: list[DataModels.Frame], frame_id: int):
+        self._maybe_reset_for_run()
         with self.SessionLocal() as self.db:
             for frame in frames:
                 self.create_frame(frame, frame_id)
+
+    def publish_detector_logs(self, frames: list[DataModels.Frame], frame_id: int):
+        if DatabaseWorker.run_id is None:
+            logger.warning("Skipping detector model logs because run id is not set")
+            return
+        self._maybe_reset_for_run()
+        self.source_rows_by_id.clear()
+        self.source_template_ids_by_camera_id.clear()
+        with self.SessionLocal() as self.db:
+            for frame in frames:
                 self.create_detector_model_log(frame, frame_id)
 
     def publish_incidents(self, new_incidents: list, resolved_incidents: list):
@@ -1275,6 +1407,7 @@ class DatabaseWorker:
                 self.create_loitering_incident(incident)
 
     def publish_anomaly_data(self, anomaly_events: list[DataModels.AnomalyEvent]):
+        self._maybe_reset_for_run()
         with self.SessionLocal() as self.db:
             for event in anomaly_events:
                 created_event = self.create_anomaly_event(event)
@@ -1282,6 +1415,38 @@ class DatabaseWorker:
                     self.create_anomaly_model_logs(event)
                     self.create_incident_from_anomaly_event(event)
                     self.maybe_create_anomaly_alerts(event)
+
+    def publish_anomaly_evaluation_log(
+        self,
+        *,
+        source_id: int | None,
+        camera_id: int | None,
+        frame_id: int | None,
+        stage_1_model_key: str | None,
+        stage_2_model_key: str | None,
+        score: float,
+        category: str | None,
+        reasoning: str | None,
+        promoted: bool,
+    ):
+        if DatabaseWorker.run_id is None:
+            logger.warning("Skipping anomaly model logs because run id is not set")
+            return
+        self._maybe_reset_for_run()
+        self.source_rows_by_id.clear()
+        self.source_template_ids_by_camera_id.clear()
+        with self.SessionLocal() as self.db:
+            self.create_anomaly_evaluation_logs(
+                source_id=source_id,
+                camera_id=camera_id,
+                frame_id=frame_id,
+                stage_1_model_key=stage_1_model_key,
+                stage_2_model_key=stage_2_model_key,
+                score=score,
+                category=category,
+                reasoning=reasoning,
+                promoted=promoted,
+            )
 
     def check_for_resolutions(self, incidents: set | list):
         resolved_incidents = set()

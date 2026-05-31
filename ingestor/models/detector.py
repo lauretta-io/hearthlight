@@ -3,6 +3,10 @@ import shutil
 import subprocess
 
 import numpy as np
+try:
+    import cv2
+except ModuleNotFoundError:  # pragma: no cover - optional local CPU fallback
+    cv2 = None
 
 from ...shared.models.DataModels import Detection
 from ...shared.utils.config import get_tasks
@@ -150,27 +154,41 @@ class RTDetrDetectorAdapter:
             device=runtime.get("device", "cuda:0"),
         )
         self._ultralytics_model = None
+        self._hog_descriptor = None
         if _model_zoo_detector_is_stub(self.model):
             try:
                 from ultralytics import YOLO
             except ImportError as exc:
-                logger.error(
-                    "hearthlight_model_zoo detector is a no-op stub and ultralytics is not installed; "
-                    "person/bag detection will not run. Install ingestor requirements or ultralytics.",
+                logger.warning(
+                    "hearthlight_model_zoo detector is a compatibility stub and ultralytics is unavailable; "
+                    "falling back to OpenCV HOG person detection",
                 )
-                raise RuntimeError(
-                    "detector runtime unavailable: install ultralytics for local CPU fallback"
-                ) from exc
-            logger.warning(
-                "hearthlight_model_zoo detector is a compatibility stub; "
-                "using ultralytics YOLOv8n fallback for local detection",
+                self._init_hog_fallback()
+            else:
+                logger.warning(
+                    "hearthlight_model_zoo detector is a compatibility stub; "
+                    "using ultralytics YOLOv8n fallback for local detection",
+                )
+                self._ultralytics_model = YOLO("yolov8n.pt")
+                configured_size = cfg.rtdetr.get("local_cpu_img_size", 640)
+                try:
+                    self._ultralytics_img_size = max(320, min(int(configured_size), 960))
+                except (TypeError, ValueError):
+                    self._ultralytics_img_size = 640
+        configured_size = cfg.rtdetr.get("local_cpu_img_size", 640)
+        try:
+            self._hog_img_size = max(320, min(int(configured_size), 960))
+        except (TypeError, ValueError):
+            self._hog_img_size = 640
+
+    def _init_hog_fallback(self):
+        if cv2 is None:
+            raise RuntimeError(
+                "detector runtime unavailable: install ultralytics or opencv-python for local CPU fallback"
             )
-            self._ultralytics_model = YOLO("yolov8n.pt")
-            configured_size = cfg.rtdetr.get("local_cpu_img_size", 640)
-            try:
-                self._ultralytics_img_size = max(320, min(int(configured_size), 960))
-            except (TypeError, ValueError):
-                self._ultralytics_img_size = 640
+        hog = cv2.HOGDescriptor()
+        hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
+        self._hog_descriptor = hog
 
     def _frame_array(self, frame):
         return frame.array if hasattr(frame, "array") else frame
@@ -195,6 +213,68 @@ class RTDetrDetectorAdapter:
         except Exception:
             logger.exception("Ultralytics CPU fallback failed; returning empty detections")
             return np.zeros((0, 6), dtype=np.float32)
+
+    def _infer_hog(self, frames):
+        outputs = []
+        person_threshold = float(self.conf_dict.get(0, 0.35))
+        for frame in frames:
+            outputs.append(
+                self._infer_hog_frame(
+                    self._frame_array(frame),
+                    person_threshold,
+                )
+            )
+        return outputs
+
+    def _infer_hog_frame(self, frame, person_threshold):
+        try:
+            return self._infer_hog_direct(frame, person_threshold)
+        except Exception:
+            logger.exception("OpenCV HOG fallback failed; returning empty detections")
+            return np.zeros((0, 6), dtype=np.float32)
+
+    def _infer_hog_direct(self, frame, person_threshold):
+        if self._hog_descriptor is None:
+            return np.zeros((0, 6), dtype=np.float32)
+        frame_h, frame_w = frame.shape[:2]
+        max_dim = max(frame_h, frame_w)
+        scale = 1.0
+        resized = frame
+        if max_dim > self._hog_img_size:
+            scale = self._hog_img_size / float(max_dim)
+            resized = cv2.resize(
+                frame,
+                (max(1, int(frame_w * scale)), max(1, int(frame_h * scale))),
+                interpolation=cv2.INTER_LINEAR,
+            )
+        gray = cv2.cvtColor(resized, cv2.COLOR_BGR2GRAY)
+        rects, weights = self._hog_descriptor.detectMultiScale(
+            gray,
+            winStride=(8, 8),
+            padding=(8, 8),
+            scale=1.05,
+        )
+        if len(rects) == 0:
+            return np.zeros((0, 6), dtype=np.float32)
+
+        rows = []
+        for (x, y, w, h), weight in zip(rects, weights):
+            confidence = float(weight) if weight is not None else 0.5
+            if confidence < person_threshold:
+                continue
+            x1 = float(max(0.0, x / scale))
+            y1 = float(max(0.0, y / scale))
+            x2 = float(max(x1, (x + w) / scale))
+            y2 = float(max(y1, (y + h) / scale))
+            rows.append([x1, y1, x2, y2, confidence, 0.0])
+        if not rows:
+            return np.zeros((0, 6), dtype=np.float32)
+
+        detections = np.asarray(rows, dtype=np.float32)
+        keep = _nms_numpy(detections[:, :4], detections[:, 4], _YOLO_NMS_IOU_THRESHOLD)
+        if keep.size == 0:
+            return np.zeros((0, 6), dtype=np.float32)
+        return detections[keep]
 
     def _infer_ultralytics_direct(self, frame, person_threshold, bag_threshold):
         # Use the public Ultralytics predictor path; direct internal model calls
@@ -255,6 +335,8 @@ class RTDetrDetectorAdapter:
     def infer(self, frames):
         if self._ultralytics_model is not None:
             return self._infer_ultralytics(frames)
+        if self._hog_descriptor is not None:
+            return self._infer_hog(frames)
         inputs = [frame.array for frame in frames]
         return self.model(inputs, self.conf_dict)
 
@@ -290,6 +372,8 @@ class Detector:
             self.camera_tasks[cam_id] = {
                 str(task).strip().upper() for task in camera_dict.get("tasks", [])
             }
+            if not model_key:
+                continue
             if model_key not in self.adapters:
                 registration = get_registration(
                     self.registry_bundle, MODEL_STAGE_DETECTOR, model_key
@@ -334,6 +418,14 @@ class Detector:
             frames_by_model.setdefault(model_key, []).append((index, frame))
 
         for model_key, indexed_frames in frames_by_model.items():
+            if not model_key:
+                for frame_index, _frame in indexed_frames:
+                    track_results[frame_index], detection_results[frame_index] = self.post_process_single(
+                        np.zeros((0, 6), dtype=np.float32),
+                        frames.frames[frame_index],
+                        set(),
+                    )
+                continue
             adapter = self.adapters[model_key]
             frame_batch = [frame for _, frame in indexed_frames]
             outputs = adapter.infer(frame_batch)

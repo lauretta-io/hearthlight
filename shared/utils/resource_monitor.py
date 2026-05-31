@@ -5,13 +5,16 @@ from datetime import datetime, timezone
 from importlib.util import find_spec
 import json
 import logging
+import os
 from pathlib import Path
 import shutil
 import subprocess
 from threading import Event, Lock, Thread
 import time
+import tracemalloc
 
 from ..constants import ModuleNames
+from .file_retention import directory_size_bytes
 from .dependency_health import get_unhealthy_dependencies
 
 PSUTIL_AVAILABLE = find_spec("psutil") is not None
@@ -30,6 +33,8 @@ DEFAULT_THRESHOLDS = {
 }
 
 logger = logging.getLogger(__name__)
+if not tracemalloc.is_tracing():
+    tracemalloc.start(25)
 
 
 def utc_now_iso() -> str:
@@ -80,13 +85,27 @@ def collect_resource_snapshot(
     module_status: dict[str, str],
     *,
     disk_path: str | Path = ".",
+    output_paths: list[str | Path] | None = None,
     webapp_status: str = "running",
 ) -> dict:
     cpu_percent = None
     memory_percent = None
+    process_rss_mb = None
+    process_thread_count = None
+    process_open_file_descriptors = None
     if psutil is not None:
         cpu_percent = float(psutil.cpu_percent(interval=None))
         memory_percent = float(psutil.virtual_memory().percent)
+        try:
+            process = psutil.Process(os.getpid())
+            process_rss_mb = round(float(process.memory_info().rss) / (1024 * 1024), 2)
+            process_thread_count = int(process.num_threads())
+            if hasattr(process, "num_fds"):
+                process_open_file_descriptors = int(process.num_fds())
+            elif hasattr(process, "num_handles"):
+                process_open_file_descriptors = int(process.num_handles())
+        except Exception:
+            logger.exception("Failed to collect process metrics")
 
     disk_percent = None
     try:
@@ -100,10 +119,21 @@ def collect_resource_snapshot(
 
     enriched_module_status = {ModuleNames.WEBAPP: webapp_status}
     enriched_module_status.update(module_status)
+    current_heap_bytes, _peak_heap_bytes = tracemalloc.get_traced_memory()
+    output_disk_usage_bytes = 0
+    for output_path in output_paths or []:
+        size_bytes = directory_size_bytes(output_path)
+        if size_bytes:
+            output_disk_usage_bytes += int(size_bytes)
     return {
         "cpu_percent": cpu_percent,
         "memory_percent": memory_percent,
         "disk_percent": disk_percent,
+        "process_rss_mb": process_rss_mb,
+        "process_python_heap_mb": round(float(current_heap_bytes) / (1024 * 1024), 2),
+        "process_thread_count": process_thread_count,
+        "process_open_file_descriptors": process_open_file_descriptors,
+        "output_disk_usage_bytes": output_disk_usage_bytes,
         "gpus": collect_gpu_metrics(),
         "module_status": enriched_module_status,
         "updated_at": utc_now_iso(),

@@ -97,11 +97,54 @@ def coerce_source_value(kind: str, source_value: str | int | None, upload_path: 
     return source_value
 
 
+def normalize_frame_processing_settings(
+    *,
+    kind: str,
+    frame_processing_mode: str | None,
+    process_every_n_frames: int | None,
+    target_frame_rate: float | int | None,
+) -> dict:
+    normalized_kind = str(kind or "").strip().lower()
+    normalized_mode = str(frame_processing_mode or "frame_skip").strip().lower()
+    normalized_skip = max(1, int(process_every_n_frames or 1))
+    try:
+        normalized_target = (
+            float(target_frame_rate)
+            if target_frame_rate is not None and float(target_frame_rate) > 0
+            else None
+        )
+    except (TypeError, ValueError):
+        normalized_target = None
+    if normalized_kind == SOURCE_KIND_VIDEO_UPLOAD:
+        return {
+            "frame_processing_mode": "frame_skip",
+            "process_every_n_frames": normalized_skip,
+            "target_frame_rate": None,
+        }
+    if normalized_mode == "target_frame_rate" and normalized_target is not None:
+        return {
+            "frame_processing_mode": "target_frame_rate",
+            "process_every_n_frames": 1,
+            "target_frame_rate": normalized_target,
+        }
+    return {
+        "frame_processing_mode": "frame_skip",
+        "process_every_n_frames": normalized_skip,
+        "target_frame_rate": None,
+    }
+
+
 def build_runtime_camera_entry(
     source_row,
     *,
     upload_path: str | None = None,
 ) -> dict:
+    frame_processing = normalize_frame_processing_settings(
+        kind=source_row.kind,
+        frame_processing_mode=getattr(source_row, "frame_processing_mode", "frame_skip"),
+        process_every_n_frames=getattr(source_row, "process_every_n_frames", 1),
+        target_frame_rate=getattr(source_row, "target_frame_rate", None),
+    )
     runtime_tasks = normalize_camera_tasks(
         list(getattr(source_row, "tasks", []) or []),
         camera_label=getattr(source_row, "label", None),
@@ -112,7 +155,10 @@ def build_runtime_camera_entry(
         "source": coerce_source_value(source_row.kind, source_row.source_value, upload_path),
         "source_template_id": source_row.id,
         "upload_id": source_row.upload_id,
-        "process_every_n_frames": max(1, int(getattr(source_row, "process_every_n_frames", 1) or 1)),
+        "source_kind": source_row.kind,
+        "frame_processing_mode": frame_processing["frame_processing_mode"],
+        "process_every_n_frames": frame_processing["process_every_n_frames"],
+        "target_frame_rate": frame_processing["target_frame_rate"],
         "detector_model_key": getattr(source_row, "detector_model_key", None),
         "tracker_model_key": getattr(source_row, "tracker_model_key", None),
         "reid_model_key": getattr(source_row, "reid_model_key", None),

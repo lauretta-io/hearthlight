@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   BrowserRouter as Router,
+  NavLink,
   Route,
   Routes,
-  NavLink,
-  Navigate,
+  useLocation,
+  useNavigate,
 } from 'react-router-dom';
 import Status from './components/Status';
 import IncidentPage from './components/IncidentPage';
@@ -16,6 +17,178 @@ import LivePage from './components/LivePage';
 import { BaseURL } from './config';
 import { DEFAULT_THEME, getThemeOption, THEME_OPTIONS, THEME_STORAGE_KEY } from './theme';
 import './styles/App.css';
+
+const PersistentPage = ({ active, children }) => (
+  <section
+    style={{ display: active ? 'block' : 'none' }}
+    aria-hidden={active ? 'false' : 'true'}
+  >
+    {children}
+  </section>
+);
+
+const AppShell = ({
+  appearanceError,
+  appearanceLoaded,
+  currentThemeKey,
+  isSavingAppearance,
+  onSaveAppearance,
+  themeOptions,
+}) => {
+  const location = useLocation();
+  const navigate = useNavigate();
+
+  useEffect(() => {
+    if (location.pathname === '/') {
+      navigate('/settings?tab=monitoring', { replace: true });
+      return;
+    }
+    if (location.pathname === '/monitoring') {
+      navigate('/settings?tab=monitoring', { replace: true });
+      return;
+    }
+    if (location.pathname === '/poi') {
+      navigate('/settings?tab=sources', { replace: true });
+      return;
+    }
+    if (location.pathname.startsWith('/entity/')) {
+      navigate('/rules', { replace: true });
+      return;
+    }
+    if (location.pathname === '/entities') {
+      navigate('/rules', { replace: true });
+    }
+  }, [location.pathname, navigate]);
+
+  const settingsSharedProps = useMemo(
+    () => ({
+      themeOptions,
+      currentThemeKey,
+      appearanceLoaded,
+      appearanceError,
+      isSavingAppearance,
+      onSaveAppearance,
+    }),
+    [
+      appearanceError,
+      appearanceLoaded,
+      currentThemeKey,
+      isSavingAppearance,
+      onSaveAppearance,
+      themeOptions,
+    ],
+  );
+
+  const isSettingsPath = location.pathname === '/settings';
+  const isRulesPath = location.pathname === '/rules';
+  const isConnectorsPath = location.pathname === '/connectors';
+  const isLivePath = location.pathname === '/live';
+  const isApiDocsPath = location.pathname === '/api-docs';
+  const isIncidentsPath = location.pathname === '/incidents';
+  const isModelLogsPath = location.pathname === '/model-logs';
+  const isDetailPath = location.pathname.startsWith('/incident/');
+
+  return (
+    <div className="app">
+      <nav className="top-nav">
+        <div className="brand-block">
+          <div className="brand-logo-shell">
+            <div className="brand-logo-tint" />
+            <img className="brand-logo" src="/hearthlight.png" alt="Hearthlight logo" />
+          </div>
+          <div className="brand-copy">
+            <div className="brand-mark">Hearthlight</div>
+            <div className="brand-submark">{getThemeOption(currentThemeKey).label}</div>
+          </div>
+        </div>
+        <NavLink
+          to="/incidents"
+          className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+        >
+          Triggers
+        </NavLink>
+        <NavLink
+          to="/rules"
+          className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+        >
+          Rules
+        </NavLink>
+        <NavLink
+          to="/model-logs"
+          className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+        >
+          Model Logs
+        </NavLink>
+        <NavLink
+          to="/connectors"
+          className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+        >
+          Connectors
+        </NavLink>
+        <NavLink
+          to="/live"
+          className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+        >
+          Live
+        </NavLink>
+        <NavLink
+          to="/settings"
+          className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+        >
+          Settings
+        </NavLink>
+        <NavLink
+          to="/api-docs"
+          className={({ isActive }) => (isActive ? 'nav-link active' : 'nav-link')}
+        >
+          API Docs
+        </NavLink>
+      </nav>
+      <main className="main-content">
+        <Status />
+        <PersistentPage active={isSettingsPath}>
+          <SettingsPage {...settingsSharedProps} />
+        </PersistentPage>
+        <PersistentPage active={isRulesPath}>
+          <SettingsPage
+            {...settingsSharedProps}
+            forcedTab="rules"
+            hideTabBar
+            pageTitle="Rules"
+            pageSubtitle="Define detector and anomaly trigger rules without mixing them into the main settings tabs."
+          />
+        </PersistentPage>
+        <PersistentPage active={isConnectorsPath}>
+          <SettingsPage
+            {...settingsSharedProps}
+            forcedTab="connectors"
+            hideTabBar
+            pageTitle="Connectors"
+            pageSubtitle="Manage outbound trigger delivery channels separately from core workspace settings."
+          />
+        </PersistentPage>
+        <PersistentPage active={isLivePath}>
+          <LivePage />
+        </PersistentPage>
+        <PersistentPage active={isApiDocsPath}>
+          <ApiDocsPage />
+        </PersistentPage>
+        <PersistentPage active={isIncidentsPath}>
+          <IncidentPage />
+        </PersistentPage>
+        <PersistentPage active={isModelLogsPath}>
+          <ModelLogsPage />
+        </PersistentPage>
+        {isDetailPath && (
+          <Routes>
+            <Route path="/incident/:incidentId" element={<Incident />} />
+          </Routes>
+        )}
+      </main>
+    </div>
+  );
+};
+
 const App = () => {
   const [theme, setTheme] = useState(() => window.localStorage.getItem(THEME_STORAGE_KEY) || DEFAULT_THEME);
   const [appearanceLoaded, setAppearanceLoaded] = useState(false);
@@ -39,7 +212,7 @@ const App = () => {
           try {
             const payload = await response.json();
             detail = payload?.detail || detail;
-          } catch (error) {
+          } catch (_error) {
             // Keep the fallback detail when the response is not JSON.
           }
           throw new Error(detail);
@@ -82,7 +255,7 @@ const App = () => {
         try {
           const payload = await response.json();
           detail = payload?.detail || detail;
-        } catch (error) {
+        } catch (_error) {
           // Keep fallback detail.
         }
         throw new Error(detail);
@@ -100,115 +273,18 @@ const App = () => {
     }
   };
 
-  const settingsSharedProps = {
-    themeOptions: THEME_OPTIONS,
-    currentThemeKey: theme,
-    appearanceLoaded,
-    appearanceError,
-    isSavingAppearance,
-    onSaveAppearance: saveAppearance,
-  };
-
   return (
     <Router>
-      <div className="app">
-        <nav className="top-nav">
-          <div className="brand-block">
-            <div className="brand-logo-shell">
-              <div className="brand-logo-tint" />
-              <img className="brand-logo" src="/hearthlight.png" alt="Hearthlight logo" />
-            </div>
-            <div className="brand-copy">
-              <div className="brand-mark">Hearthlight</div>
-              <div className="brand-submark">{getThemeOption(theme).label}</div>
-            </div>
-          </div>
-          <NavLink
-            to="/incidents"
-            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
-          >
-            Triggers
-          </NavLink>
-          <NavLink
-            to="/rules"
-            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
-          >
-            Rules
-          </NavLink>
-          <NavLink
-            to="/model-logs"
-            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
-          >
-            Model Logs
-          </NavLink>
-          <NavLink
-            to="/connectors"
-            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
-          >
-            Connectors
-          </NavLink>
-          <NavLink
-            to="/live"
-            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
-          >
-            Live
-          </NavLink>
-          <NavLink
-            to="/settings"
-            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
-          >
-            Settings
-          </NavLink>
-          <NavLink
-            to="/api-docs"
-            className={({ isActive }) => isActive ? 'nav-link active' : 'nav-link'}
-          >
-            API Docs
-          </NavLink>
-        </nav>
-        <main className="main-content">
-          <Status />
-          <Routes>
-            <Route path="/" element={<Navigate to="/settings?tab=monitoring" replace />} />
-            <Route path="/settings" element={<SettingsPage {...settingsSharedProps} />} />
-            <Route
-              path="/rules"
-              element={(
-                <SettingsPage
-                  {...settingsSharedProps}
-                  forcedTab="rules"
-                  hideTabBar
-                  pageTitle="Rules"
-                  pageSubtitle="Define detector and anomaly trigger rules without mixing them into the main settings tabs."
-                />
-              )}
-            />
-            <Route
-              path="/connectors"
-              element={(
-                <SettingsPage
-                  {...settingsSharedProps}
-                  forcedTab="connectors"
-                  hideTabBar
-                  pageTitle="Connectors"
-                  pageSubtitle="Manage outbound trigger delivery channels separately from core workspace settings."
-                />
-              )}
-            />
-            <Route path="/monitoring" element={<Navigate to="/settings?tab=monitoring" replace />} />
-            <Route path="/live" element={<LivePage />} />
-            <Route path="/api-docs" element={<ApiDocsPage />} />
-            <Route path="/incidents" element={<IncidentPage />} />
-            <Route path="/model-logs" element={<ModelLogsPage />} />
-            <Route path="/incident/:incidentId" element={<Incident />} />
-            <Route path="/entities" element={<Navigate to="/rules" replace />} />
-            <Route path="/entity/:entityId" element={<Navigate to="/rules" replace />} />
-            <Route path="/poi" element={<Navigate to="/settings?tab=sources" replace />} />
-            <Route path="/poi/:poiId" element={<Navigate to="/settings?tab=sources" replace />} />
-          </Routes>
-        </main>
-      </div>
+      <AppShell
+        appearanceError={appearanceError}
+        appearanceLoaded={appearanceLoaded}
+        currentThemeKey={theme}
+        isSavingAppearance={isSavingAppearance}
+        onSaveAppearance={saveAppearance}
+        themeOptions={THEME_OPTIONS}
+      />
     </Router>
   );
 };
+
 export default App;

@@ -59,6 +59,21 @@ class InputSourceModelTests(unittest.TestCase):
         )
         self.assertEqual(source.source_value, 1)
 
+    def test_video_upload_forces_frame_skip_mode(self):
+        source = InputSource(
+            kind="video_upload",
+            label="Evidence Clip",
+            tasks=["bag"],
+            upload_id=7,
+            frame_processing_mode="target_frame_rate",
+            process_every_n_frames=3,
+            target_frame_rate=2.5,
+        )
+        self.assertEqual(source.frame_processing_mode, "frame_skip")
+        self.assertIsNone(source.target_frame_rate)
+        self.assertEqual(source.effective_frame_processing_mode, "frame_skip")
+        self.assertEqual(source.effective_process_every_n_frames, 3)
+
 
 @unittest.skipUnless(PYDANTIC_AVAILABLE, "pydantic is not installed")
 class AppearanceSettingsModelTests(unittest.TestCase):

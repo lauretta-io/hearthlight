@@ -91,3 +91,28 @@ test('shows backend preview failure message when preview image load fails', asyn
 
   expect(await screen.findByText(/The preview stream could not be opened/i)).toBeTruthy();
 });
+
+test('keeps the same preview element mounted when source payload stays unchanged', async () => {
+  let container;
+  await act(async () => {
+    ({ container } = render(<LivePage />));
+  });
+
+  let firstPreviewImage;
+  await waitFor(() => {
+    firstPreviewImage = container.querySelector('img.live-card__media');
+    expect(firstPreviewImage).toBeTruthy();
+  });
+
+  await act(async () => {
+    jest.advanceTimersByTime(5000);
+  });
+
+  let refreshedPreviewImage;
+  await waitFor(() => {
+    refreshedPreviewImage = container.querySelector('img.live-card__media');
+    expect(refreshedPreviewImage).toBeTruthy();
+  });
+
+  expect(refreshedPreviewImage).toBe(firstPreviewImage);
+});

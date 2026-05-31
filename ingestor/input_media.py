@@ -23,9 +23,11 @@ from ..shared.utils.input_sources import (
     is_webcam_source,
     open_capture,
 )
+from ..shared.utils.queueing import DROP_OLDEST, bounded_put
 
 logger = logging.getLogger(__name__)
 RECONNECT_MAX_TRIES = 5
+FRAMES_THREAD_MAX_QUEUE = int(os.environ.get("HEARTHLIGHT_FRAMES_QUEUE_MAX", "10"))
 
 
 def _read_exactly(stream, size: int) -> bytes | None:
@@ -49,8 +51,9 @@ class FramesThread(Thread):
     def __init__(self, capture, max_queue_length=10, max_fps=None):
         super().__init__(name=self.__class__.__name__)
         self.process = False
-        self.queue = queue.Queue()
-        self.max_queue_length = max_queue_length
+        self.max_queue_length = max(1, int(max_queue_length or FRAMES_THREAD_MAX_QUEUE))
+        self.queue = queue.Queue(maxsize=self.max_queue_length)
+        self.frames_dropped = 0
 
         self.capture = capture
         self.max_fps = max_fps
@@ -61,9 +64,6 @@ class FramesThread(Thread):
         frame_id = 0
         start = time.time()
         while self.process:
-            if self.queue.qsize() >= self.max_queue_length:
-                time.sleep(SHORT_SLEEP)
-                continue
             status, frame_list = self.capture.get_frames()
             if status:
                 frame_id += 1
@@ -71,7 +71,15 @@ class FramesThread(Thread):
                     frame_id=frame_id,
                     frames=frame_list,
                 )
-                self.queue.put(frames)
+                inserted, dropped_existing = bounded_put(
+                    self.queue,
+                    frames,
+                    overflow_policy=DROP_OLDEST,
+                )
+                if dropped_existing:
+                    self.frames_dropped += 1
+                if not inserted:
+                    time.sleep(SHORT_SLEEP)
 
             if self.max_fps is not None:
                 elapsed_time = time.time() - start
@@ -580,6 +588,7 @@ class Recorder:
         self.start_timestamp = None
         self._first_frame_event = Event()
         self.log_thread = Thread(target=self.log)
+        self.log_thread.daemon = True
         self.log_thread.start()
 
         self._first_frame_event.wait(timeout=10)

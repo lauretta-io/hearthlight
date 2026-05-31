@@ -13,7 +13,7 @@ from .routes.operations_routes import operations_router
 
 app = FastAPI(
     title="Hearthlight API",
-    version="0.8.0",
+    version="0.8.1",
     description="Hearthlight control-plane and runtime management API.",
 )
 MAX_REQUEST_BYTES = int(os.environ.get("WEBAPP_MAX_REQUEST_BYTES", str(5 * 1024 * 1024)))
@@ -95,6 +95,13 @@ def _is_loopback_host(value: str | None) -> bool:
         return host.lower() == "localhost"
 
 
+def _loopback_hosts_align(origin_host: str | None, host_name: str | None) -> bool:
+    explicit_hosts = [host for host in (origin_host, host_name) if host]
+    if not explicit_hosts:
+        return False
+    return all(_is_loopback_host(host) for host in explicit_hosts)
+
+
 def _extract_hostname(header_value: str | None) -> str | None:
     raw_value = str(header_value or "").strip()
     if not raw_value:
@@ -119,10 +126,10 @@ def request_is_local_only(request: Request) -> bool:
     origin_host = _extract_hostname(request.headers.get("origin"))
     host_header = request.headers.get("host")
     host_name = _extract_hostname(host_header)
+    has_explicit_hosts = bool(origin_host or host_name)
 
-    explicit_hosts = [host for host in (origin_host, host_name) if host]
-    if explicit_hosts:
-        if not all(_is_loopback_host(host) for host in explicit_hosts):
+    if has_explicit_hosts:
+        if not _loopback_hosts_align(origin_host, host_name):
             return False
         if LOCAL_STACK_MODE:
             return True
@@ -135,7 +142,7 @@ def request_is_local_only(request: Request) -> bool:
     if _is_loopback_host(real_ip) and forwarded_hosts and all(_is_loopback_host(host) for host in forwarded_hosts):
         return True
 
-    return not explicit_hosts
+    return not has_explicit_hosts
 
 
 @app.middleware("http")

@@ -7,6 +7,7 @@ from typing import List
 from datetime import datetime
 import subprocess
 from pathlib import Path
+from threading import Event, Lock, Thread
 
 import cv2
 import numpy as np
@@ -34,7 +35,9 @@ from ...shared.models.OperationsModels import (
     POIResult,
 )
 from ...shared.constants import EntityType, IncidentStatus, IncidentType
-from ...shared.utils.alert_rules import ensure_alert_rule_tables
+from ...shared.utils.alert_rules import build_alert_incident_title, ensure_alert_rule_tables
+from ...shared.utils.connector_delivery_log import list_connector_delivery_events
+from ...shared.utils.monitoring_feed import parse_serialized_json
 from ...shared.rabbit_messenger import ResolutionPublisher
 from ...shared.models.DataModels import ResolutionMessage
 from ...shared.utils.security import is_valid_incident_status_transition
@@ -47,6 +50,42 @@ ENTITY_IMAGE_DIR = Path(os.environ.get("ENTITY_IMAGE_DIR", "shared/output/entity
 INCIDENT_STREAM_POLL_INTERVAL = float(
     os.environ.get("OPERATIONS_INCIDENT_STREAM_POLL_INTERVAL", "1.0")
 )
+INCIDENT_STREAM_CACHE_WARMUP_TIMEOUT_SECONDS = float(
+    os.environ.get("OPERATIONS_INCIDENT_STREAM_CACHE_WARMUP_TIMEOUT_SECONDS", "2.0")
+)
+
+
+class IncidentStreamStateCache(Thread):
+    def __init__(self):
+        super().__init__(name="IncidentStreamStateCache", daemon=True)
+        self._state = None
+        self._lock = Lock()
+        self._stop_event = Event()
+        self._ready_event = Event()
+
+    def get_state(self):
+        with self._lock:
+            return self._state
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        while not self._stop_event.is_set():
+            try:
+                state = _build_incident_stream_state()
+                with self._lock:
+                    self._state = state
+                self._ready_event.set()
+            except Exception:
+                logger.exception("Failed to refresh incident stream state cache")
+            self._stop_event.wait(INCIDENT_STREAM_POLL_INTERVAL)
+
+    def wait_until_ready(self, timeout: float):
+        self._ready_event.wait(timeout)
+
+
+incident_stream_state_cache = None
 
 
 def get_resolution_publisher():
@@ -58,9 +97,25 @@ def get_resolution_publisher():
 
 def shutdown_operations_resources():
     global resolution_publisher
+    global incident_stream_state_cache
     if resolution_publisher is not None:
         resolution_publisher.close()
         resolution_publisher = None
+    if incident_stream_state_cache is not None:
+        incident_stream_state_cache.stop()
+        incident_stream_state_cache.join(timeout=2)
+        incident_stream_state_cache = None
+
+
+def get_incident_stream_state_cache():
+    global incident_stream_state_cache
+    if incident_stream_state_cache is None or not incident_stream_state_cache.is_alive():
+        incident_stream_state_cache = IncidentStreamStateCache()
+        incident_stream_state_cache.start()
+        incident_stream_state_cache.wait_until_ready(
+            INCIDENT_STREAM_CACHE_WARMUP_TIMEOUT_SECONDS
+        )
+    return incident_stream_state_cache
 
 
 def get_ffmpeg_binary():
@@ -100,6 +155,48 @@ def clip_bbox_to_frame(bbox: list[int], width: int, height: int):
     return [left, top, right, bottom]
 
 
+def _read_frame_from_recording(
+    *,
+    recording_path: str,
+    seek_seconds: float,
+    width: int,
+    height: int,
+):
+    command = [
+        get_ffmpeg_binary(),
+        "-i", recording_path,
+        "-ss", str(max(0.0, seek_seconds)),
+        "-frames:v", "1",
+        "-f", "rawvideo",
+        "-pix_fmt", "bgr24",
+        "pipe:1",
+    ]
+    process = start_ffmpeg(command)
+    frame_size = width * height * 3
+    raw_frame = process.stdout.read(frame_size)
+    process.stdout.close()
+    process.stderr.close()
+    return_code = process.wait()
+    if return_code != 0 or len(raw_frame) != frame_size:
+        return None
+    try:
+        return np.frombuffer(raw_frame, dtype=np.uint8).reshape((height, width, 3))
+    except Exception:
+        logger.exception("Failed to decode extracted frame from recording")
+        return None
+
+
+def _encode_png_bytes(image) -> bytes | None:
+    try:
+        success, buffer = cv2.imencode(".png", image)
+    except Exception:
+        logger.exception("Failed to encode PNG image")
+        return None
+    if not success:
+        return None
+    return bytes(buffer)
+
+
 def start_ffmpeg(command: list[str]):
     try:
         process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -136,15 +233,60 @@ def get_run_identifiers(db: Session = Depends(get_db)):
 
 
 @operations_router.get("/incidents", response_model=List[IncidentCard])
-def incident_cards(run_identifier: str, include_crop: bool = False, db: Session = Depends(get_db)):
+def incident_cards(
+    run_identifier: str | None = None,
+    include_crop: bool = False,
+    filter_mode: str = "new_this_run",
+    db: Session = Depends(get_db),
+):
+    normalized_filter_mode = str(filter_mode or "new_this_run").strip().lower()
+    if normalized_filter_mode not in {"new_this_run", "all"}:
+        raise HTTPException(status_code=400, detail="filter_mode must be new_this_run or all")
+
+    if normalized_filter_mode == "all":
+        db_incidents = (
+            db.query(SQLModels.Incident)
+            .order_by(SQLModels.Incident.created_at.desc(), SQLModels.Incident.id.desc())
+            .all()
+        )
+        if not db_incidents:
+            return []
+        run_lookup = {
+            row.id: row.run_identifier
+            for row in db.query(SQLModels.Run).filter(
+                SQLModels.Run.id.in_({incident.run_id for incident in db_incidents})
+            ).all()
+        }
+        return [
+            get_incident_card(
+                db_incident,
+                db,
+                include_crop=include_crop,
+                run_identifier=run_lookup.get(db_incident.run_id),
+            )
+            for db_incident in db_incidents
+        ]
+
+    if not run_identifier:
+        raise HTTPException(status_code=400, detail="run_identifier is required for new_this_run filter mode")
     run = db.query(SQLModels.Run).filter_by(run_identifier=run_identifier).first()
     if run is None:
         raise HTTPException(status_code=404, detail="run not found")
-    db_incidents = db.query(SQLModels.Incident).filter_by(run_id=run.id).order_by(SQLModels.Incident.created_at).all()
+    db_incidents = (
+        db.query(SQLModels.Incident)
+        .filter_by(run_id=run.id)
+        .order_by(SQLModels.Incident.created_at.desc(), SQLModels.Incident.id.desc())
+        .all()
+    )
     if db_incidents is None:
         return []
     return [
-        get_incident_card(db_incident, db, include_crop=include_crop)
+        get_incident_card(
+            db_incident,
+            db,
+            include_crop=include_crop,
+            run_identifier=run.run_identifier,
+        )
         for db_incident in db_incidents
     ]
 
@@ -313,12 +455,13 @@ def _format_sse_event(event_name: str, payload: dict):
 async def operations_events(request: Request):
     async def event_generator():
         previous_state = None
+        cache = get_incident_stream_state_cache()
 
         while True:
             if await request.is_disconnected():
                 break
 
-            state = _build_incident_stream_state()
+            state = cache.get_state() or _build_incident_stream_state()
             if previous_state is None:
                 previous_state = state
                 yield _format_sse_event("snapshot", state)
@@ -513,6 +656,25 @@ def get_anomaly_video(event_id: str, run_identifier: str, db: Session = Depends(
     return StreamingResponse(iter_process_output(process), media_type="video/mp4")
 
 
+@operations_router.head("/incident_image/")
+def get_incident_image_headers(incident_id: str, db: Session = Depends(get_db)):
+    get_db_indicent(incident_id, db)
+    return Response(content=None, headers={"Content-Type": "image/png"})
+
+
+@operations_router.get("/incident_image/")
+def get_incident_image(incident_id: str, db: Session = Depends(get_db)):
+    db_incident = get_db_indicent(incident_id, db)
+    alert_row = get_alert_incident_row(db_incident.id, db)
+    if alert_row is None:
+        raise HTTPException(status_code=400, detail="boxed image is only available for detection triggers")
+    annotated = _build_incident_detection_image(db_incident, db)
+    image_bytes = _encode_png_bytes(annotated)
+    if image_bytes is None:
+        raise HTTPException(status_code=500, detail="failed to encode detection image")
+    return Response(content=image_bytes, media_type="image/png")
+
+
 def resolve_entity_id(db_id: int, entity_type: str, db: Session) -> int:
 
     db_entity_type = "PERSON" if entity_type == EntityType.PERSON else "BAG"
@@ -571,8 +733,69 @@ def get_alert_incident_row(incident_db_id: int, db: Session):
     )
 
 
-def get_incident_card(incident: SQLModels.Incident, db: Session, include_crop=True):
+def _format_delivery_summary(trigger_id: str | None) -> str | None:
+    if not trigger_id:
+        return None
+    summaries: list[str] = []
+    seen: set[tuple[str, str]] = set()
+    for event in list_connector_delivery_events():
+        metadata = event.get("metadata") or {}
+        if metadata.get("trigger_id") != trigger_id:
+            continue
+        label = str(metadata.get("connector_label") or metadata.get("connector_key") or "Connector").strip()
+        if not label:
+            label = "Connector"
+        status = str(metadata.get("status") or "").strip().lower()
+        if status == "sent":
+            text = f"{label} sent"
+        elif status == "error":
+            text = f"{label} failed"
+        else:
+            text = f"{label} {status}".strip()
+        key = (label, status)
+        if key in seen:
+            continue
+        seen.add(key)
+        summaries.append(text)
+    return " · ".join(summaries) if summaries else None
+
+
+def _format_anomaly_title(category: str | None, visible_items: list[str], visible_activities: list[str], fallback_title: str | None = None) -> str:
+    if visible_activities:
+        activity = str(visible_activities[0]).replace("_", " ").strip().title()
+        if activity:
+            return f"Behavior Anomaly: {activity}"
+    if visible_items:
+        item = str(visible_items[0]).replace("_", " ").strip().title()
+        if item:
+            return f"Object Anomaly: {item}"
+    if fallback_title:
+        return fallback_title
+    normalized = str(category or "Anomaly").replace("_", " ").strip().title()
+    return f"Anomaly: {normalized}" if normalized else "Anomaly"
+
+
+def get_incident_card(
+    incident: SQLModels.Incident,
+    db: Session,
+    include_crop=True,
+    run_identifier: str | None = None,
+):
     alert_row = get_alert_incident_row(incident.id, db)
+    anomaly_row = None
+    if incident.incident_type == IncidentType.ANOMALY and run_identifier:
+        run_row = db.query(SQLModels.Run).filter_by(run_identifier=run_identifier).first()
+        if run_row is not None:
+            anomaly_row = (
+                db.query(SQLModels.AnomalyEvent)
+                .filter_by(
+                    run_id=run_row.id,
+                    camera_id=incident.camera_id,
+                    is_deleted=False,
+                )
+                .order_by(SQLModels.AnomalyEvent.created_at.desc(), SQLModels.AnomalyEvent.id.desc())
+                .first()
+            )
     if include_crop:
         model = SQLModels.IncidentPersonMapping
         person_mapping = db.query(model).filter_by(incident_id=incident.id).first()
@@ -596,20 +819,40 @@ def get_incident_card(incident: SQLModels.Incident, db: Session, include_crop=Tr
             crop = None
     else:
         crop = None
+    anomaly_visible_items = parse_serialized_json(getattr(anomaly_row, "visible_items_json", None), []) if anomaly_row is not None else []
+    anomaly_visible_activities = parse_serialized_json(getattr(anomaly_row, "visible_activities_json", None), []) if anomaly_row is not None else []
+    delivery_summary = _format_delivery_summary(create_incident_id(incident))
+    metadata = None
+    display_title = None
+    if alert_row is not None:
+        display_title = build_alert_incident_title(
+            alert_row.signal_family,
+            alert_row.matched_target,
+        )
+        metadata = {
+            "signal_family": alert_row.signal_family,
+            "matched_target": alert_row.matched_target,
+            "confidence": float(alert_row.confidence),
+        }
+    elif anomaly_row is not None:
+        display_title = _format_anomaly_title(
+            anomaly_row.category,
+            anomaly_visible_items if isinstance(anomaly_visible_items, list) else [],
+            anomaly_visible_activities if isinstance(anomaly_visible_activities, list) else [],
+            anomaly_row.title,
+        )
+        metadata = {
+            "category": anomaly_row.category,
+            "score": float(anomaly_row.score or 0.0),
+        }
     return IncidentCard(
+        run_identifier=run_identifier,
         incident_id=create_incident_id(incident),
         incident_type=incident.incident_type,
-        display_title=alert_row.title if alert_row is not None else None,
+        display_title=display_title,
         alert_level=alert_row.alert_level if alert_row is not None else None,
-        metadata=(
-            {
-                "signal_family": alert_row.signal_family,
-                "matched_target": alert_row.matched_target,
-                "confidence": float(alert_row.confidence),
-            }
-            if alert_row is not None
-            else None
-        ),
+        metadata=metadata,
+        delivery_summary=delivery_summary,
         incident_time=incident.created_at.isoformat(),
         status=incident.status,
         location=Location(camera_id=incident.camera_id, zone_id=incident.zone_id),
@@ -676,42 +919,21 @@ def get_journey_crop(journey_node: SQLModels.JourneyNode, db: Session):
     run_id = journey_node.run_id
 
     camera = get_db_camera(cam_id, run_id, db)
-    require_existing_file(camera.cam_recording_path, "camera recording")
+    recording_path = resolve_camera_recording_path(camera.cam_recording_path)
+    require_existing_file(recording_path, "camera recording")
 
     recording_start_time = camera.start_timestamp
     seek_seconds = max(0.0, journey_node.start_timestamp - recording_start_time)
-
-    # fmt: off
-    command = [
-        get_ffmpeg_binary(),
-        "-i", camera.cam_recording_path,    # Input file
-        "-ss", str(seek_seconds),           # Output seek — decodes from keyframe, avoids HEVC VPS/PPS errors
-        "-frames:v", "1",                  # Extract exactly 1 frame
-        "-f", "rawvideo",                  # Output raw video (not JPEG)
-        "-pix_fmt", "bgr24",               # BGR format for OpenCV
-        "pipe:1",                          # Output to stdout
-    ]
-    # fmt: on
-
-    process = start_ffmpeg(command)
-
     width = camera.width
     height = camera.height
-
-    frame_size = width * height * 3
-
-    raw_frame = process.stdout.read(frame_size)
-    process.stdout.close()
-    process.stderr.close()
-    return_code = process.wait()
-    if return_code != 0 or len(raw_frame) != frame_size:
+    frame = _read_frame_from_recording(
+        recording_path=recording_path,
+        seek_seconds=seek_seconds,
+        width=width,
+        height=height,
+    )
+    if frame is None:
         logger.warning("ffmpeg failed to extract frame for journey node %s", journey_node.id)
-        return None
-
-    try:
-        frame = np.frombuffer(raw_frame, dtype=np.uint8).reshape((height, width, 3))
-    except Exception:
-        logger.exception("Failed to decode frame for journey node %s", journey_node.id)
         return None
 
     bbox = clip_bbox_to_frame([int(x) for x in journey_node.crop_bbox], width, height)
@@ -732,24 +954,156 @@ def get_journey_crop(journey_node: SQLModels.JourneyNode, db: Session):
     return encode_base64(crop)
 
 
+def _get_incident_detection_journey_node(
+    incident: SQLModels.Incident,
+    db: Session,
+) -> SQLModels.JourneyNode | None:
+    entity_candidates: list[tuple[int, str]] = []
+    person_mappings = (
+        db.query(SQLModels.IncidentPersonMapping)
+        .filter_by(incident_id=incident.id)
+        .order_by(SQLModels.IncidentPersonMapping.id.asc())
+        .all()
+    )
+    for mapping in person_mappings:
+        entity_candidates.append((int(mapping.person_id), EntityType.PERSON))
+    bag_mappings = (
+        db.query(SQLModels.IncidentBagMapping)
+        .filter_by(incident_id=incident.id)
+        .order_by(SQLModels.IncidentBagMapping.id.asc())
+        .all()
+    )
+    for mapping in bag_mappings:
+        entity_candidates.append((int(mapping.bag_id), EntityType.BAG))
+
+    if not entity_candidates:
+        return None
+
+    incident_timestamp = incident.timestamp
+    if incident_timestamp is None and incident.created_at is not None:
+        incident_timestamp = incident.created_at.timestamp()
+
+    best_node = None
+    best_distance = None
+    for entity_id, entity_type in entity_candidates:
+        node_db_ids = get_journey_node_ids(entity_id, entity_type, db)
+        if not node_db_ids:
+            continue
+        query = (
+            db.query(SQLModels.JourneyNode)
+            .filter(SQLModels.JourneyNode.id.in_(node_db_ids))
+            .filter(SQLModels.JourneyNode.is_deleted.is_(False))
+        )
+        if incident.camera_id is not None:
+            query = query.filter(
+                or_(
+                    SQLModels.JourneyNode.camera_id == incident.camera_id,
+                    SQLModels.JourneyNode.camera_id.is_(None),
+                )
+            )
+        candidate_nodes = query.all()
+        if not candidate_nodes:
+            continue
+        if incident_timestamp is None:
+            candidate_nodes.sort(key=lambda node: node.start_timestamp or 0.0, reverse=True)
+            return candidate_nodes[0]
+        for node in candidate_nodes:
+            node_time = node.start_timestamp
+            if node_time is None:
+                continue
+            distance = abs(float(node_time) - float(incident_timestamp))
+            if best_distance is None or distance < best_distance:
+                best_distance = distance
+                best_node = node
+    return best_node
+
+
+def _build_incident_detection_image(
+    incident: SQLModels.Incident,
+    db: Session,
+):
+    journey_node = _get_incident_detection_journey_node(incident, db)
+    if journey_node is None:
+        raise HTTPException(status_code=404, detail="detection journey frame not found")
+    camera_id = journey_node.camera_id if journey_node.camera_id is not None else incident.camera_id
+    if camera_id is None:
+        raise HTTPException(status_code=404, detail="detection camera recording not found")
+    camera = get_db_camera(camera_id, journey_node.run_id, db)
+    recording_path = resolve_camera_recording_path(camera.cam_recording_path)
+    require_existing_file(recording_path, "camera recording")
+    seek_seconds = max(0.0, (journey_node.start_timestamp or 0.0) - (camera.start_timestamp or 0.0))
+    frame = _read_frame_from_recording(
+        recording_path=recording_path,
+        seek_seconds=seek_seconds,
+        width=camera.width,
+        height=camera.height,
+    )
+    if frame is None:
+        raise HTTPException(status_code=404, detail="detection frame could not be extracted")
+    bbox = clip_bbox_to_frame(
+        [int(x) for x in (journey_node.crop_bbox or [])],
+        camera.width,
+        camera.height,
+    )
+    if bbox is None:
+        raise HTTPException(status_code=404, detail="detection bounding box not available")
+    annotated = frame.copy()
+    cv2.rectangle(annotated, (bbox[0], bbox[1]), (bbox[2], bbox[3]), (26, 126, 255), 3)
+    return annotated
+
+
 def get_incident(incident_id: str, incident: SQLModels.Incident, db: Session):
     entities, crop = get_associated_entities_incident(incident, db)
     update_history = get_incident_update_history(incident_id, incident, db)
     alert_row = get_alert_incident_row(incident.id, db)
+    run_row = db.query(SQLModels.Run).filter_by(id=incident.run_id).first() if incident.run_id is not None else None
+    anomaly_row = None
+    if incident.incident_type == IncidentType.ANOMALY:
+        anomaly_row = (
+            db.query(SQLModels.AnomalyEvent)
+            .filter_by(
+                run_id=incident.run_id,
+                camera_id=incident.camera_id,
+                is_deleted=False,
+            )
+            .order_by(SQLModels.AnomalyEvent.created_at.desc(), SQLModels.AnomalyEvent.id.desc())
+            .first()
+        )
+    anomaly_visible_items = parse_serialized_json(getattr(anomaly_row, "visible_items_json", None), []) if anomaly_row is not None else []
+    anomaly_visible_activities = parse_serialized_json(getattr(anomaly_row, "visible_activities_json", None), []) if anomaly_row is not None else []
+    display_title = None
+    metadata = None
+    if alert_row is not None:
+        display_title = build_alert_incident_title(
+            alert_row.signal_family,
+            alert_row.matched_target,
+        )
+        metadata = {
+            "signal_family": alert_row.signal_family,
+            "matched_target": alert_row.matched_target,
+            "confidence": float(alert_row.confidence),
+        }
+    elif anomaly_row is not None:
+        display_title = _format_anomaly_title(
+            anomaly_row.category,
+            anomaly_visible_items if isinstance(anomaly_visible_items, list) else [],
+            anomaly_visible_activities if isinstance(anomaly_visible_activities, list) else [],
+            anomaly_row.title,
+        )
+        metadata = {
+            "category": anomaly_row.category,
+            "score": float(anomaly_row.score or 0.0),
+        }
     return Incident(
+        run_identifier=run_row.run_identifier if run_row is not None else None,
         incident_id=incident_id,
         incident_type=incident.incident_type,
-        display_title=alert_row.title if alert_row is not None else None,
+        display_title=display_title,
         alert_level=alert_row.alert_level if alert_row is not None else None,
-        metadata=(
-            {
-                "signal_family": alert_row.signal_family,
-                "matched_target": alert_row.matched_target,
-                "confidence": float(alert_row.confidence),
-            }
-            if alert_row is not None
-            else None
-        ),
+        metadata=metadata,
+        delivery_summary=_format_delivery_summary(incident_id),
+        media_type="image" if alert_row is not None else ("video" if anomaly_row is not None else None),
+        media_event_id=anomaly_row.event_key if anomaly_row is not None else None,
         incident_time=incident.created_at.isoformat(),
         status=incident.status,
         location=Location(camera_id=incident.camera_id, zone_id=incident.zone_id),

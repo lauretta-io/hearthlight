@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { BaseURL } from '../config';
 import { formatDateTime } from '../utils/time';
+import { subscribeToOperationsEvent } from '../utils/sharedEvents';
+import { subscribeToSharedPoll } from '../utils/sharedPolling';
 import '../styles/MonitoringPage.css';
 
 const formatPercent = (value) => (
@@ -14,11 +16,91 @@ const STAGE_LABELS = {
   anomaly_stage_1: 'Heuristic Filter',
   anomaly_stage_2: 'Anomaly Detection',
 };
+const normalizeSourceKindLabel = (kind) => {
+  if (kind === 'camera_url') return 'Camera URL';
+  if (kind === 'video_upload') return 'Uploaded Video';
+  if (kind === 'webcam') return 'Webcam';
+  return kind || 'Unknown';
+};
+const describeFrameProcessing = (source) => {
+  if (source.kind === 'video_upload') {
+    return `Every ${source.effective_process_every_n_frames || source.process_every_n_frames || 1} frame(s)`;
+  }
+  if ((source.frame_processing_mode || 'frame_skip') === 'target_frame_rate') {
+    return `Target ${source.target_frame_rate || 5} FPS`;
+  }
+  return `Every ${source.effective_process_every_n_frames || source.process_every_n_frames || 1} frame(s)`;
+};
+const sanitizeSourcesForApi = (sources) => sources.map((source, index) => ({
+  id: source.id ?? undefined,
+  kind: source.kind,
+  label: source.label,
+  tasks: Array.isArray(source.tasks) && source.tasks.length > 0 ? source.tasks : ['PERSON', 'BAG'],
+  enabled: Boolean(source.enabled),
+  order: Number.isFinite(source.order) ? source.order : index,
+  source_value: source.kind === 'video_upload' ? null : source.source_value,
+  upload_id: source.kind === 'video_upload' ? source.upload_id : null,
+  frame_processing_mode: source.kind === 'video_upload' ? 'frame_skip' : (source.frame_processing_mode || 'frame_skip'),
+  process_every_n_frames: source.kind === 'video_upload'
+    ? Math.max(1, Number(source.process_every_n_frames) || 1)
+    : (source.frame_processing_mode || 'frame_skip') === 'target_frame_rate'
+    ? 1
+    : Math.max(1, Number(source.process_every_n_frames) || 1),
+  target_frame_rate: source.kind === 'video_upload'
+    ? null
+    : (source.frame_processing_mode || 'frame_skip') === 'target_frame_rate'
+    ? Math.max(0.1, Number(source.target_frame_rate) || 5)
+    : null,
+  detector_model_key: source.detector_model_key || null,
+  tracker_model_key: source.tracker_model_key || null,
+  reid_model_key: null,
+  anomaly_stage_1_model_key: source.anomaly_stage_1_model_key || null,
+  anomaly_stage_2_model_key: source.anomaly_stage_2_model_key || null,
+}));
 
 const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const [overview, setOverview] = useState(null);
+  const [mountedModelKeys, setMountedModelKeys] = useState(new Set());
   const [selectedRunIdentifier, setSelectedRunIdentifier] = useState('');
   const [error, setError] = useState(null);
+  const [banner, setBanner] = useState(null);
+  const [busySourceId, setBusySourceId] = useState(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadMountedModels = async () => {
+      try {
+        const response = await fetch(`${BaseURL}/mounted-models`);
+        if (!response.ok) {
+          throw new Error('Failed to load mounted models');
+        }
+        const data = await response.json();
+        if (!isMounted) {
+          return;
+        }
+        const nextKeys = new Set();
+        (Array.isArray(data) ? data : []).forEach((stageEntry) => {
+          (stageEntry?.mounted_model_keys || []).forEach((modelKey) => {
+            if (modelKey) {
+              nextKeys.add(modelKey);
+            }
+          });
+        });
+        setMountedModelKeys(nextKeys);
+      } catch (_fetchError) {
+        if (isMounted) {
+          setMountedModelKeys(new Set());
+        }
+      }
+    };
+
+    loadMountedModels();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!pollingEnabled) {
@@ -53,14 +135,26 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       }
     };
 
-    loadOverview();
-    const intervalId = window.setInterval(loadOverview, 3000);
+    const unsubscribePoll = subscribeToSharedPoll(
+      'monitoring-overview',
+      3000,
+      loadOverview,
+      { runImmediately: true },
+    );
+    const unsubscribeSnapshot = subscribeToOperationsEvent('snapshot', loadOverview);
+    const unsubscribeRuns = subscribeToOperationsEvent('runs.updated', loadOverview);
+    const unsubscribeIncidents = subscribeToOperationsEvent('incidents.updated', loadOverview);
+    const unsubscribeAnomalies = subscribeToOperationsEvent('anomalies.updated', loadOverview);
 
     return () => {
       isMounted = false;
-      window.clearInterval(intervalId);
+      unsubscribePoll();
+      unsubscribeSnapshot();
+      unsubscribeRuns();
+      unsubscribeIncidents();
+      unsubscribeAnomalies();
     };
-  }, [pollingEnabled, selectedRunIdentifier]);
+  }, [pollingEnabled, refreshTick, selectedRunIdentifier]);
 
   const runs = overview?.runs || [];
   const resources = overview?.resources;
@@ -68,7 +162,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const moduleMetrics = Object.entries(resources?.module_metrics || {}).filter(
     ([name]) => ['INGESTOR', 'ANOMALY'].includes(name),
   );
-  const modelHealth = Object.entries(resources?.model_health || {});
+  const modelHealth = Object.entries(resources?.model_health || {}).filter(
+    ([modelKey, health]) => mountedModelKeys.has(modelKey) && Boolean(health?.healthy),
+  );
   const sources = overview?.sources || [];
   const modelBindings = overview?.model_bindings || [];
   const modelRegistrations = overview?.model_registrations || [];
@@ -97,6 +193,81 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     return getDisplayNameForModelKey(effectiveKey, `No ${STAGE_LABELS[stage] || stage}`);
   };
   const formatStageLabel = (stage) => STAGE_LABELS[stage] || stage;
+  const updateSourceEnabledState = async (sourceId, enabled) => {
+    const nextSources = sources.map((source) => (
+      source.id === sourceId
+        ? { ...source, enabled }
+        : source
+    ));
+    const source = sources.find((item) => item.id === sourceId);
+    if (!source) {
+      return;
+    }
+    setBusySourceId(sourceId);
+    try {
+      const saveResponse = await fetch(`${BaseURL}/sources`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(sanitizeSourcesForApi(nextSources)),
+      });
+      const saveData = await saveResponse.json().catch(() => ({}));
+      if (!saveResponse.ok) {
+        throw new Error(saveData.detail || 'Failed to update source state');
+      }
+
+      const remainingEnabledCount = nextSources.filter((item) => item.enabled).length;
+      if (overview?.current_run_id) {
+        const stopResponse = await fetch(`${BaseURL}/stop`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        const stopData = await stopResponse.json().catch(() => ({}));
+        if (!stopResponse.ok) {
+          throw new Error(stopData.detail || 'Failed to restart run');
+        }
+        if (remainingEnabledCount > 0) {
+          const restartResponse = await fetch(`${BaseURL}/start`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+          });
+          const restartData = await restartResponse.json().catch(() => ({}));
+          if (!restartResponse.ok) {
+            throw new Error(restartData.detail || 'Failed to restart run');
+          }
+          setBanner({ kind: 'success', text: `${source.label} updated. The run restarted with the new source set.` });
+        } else {
+          setBanner({ kind: 'success', text: `${source.label} stopped. No active sources remain, so the run was stopped.` });
+        }
+      } else if (enabled) {
+        const startResponse = await fetch(`${BaseURL}/start`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+        const startData = await startResponse.json().catch(() => ({}));
+        if (!startResponse.ok) {
+          throw new Error(startData.detail || 'Failed to start run');
+        }
+        setBanner({ kind: 'success', text: `${source.label} is starting.` });
+      } else if (!enabled) {
+        setBanner({ kind: 'success', text: `${source.label} stopped.` });
+      } else {
+        setBanner({ kind: 'success', text: `${source.label} is enabled for the next run.` });
+      }
+      setRefreshTick((value) => value + 1);
+    } catch (actionError) {
+      setBanner({ kind: 'error', text: actionError.message });
+    } finally {
+      setBusySourceId(null);
+    }
+  };
 
   const content = (
     <div className={embedded ? 'monitor-shell monitor-shell-embedded' : 'monitor-shell'}>
@@ -128,6 +299,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
 
       {error && (
         <div className="monitor-alert monitor-alert-error">{error}</div>
+      )}
+      {banner && (
+        <div className={`monitor-alert monitor-alert-${banner.kind === 'error' ? 'error' : 'info'}`}>{banner.text}</div>
       )}
 
       <div className="monitor-summary-grid">
@@ -341,13 +515,28 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
               <div key={source.id || source.label} className="monitor-source-row">
                 <div>
                   <strong>{source.label}</strong>
-                  <div className="monitor-muted">{source.kind}</div>
+                  <div className="monitor-muted">{normalizeSourceKindLabel(source.kind)} · {describeFrameProcessing(source)}</div>
                   <div className="monitor-muted">
                     {describeEffectiveBinding('detector', source.detector_model_key)} · {describeEffectiveBinding('tracker', source.tracker_model_key)} · {describeEffectiveBinding('anomaly_stage_1', source.anomaly_stage_1_model_key)} · {describeEffectiveBinding('anomaly_stage_2', source.anomaly_stage_2_model_key)}
                   </div>
+                  {(source.capture_fps || source.processed_fps) && (
+                    <div className="monitor-muted">
+                      Capture {source.capture_fps || 'n/a'} FPS · Processed {source.processed_fps || 'n/a'} FPS · Skipped {source.skipped_frames || 0}
+                    </div>
+                  )}
                 </div>
                 <div className="monitor-source-meta">
                   <span className={`monitor-pill monitor-pill-${source.state}`}>{source.state}</span>
+                  <button
+                    type="button"
+                    className={source.enabled ? 'stop-button' : 'start-button'}
+                    disabled={busySourceId === source.id}
+                    onClick={() => updateSourceEnabledState(source.id, !source.enabled)}
+                  >
+                    {busySourceId === source.id
+                      ? (source.enabled ? 'Stopping...' : 'Starting...')
+                      : (source.enabled ? 'Stop Source' : 'Start Source')}
+                  </button>
                 </div>
               </div>
             ))}

@@ -40,7 +40,7 @@ def parse_args() -> argparse.Namespace:
         description="Build, tag, push Hearthlight service images, and optionally update .env to use them.",
     )
     parser.add_argument("--namespace", required=True, help="Docker Hub namespace/org, for example laurettaio")
-    parser.add_argument("--tag", default="0.8.0", help="Published image tag")
+    parser.add_argument("--tag", default="0.8.1", help="Published image tag")
     parser.add_argument(
         "--service",
         action="append",

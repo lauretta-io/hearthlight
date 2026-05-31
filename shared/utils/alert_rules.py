@@ -277,12 +277,20 @@ def build_alert_rule_option_lookup(option_catalog: dict[str, Any]) -> dict[int, 
 def resolve_alert_rule_target_label(target_key: str) -> str:
     normalized = str(target_key or "").strip()
     if normalized.upper() in {"PERSON", "BAG"}:
-        return normalized.lower()
+        return normalized.title()
     return normalized
 
 
-def build_alert_incident_title(target_key: str) -> str:
-    return f"Alert: {resolve_alert_rule_target_label(target_key)}"
+def build_alert_incident_title(signal_family: str, target_key: str) -> str:
+    target_label = resolve_alert_rule_target_label(target_key)
+    normalized_family = str(signal_family or "").strip().lower()
+    if normalized_family == ALERT_SIGNAL_FAMILY_DETECTOR:
+        return f"Detector: {target_label}"
+    if normalized_family == ALERT_SIGNAL_FAMILY_ANOMALY_ACTIVITY:
+        return f"Behavior Anomaly: {target_label}"
+    if normalized_family == ALERT_SIGNAL_FAMILY_ANOMALY_OBJECT:
+        return f"Object Anomaly: {target_label}"
+    return f"Trigger: {target_label}"
 
 
 def resolve_alert_level_label(level: str) -> str:

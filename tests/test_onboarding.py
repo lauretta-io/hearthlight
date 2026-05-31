@@ -59,6 +59,18 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(args.lm_studio_api_base_url, "http://localhost:1234/v1")
         self.assertEqual(args.lm_studio_model_name, "qwen3-local")
 
+    def test_start_parser_skips_reset_db_by_default(self):
+        parser = build_parser()
+        args = parser.parse_args(["start"])
+        self.assertEqual(args.command, "start")
+        self.assertTrue(args.skip_reset_db)
+
+    def test_start_parser_can_opt_into_reset_db(self):
+        parser = build_parser()
+        args = parser.parse_args(["start", "--reset-db"])
+        self.assertEqual(args.command, "start")
+        self.assertFalse(args.skip_reset_db)
+
     def test_detect_system_package_plan_for_apt(self):
         with (
             patch("hearthlight.onboarding._libpq_available", return_value=False),

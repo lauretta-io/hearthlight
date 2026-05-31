@@ -173,6 +173,7 @@ from ...shared.utils.input_sources import (
     derive_source_error,
     derive_upload_lifecycle_state,
     format_supported_video_extensions,
+    normalize_frame_processing_settings,
     open_capture,
     probe_source_connection,
     source_requires_gpu,
@@ -184,6 +185,7 @@ from ...shared.utils.local_worker_runtime import (
     map_container_path_to_host,
 )
 from ...shared.utils.model_registry import (
+    MODEL_STAGE_DETECTOR,
     OPERATOR_MODEL_STAGES,
     build_default_bindings,
     build_model_health,
@@ -308,11 +310,15 @@ def build_default_connector_zoo_repo_settings() -> ConnectorZooRepoSettings:
 
 def normalize_connector_zoo_catalog_url(catalog_url: str | None) -> str:
     normalized = str(catalog_url or "").strip()
+    legacy_local_default = (
+        CONFIG_PATH.parent.parent / "catalogs" / "connector_zoo_repo.yaml"
+    ).resolve().as_uri()
     if not normalized:
         return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
     if normalized in {
         "https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml",
         "https://github.com/lauretta-io/hearthlight/blob/main/shared/catalogs/connector_zoo_repo.yaml",
+        legacy_local_default,
     }:
         return DEFAULT_CONNECTOR_ZOO_CATALOG_URL
     parsed = urllib_parse.urlparse(normalized)
@@ -827,6 +833,20 @@ def get_upload_dir() -> Path:
     return upload_dir
 
 
+def get_runtime_output_paths() -> list[Path]:
+    candidates = {
+        PROJECT_ROOT / "shared" / "output",
+        PROJECT_ROOT / "src" / "shared" / "output",
+        get_upload_dir(),
+    }
+    try:
+        runtime_output_dir = Path(str(get_cfg().output.output_dir)).resolve()
+        candidates.add(runtime_output_dir)
+    except Exception:
+        logger.debug("Runtime output directory unavailable for resource snapshot", exc_info=True)
+    return [path for path in candidates if path is not None]
+
+
 def persist_resource_snapshot(snapshot: dict):
     with SessionLocal() as db:
         db.add(
@@ -884,6 +904,7 @@ def build_live_resource_snapshot(db: Session) -> dict:
     snapshot = collect_resource_snapshot(
         module_status.copy(),
         disk_path=get_upload_dir(),
+        output_paths=get_runtime_output_paths(),
     )
     snapshot["drift"] = build_resource_drift(
         snapshot,
@@ -1098,12 +1119,32 @@ def ensure_source_template_columns(db: Session) -> None:
             )
         ).all()
     }
+    if "frame_processing_mode" not in existing:
+        db.execute(
+            text(
+                """
+                ALTER TABLE control.input_source_template
+                ADD COLUMN frame_processing_mode VARCHAR(32) NOT NULL DEFAULT 'frame_skip'
+                """
+            )
+        )
+        db.commit()
     if "process_every_n_frames" not in existing:
         db.execute(
             text(
                 """
                 ALTER TABLE control.input_source_template
                 ADD COLUMN process_every_n_frames INTEGER NOT NULL DEFAULT 1
+                """
+            )
+        )
+        db.commit()
+    if "target_frame_rate" not in existing:
+        db.execute(
+            text(
+                """
+                ALTER TABLE control.input_source_template
+                ADD COLUMN target_frame_rate DOUBLE PRECISION
                 """
             )
         )
@@ -1450,6 +1491,18 @@ def build_input_source_response(
     resource_snapshot: dict,
     current_frame_override: int | None = None,
 ):
+    frame_processing = normalize_frame_processing_settings(
+        kind=source_row.kind,
+        frame_processing_mode=getattr(source_row, "frame_processing_mode", "frame_skip"),
+        process_every_n_frames=getattr(source_row, "process_every_n_frames", 1),
+        target_frame_rate=getattr(source_row, "target_frame_rate", None),
+    )
+    runtime_source_details = (
+        module_runtime_details.get(ModuleNames.INGESTOR, {}).get("sources", {})
+        if isinstance(module_runtime_details.get(ModuleNames.INGESTOR), dict)
+        else {}
+    )
+    source_runtime = runtime_source_details.get(str(source_row.id), {})
     current_frame = current_frame_override if current_frame_override is not None else frame_id
     current_total = (
         recording.total_frames
@@ -1473,7 +1526,9 @@ def build_input_source_response(
         source_value=coerce_source_value_for_api(source_row),
         upload_id=source_row.upload_id,
         upload=db_upload_to_api(upload_row),
-        process_every_n_frames=max(1, int(getattr(source_row, "process_every_n_frames", 1) or 1)),
+        frame_processing_mode=frame_processing["frame_processing_mode"],
+        process_every_n_frames=frame_processing["process_every_n_frames"],
+        target_frame_rate=frame_processing["target_frame_rate"],
         detector_model_key=source_row.detector_model_key,
         tracker_model_key=source_row.tracker_model_key,
         reid_model_key=source_row.reid_model_key,
@@ -1487,7 +1542,12 @@ def build_input_source_response(
         ),
         frames_processed=current_frame if source_row.enabled else None,
         total_frames=current_total,
-        fps=None,
+        fps=source_runtime.get("processed_fps"),
+        capture_fps=source_runtime.get("capture_fps"),
+        processed_fps=source_runtime.get("processed_fps"),
+        skipped_frames=source_runtime.get("skipped_frames"),
+        effective_frame_processing_mode=frame_processing["frame_processing_mode"],
+        effective_process_every_n_frames=frame_processing["process_every_n_frames"],
         last_error=effective_error,
         last_activity_at=resource_snapshot.get("updated_at"),
     )
@@ -1561,6 +1621,8 @@ def build_enabled_source_binding_errors(
         errors.extend(validate_source_bindings(bundle, source_row, defaults))
         resolved = resolve_bindings_for_source(source_row, defaults)
         for stage, model_key in resolved.items():
+            if stage == MODEL_STAGE_DETECTOR and not model_key:
+                continue
             if not model_key:
                 errors.append(f"{source_row.label}: no {stage} model is selected")
                 continue
@@ -1788,6 +1850,12 @@ def replace_sources(db: Session, sources: list[InputSource]):
     seen_ids = set()
     persisted_rows = []
     for order, source in enumerate(sources):
+        frame_processing = normalize_frame_processing_settings(
+            kind=source.kind,
+            frame_processing_mode=source.frame_processing_mode,
+            process_every_n_frames=source.process_every_n_frames,
+            target_frame_rate=source.target_frame_rate,
+        )
         for stage in OPERATOR_MODEL_STAGES:
             model_key = getattr(source, get_stage_field_name(stage), None)
             if model_key is not None:
@@ -1811,7 +1879,9 @@ def replace_sources(db: Session, sources: list[InputSource]):
         row.tasks = list(source.tasks)
         row.enabled = source.enabled
         row.sort_order = order
-        row.process_every_n_frames = max(1, int(source.process_every_n_frames or 1))
+        row.frame_processing_mode = frame_processing["frame_processing_mode"]
+        row.process_every_n_frames = frame_processing["process_every_n_frames"]
+        row.target_frame_rate = frame_processing["target_frame_rate"]
         row.detector_model_key = source.detector_model_key
         row.tracker_model_key = source.tracker_model_key
         row.reid_model_key = None
@@ -1865,6 +1935,9 @@ def append_source(db: Session, source: InputSource):
         order=len(existing_sources),
         source_value=source.source_value,
         upload_id=source.upload_id,
+        frame_processing_mode=source.frame_processing_mode,
+        process_every_n_frames=source.process_every_n_frames,
+        target_frame_rate=source.target_frame_rate,
         detector_model_key=source.detector_model_key,
         tracker_model_key=source.tracker_model_key,
         reid_model_key=source.reid_model_key,
@@ -2328,6 +2401,9 @@ def replace_trigger_rules(db: Session, rules: list[TriggerRule]):
     option_lookup = build_alert_rule_option_lookup(
         build_alert_rule_options_response(db).model_dump()
     )
+    connector_components = plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {})
+    connector_rows = list_connector_endpoint_rows(db, enabled_only=False)
+    connector_rows_by_id = {int(row.id): row for row in connector_rows if getattr(row, "id", None) is not None}
 
     for rule in rules:
         if rule.trigger_key not in plugin_component_lookup.get(COMPONENT_TYPE_TRIGGER, {}):
@@ -2361,6 +2437,17 @@ def replace_trigger_rules(db: Session, rules: list[TriggerRule]):
                         f"invalid target '{rule.target_key}' for source {source_id} "
                         f"and signal family {rule.signal_family}"
                     ),
+                )
+        for target_id in list(rule.delivery_target_ids or []):
+            row = connector_rows_by_id.get(int(target_id))
+            if row is None or getattr(row, "is_deleted", False):
+                raise HTTPException(status_code=404, detail=f"connector target {target_id} not found")
+            if not getattr(row, "enabled", False):
+                raise HTTPException(status_code=400, detail=f"connector target {target_id} is disabled")
+            if getattr(row, "connector_key", None) not in connector_components:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"connector target {target_id} is unavailable",
                 )
 
     seen_ids = {rule.id for rule in rules if rule.id is not None}
@@ -3046,11 +3133,19 @@ def process_messages():
                     backpressure = extra.get("backpressure")
                     queue_depths = extra.get("queue_depths")
                     if backpressure is not None:
-                        module_metrics[message.module] = dict(backpressure)
+                        next_metrics = dict(backpressure)
                     elif queue_depths is not None:
-                        module_metrics[message.module] = summarize_queue_backpressure(
-                            queue_depths
-                        )
+                        next_metrics = summarize_queue_backpressure(queue_depths)
+                    else:
+                        next_metrics = module_metrics.get(message.module, {}).copy()
+                    drop_counts = extra.get("drop_counts")
+                    if isinstance(drop_counts, dict):
+                        next_metrics["drop_counts"] = {
+                            str(key): int(value)
+                            for key, value in drop_counts.items()
+                            if value is not None
+                        }
+                    module_metrics[message.module] = next_metrics
                     module_runtime_details.setdefault(message.module, {}).update(
                         dict(extra)
                     )
@@ -3362,17 +3457,34 @@ def build_anomaly_feed_items(
         parsed = parse_serialized_json(value)
         return parsed if isinstance(parsed, list) else []
 
+    def humanize_anomaly_term(value):
+        return str(value or "").replace("_", " ").strip().title()
+
     def build_anomaly_title(row, visible_items, visible_activities):
-        if row.title:
-            return row.title
-        parts = []
-        if visible_items:
-            parts.append(", ".join(str(item) for item in visible_items if item))
         if visible_activities:
-            parts.append(", ".join(str(item) for item in visible_activities if item))
-        if parts:
-            return f"Anomaly found: {'; '.join(parts)}"
-        return row.category
+            activity = humanize_anomaly_term(visible_activities[0])
+            if activity:
+                return f"Behavior Anomaly: {activity}"
+        if visible_items:
+            item = humanize_anomaly_term(visible_items[0])
+            if item:
+                return f"Object Anomaly: {item}"
+        if row.title and not str(row.title).startswith("Anomaly found:"):
+            return row.title
+        category = humanize_anomaly_term(row.category)
+        return f"Anomaly: {category}" if category else "Anomaly"
+
+    def build_anomaly_reasoning(row, visible_items, visible_activities):
+        if visible_activities:
+            activity = humanize_anomaly_term(visible_activities[0])
+            return f"Observed behavior anomaly: {activity}."
+        if visible_items:
+            item = humanize_anomaly_term(visible_items[0])
+            return f"Observed object anomaly candidate involving {item}."
+        if row.category:
+            category = humanize_anomaly_term(row.category)
+            return f"Observed anomaly candidate: {category}."
+        return "Observed anomaly candidate."
 
     return [
         (
@@ -3395,7 +3507,11 @@ def build_anomaly_feed_items(
                 stage_2_model_key=anomaly_row.stage_2_model_key,
                 category=anomaly_row.category,
                 score=anomaly_row.score,
-                reasoning=anomaly_row.reasoning,
+                reasoning=build_anomaly_reasoning(
+                    anomaly_row,
+                    visible_items,
+                    visible_activities,
+                ),
                 visible_items=visible_items,
                 visible_activities=visible_activities,
                 asset_references=[

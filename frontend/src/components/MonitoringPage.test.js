@@ -9,6 +9,14 @@ const buildJsonResponse = (body) =>
 
 beforeEach(() => {
   global.fetch = jest.fn((url) => {
+    if (url.includes('/mounted-models')) {
+      return buildJsonResponse([
+        {
+          stage: 'detector',
+          mounted_model_keys: ['builtin_yolox_s_gpu'],
+        },
+      ]);
+    }
     if (url.includes('/monitoring/overview')) {
       return buildJsonResponse({
         generated_at: '2026-03-14T12:00:00Z',
@@ -56,6 +64,13 @@ beforeEach(() => {
               healthy: true,
               detail: null,
             },
+            prompt_rules_stage_2: {
+              model_key: 'prompt_rules_stage_2',
+              stage: 'anomaly_stage_2',
+              adapter: 'prompt_rules_stage_2',
+              healthy: true,
+              detail: null,
+            },
           },
         },
         runs: [
@@ -77,6 +92,9 @@ beforeEach(() => {
             enabled: true,
             order: 0,
             source_value: 'rtsp://example',
+            frame_processing_mode: 'frame_skip',
+            process_every_n_frames: 2,
+            target_frame_rate: null,
             detector_model_key: 'builtin_yolox_s_gpu',
             tracker_model_key: null,
             reid_model_key: null,
@@ -190,8 +208,11 @@ test('renders monitoring overview and feed endpoint catalog', async () => {
   expect(screen.getByText('Anomalies')).toBeTruthy();
   expect(screen.getByText('Module Backpressure')).toBeTruthy();
   expect(screen.getAllByText('YOLOX Small').length).toBeGreaterThan(0);
+  expect(screen.queryByText('Prompt Rules Stage 2')).toBeNull();
   expect(screen.getByText('database_thread at depth 12')).toBeTruthy();
   expect(screen.getByText('connection refused')).toBeTruthy();
   expect(screen.getByText(/\/feeds\/algorithm/)).toBeTruthy();
   expect(screen.getByText('presence_resume')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Stop Source' })).toBeTruthy();
+  expect(screen.getByText('Camera URL · Every 2 frame(s)')).toBeTruthy();
 });

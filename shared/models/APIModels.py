@@ -150,7 +150,9 @@ class InputSource(BaseModel):
     source_value: str | int | None = None
     upload_id: int | None = None
     upload: UploadedMedia | None = None
+    frame_processing_mode: str = "frame_skip"
     process_every_n_frames: int = Field(default=1, ge=1)
+    target_frame_rate: float | None = Field(default=None, gt=0)
     detector_model_key: str | None = None
     tracker_model_key: str | None = None
     reid_model_key: str | None = None
@@ -160,6 +162,11 @@ class InputSource(BaseModel):
     frames_processed: int | None = None
     total_frames: int | None = None
     fps: float | None = None
+    capture_fps: float | None = None
+    processed_fps: float | None = None
+    skipped_frames: int | None = None
+    effective_frame_processing_mode: str | None = None
+    effective_process_every_n_frames: int | None = None
     last_error: str | None = None
     last_activity_at: str | None = None
 
@@ -170,6 +177,13 @@ class InputSource(BaseModel):
     @field_validator("label")
     def validate_label(cls, value):
         return validate_non_empty_string(value, "label")
+
+    @field_validator("frame_processing_mode")
+    def validate_frame_processing_mode(cls, value):
+        normalized = validate_non_empty_string(str(value), "frame_processing_mode").lower()
+        if normalized not in {"frame_skip", "target_frame_rate"}:
+            raise ValueError("frame_processing_mode must be frame_skip or target_frame_rate")
+        return normalized
 
     @field_validator("tasks", mode="before")
     def normalize_tasks(cls, value):
@@ -193,6 +207,13 @@ class InputSource(BaseModel):
         if self.kind == SOURCE_KIND_VIDEO_UPLOAD:
             if self.upload_id is None:
                 raise ValueError("upload_id is required for video_upload sources")
+            self.frame_processing_mode = "frame_skip"
+            self.target_frame_rate = None
+            self.effective_frame_processing_mode = "frame_skip"
+            self.effective_process_every_n_frames = max(
+                1,
+                int(self.process_every_n_frames or 1),
+            )
         elif self.kind == SOURCE_KIND_WEBCAM:
             if self.source_value is None:
                 raise ValueError("source_value is required for webcam sources")
@@ -206,6 +227,13 @@ class InputSource(BaseModel):
         else:
             if self.source_value is None:
                 raise ValueError("source_value is required for camera_url sources")
+        if self.effective_frame_processing_mode is None:
+            self.effective_frame_processing_mode = self.frame_processing_mode
+        if self.effective_process_every_n_frames is None:
+            self.effective_process_every_n_frames = max(
+                1,
+                int(self.process_every_n_frames or 1),
+            )
         return self
 
 
@@ -227,6 +255,7 @@ class ModuleRuntimeMetrics(BaseModel):
     max_queue_depth: int = 0
     hottest_queue: str | None = None
     queue_depths: dict[str, int] = Field(default_factory=dict)
+    drop_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class ModelRegistration(BaseModel):
@@ -430,6 +459,11 @@ class ResourceSnapshot(BaseModel):
     cpu_percent: float | None = None
     memory_percent: float | None = None
     disk_percent: float | None = None
+    process_rss_mb: float | None = None
+    process_python_heap_mb: float | None = None
+    process_thread_count: int | None = None
+    process_open_file_descriptors: int | None = None
+    output_disk_usage_bytes: int | None = None
     gpus: list[GpuResource] = Field(default_factory=list)
     module_status: dict[str, str] = Field(default_factory=dict)
     module_metrics: dict[str, ModuleRuntimeMetrics] = Field(default_factory=dict)

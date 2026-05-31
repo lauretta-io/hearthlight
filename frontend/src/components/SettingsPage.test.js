@@ -17,7 +17,7 @@ const buildErrorResponse = (status, body) =>
 
 beforeEach(() => {
   let connectorZooRepoSettings = {
-    catalog_url: 'file:///workspace/shared/catalogs/connector_zoo_repo.yaml',
+    catalog_url: 'https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml',
   };
   let repoConnectorZooCatalog = {
     catalog_url: connectorZooRepoSettings.catalog_url,
@@ -34,7 +34,7 @@ beforeEach(() => {
         category: 'integrations',
         enabled: true,
         plugin_key: 'govee_light_connection',
-        plugin_version: '0.8.0',
+        plugin_version: '0.8.1',
         source_url: 'file:///workspace/shared/plugins/govee_light_connection/',
         installed: false,
       },
@@ -53,6 +53,9 @@ beforeEach(() => {
           enabled: true,
           order: 0,
           source_value: 'rtsp://gate-1',
+          frame_processing_mode: 'frame_skip',
+          process_every_n_frames: 1,
+          target_frame_rate: null,
           detector_model_key: null,
           tracker_model_key: null,
           reid_model_key: null,
@@ -159,6 +162,7 @@ beforeEach(() => {
           min_confidence: 0.7,
           anomaly_cutoff: null,
           alert_level: 'high',
+          delivery_target_ids: [41],
         },
       ]);
     }
@@ -173,6 +177,7 @@ beforeEach(() => {
           target_key: 'BAG',
           min_confidence: 0.7,
           alert_level: 'high',
+          delivery_target_ids: [41],
         },
       ]);
     }
@@ -300,6 +305,7 @@ beforeEach(() => {
           min_confidence: 0.7,
           anomaly_cutoff: null,
           alert_level: 'high',
+          delivery_target_ids: [41],
         },
       ]);
     }
@@ -314,6 +320,7 @@ beforeEach(() => {
           target_key: 'BAG',
           min_confidence: 0.7,
           alert_level: 'high',
+          delivery_target_ids: [41],
         },
       ]);
     }
@@ -496,7 +503,9 @@ test('renders source settings and saves to settings endpoint', async () => {
   expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
   expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
   expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
-  expect(screen.getByText('Enable Video AI')).toBeTruthy();
+  expect(screen.getByText('Type')).toBeTruthy();
+  expect(screen.getByText('Camera URL')).toBeTruthy();
+  expect(screen.getByText('Frame Processing')).toBeTruthy();
   expect(screen.getByDisplayValue('1')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Update Source Settings' })).toBeTruthy();
 
@@ -512,7 +521,7 @@ test('renders source settings and saves to settings endpoint', async () => {
   });
 });
 
-test('hides source model overrides when video AI is disabled', async () => {
+test('keeps source overrides visible and exposes target frame rate mode', async () => {
   await act(async () => {
     render(
       <MemoryRouter initialEntries={['/settings?tab=sources']}>
@@ -524,12 +533,36 @@ test('hides source model overrides when video AI is disabled', async () => {
   expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
   expect(screen.getByText('Detector Override')).toBeTruthy();
 
-  fireEvent.click(screen.getByLabelText('Enable Video AI'));
+  fireEvent.change(screen.getByDisplayValue('Select Frame Skip'), {
+    target: { value: 'target_frame_rate' },
+  });
 
   await waitFor(() => {
-    expect(screen.queryByText('Detector Override')).toBeNull();
+    expect(screen.getByText('Target Frame Rate')).toBeTruthy();
   });
-  expect(screen.getByText(/video ai is disabled for this source/i)).toBeTruthy();
+  expect(screen.getByText('Detector Override')).toBeTruthy();
+});
+
+test('limits run model bindings to mounted models only', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
+
+  const detectorOverrideSelect = screen.getByLabelText('Detector Override');
+  const detectorOverrideLabels = Array.from(detectorOverrideSelect.querySelectorAll('option')).map((option) => option.textContent);
+  expect(detectorOverrideLabels).toContain('YOLOX Small (GPU)');
+  expect(detectorOverrideLabels).not.toContain('YOLOX Tiny (CPU)');
+
+  const defaultDetectorSelect = screen.getByLabelText('Detector');
+  const defaultDetectorLabels = Array.from(defaultDetectorSelect.querySelectorAll('option')).map((option) => option.textContent);
+  expect(defaultDetectorLabels).toContain('YOLOX Small (GPU)');
+  expect(defaultDetectorLabels).not.toContain('YOLOX Tiny (CPU)');
 });
 
 test('renders initialization tab content when selected', async () => {
@@ -584,9 +617,19 @@ test('renders split rules and saves through the trigger rules endpoint', async (
   expect(screen.queryByRole('tab', { name: 'Rules' })).toBeNull();
   expect(screen.getByText('Detection Rules')).toBeTruthy();
   expect(screen.getByText('Anomaly Detection Rules')).toBeTruthy();
+  expect(screen.getByText('Bag Watch')).toBeTruthy();
+  expect(screen.getByText('Ops Chat')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Edit' }));
+  });
+
   expect(screen.getByDisplayValue('Bag Watch')).toBeTruthy();
   expect(screen.getByDisplayValue('BAG')).toBeTruthy();
   expect(screen.getByText('Matches detector classes: backpack, handbag, suitcase')).toBeTruthy();
+  expect(screen.getByText('Connectors To Activate')).toBeTruthy();
+  expect(screen.getByText(/Ops Chat/)).toBeTruthy();
 
   await act(async () => {
     fireEvent.click(screen.getByText('Save Rules'));
@@ -599,6 +642,40 @@ test('renders split rules and saves through the trigger rules endpoint', async (
     );
   });
 
+});
+
+test('auto-selects the first anomaly target when a new anomaly rule has valid options', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/rules']}>
+        <SettingsPage forcedTab="rules" hideTabBar pageTitle="Rules" />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByRole('heading', { name: 'Rules', level: 2 })).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Add Anomaly Rule' }));
+  });
+
+  const sourceCheckbox = screen.getByRole('checkbox', { name: /Gate 1/i });
+  await act(async () => {
+    fireEvent.click(sourceCheckbox);
+  });
+
+  await waitFor(() => {
+    expect(screen.getByDisplayValue('weapon')).toBeTruthy();
+  });
+
+  const anomalyTypeSelect = screen.getByDisplayValue('Object');
+  await act(async () => {
+    fireEvent.change(anomalyTypeSelect, { target: { value: 'behavior' } });
+  });
+
+  await waitFor(() => {
+    expect(screen.getByDisplayValue('running')).toBeTruthy();
+  });
 });
 
 test('renders connectors tab and saves both connector subscription types', async () => {
@@ -652,7 +729,7 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   expect(await screen.findByText('Available Connectors')).toBeTruthy();
-  expect(screen.getByDisplayValue('file:///workspace/shared/catalogs/connector_zoo_repo.yaml')).toBeTruthy();
+  expect(screen.getByDisplayValue('https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml')).toBeTruthy();
   expect(screen.getByText('Govee Light Connection')).toBeTruthy();
 
   await act(async () => {
@@ -718,7 +795,7 @@ test('renders model library with readable stage and model descriptions', async (
   expect(screen.getByText('Mount Models')).toBeTruthy();
   fireEvent.click(screen.getAllByRole('button', { name: 'Model Library' }).at(-1));
   expect(screen.getAllByText('Detector Models').length).toBeGreaterThan(0);
-  expect(screen.getByText('YOLOX Small (GPU)')).toBeTruthy();
+  expect(screen.getAllByText('YOLOX Small (GPU)').length).toBeGreaterThan(0);
   expect(screen.getAllByText('Mounted').length).toBeGreaterThan(0);
   expect(screen.getAllByText('Default').length).toBeGreaterThan(0);
   expect(screen.getAllByText(/find people and bags in each frame/i).length).toBeGreaterThan(0);
@@ -727,7 +804,7 @@ test('renders model library with readable stage and model descriptions', async (
   ).toBeGreaterThan(0);
   expect(screen.getAllByText(/Prompt Rules Stage 2/).length).toBeGreaterThan(0);
   expect(screen.queryByText('Person ReID Models')).toBeNull();
-  expect(screen.getByText(/GET .*\/model-options/)).toBeTruthy();
+  expect(screen.getAllByText(/GET .*\/model-options/).length).toBeGreaterThan(0);
 });
 
 test('confirms before forcibly unmounting models that are still in use', async () => {
@@ -786,7 +863,7 @@ test('confirms before forcibly unmounting models that are still in use', async (
       expect.objectContaining({ method: 'PUT' }),
     );
   });
-  expect(await screen.findByText('Mounted model inventory updated.')).toBeTruthy();
+  expect((await screen.findAllByText('Mounted model inventory updated.')).length).toBeGreaterThan(0);
 });
 
 test('renders appearance settings and saves workspace theme selection', async () => {

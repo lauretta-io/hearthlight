@@ -8,6 +8,7 @@ from shared.utils.alert_rules import (
     ALERT_SIGNAL_FAMILY_ANOMALY_ACTIVITY,
     ALERT_SIGNAL_FAMILY_ANOMALY_OBJECT,
     ALERT_SIGNAL_FAMILY_DETECTOR,
+    build_alert_incident_title,
     build_alert_rule_option_catalog,
     get_detector_rule_targets,
     parse_anomaly_type_prompt_yaml,
@@ -93,6 +94,20 @@ class AlertRuleUtilityTests(unittest.TestCase):
         self.assertEqual(parsed["anomaly_object_list"], ["weapon"])
         self.assertEqual(parsed["anomaly_activity_list"], ["running"])
 
+    def test_build_alert_incident_title_uses_signal_family_prefix(self):
+        self.assertEqual(
+            build_alert_incident_title(ALERT_SIGNAL_FAMILY_DETECTOR, "PERSON"),
+            "Detector: Person",
+        )
+        self.assertEqual(
+            build_alert_incident_title(ALERT_SIGNAL_FAMILY_ANOMALY_ACTIVITY, "Fighting"),
+            "Behavior Anomaly: Fighting",
+        )
+        self.assertEqual(
+            build_alert_incident_title(ALERT_SIGNAL_FAMILY_ANOMALY_OBJECT, "bag"),
+            "Object Anomaly: Bag",
+        )
+
 
 class DatabaseWorkerAlertRuleTests(unittest.TestCase):
     def setUp(self):
@@ -145,6 +160,33 @@ class DatabaseWorkerAlertRuleTests(unittest.TestCase):
         self.assertEqual(
             self.worker.create_alert_incident.call_args.kwargs["signal_family"],
             ALERT_SIGNAL_FAMILY_DETECTOR,
+        )
+
+    def test_confirmed_detector_track_without_confidence_still_triggers_alert(self):
+        self.worker.get_source_template_id_for_camera = Mock(return_value=12)
+        self.worker.get_enabled_alert_rules = Mock(
+            return_value=[
+                SimpleNamespace(id=7, target_key="PERSON", min_confidence=0.4, alert_level="high"),
+            ]
+        )
+        self.worker.resolve_model_keys_for_source = Mock(return_value={"detector": "builtin_yolox_s_cpu"})
+        track = DataModels.TrackInstance(
+            track_id=91,
+            bbox=[0, 0, 10, 10],
+            cam_id=2,
+            clss="PERSON",
+            confidence=None,
+            timestamp=1.0,
+            frame_id=8,
+            confirmed=True,
+        )
+
+        self.worker.maybe_create_detector_alerts(track)
+
+        self.worker.create_alert_incident.assert_called_once()
+        self.assertEqual(
+            self.worker.create_alert_incident.call_args.kwargs["confidence"],
+            1.0,
         )
 
     def test_anomaly_object_match_above_threshold_triggers_alert(self):

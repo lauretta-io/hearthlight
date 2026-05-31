@@ -15,7 +15,7 @@ connectors:
       - light_control
       - async
     plugin_key: govee_light_connection
-    plugin_version: "0.8.0"
+    plugin_version: "0.8.1"
     plugin_manifest_url: "../plugins/govee_light_connection/plugin.yaml"
     plugin_files:
       connectors.yaml: "../plugins/govee_light_connection/connectors.yaml"

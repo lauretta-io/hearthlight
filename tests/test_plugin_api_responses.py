@@ -32,9 +32,16 @@ class _DBStub:
         self._query_rows = list(query_rows)
         self.committed = False
         self.rolled_back = False
+        self.added = []
 
     def query(self, _model):
         return _QueryStub(self._query_rows)
+
+    def add(self, row):
+        self.added.append(row)
+
+    def flush(self):
+        return None
 
     def commit(self):
         self.committed = True
@@ -51,7 +58,7 @@ class PluginApiResponseTests(unittest.TestCase):
                 SimpleNamespace(
                     plugin_key="core_builtin",
                     label="Hearthlight Core",
-                    version="0.8.0",
+                    version="0.8.1",
                     provider="Lauretta",
                     description="Built-in plugin bundle",
                     enabled_by_default=True,
@@ -171,6 +178,7 @@ class PluginApiResponseTests(unittest.TestCase):
     @patch.object(external_routes, "persist_mounted_models")
     @patch.object(external_routes, "persist_model_bindings")
     @patch.object(external_routes, "publish_system_message")
+    @patch.object(external_routes, "log_resource_event")
     @patch.object(external_routes, "sync_upload_lifecycle_states")
     @patch.object(external_routes, "get_registry_bundle")
     @patch.object(external_routes, "get_active_source_rows")
@@ -181,6 +189,7 @@ class PluginApiResponseTests(unittest.TestCase):
         mock_sources,
         mock_bundle,
         mock_sync_uploads,
+        _mock_log_resource_event,
         mock_publish_system_message,
         mock_persist_bindings,
         mock_persist_mounted,
@@ -251,6 +260,68 @@ class PluginApiResponseTests(unittest.TestCase):
         )
         self.assertIsNone(source_row.anomaly_stage_2_model_key)
         self.assertTrue(db.committed)
+
+    @patch.object(external_routes, "build_alert_rule_options_response")
+    @patch.object(external_routes, "get_active_source_rows")
+    @patch.object(external_routes, "get_registry_bundle")
+    @patch.object(external_routes, "list_connector_endpoint_rows")
+    @patch.object(external_routes, "ensure_alert_rule_tables")
+    def test_replace_trigger_rules_rejects_unknown_connector_target(
+        self,
+        _mock_tables,
+        mock_list_connector_rows,
+        mock_bundle,
+        mock_sources,
+        mock_option_catalog,
+    ):
+        db = _DBStub([])
+        mock_bundle.return_value = {
+            "plugin_catalog": {
+                "components": [
+                    {"component_key": "alert_rule_trigger", "component_type": "trigger"},
+                    {"component_key": "telegram", "component_type": "connector"},
+                ]
+            }
+        }
+        mock_sources.return_value = [SimpleNamespace(id=1, label="Gate 1")]
+        mock_option_catalog.return_value = external_routes.AlertRuleOptionCatalog.model_validate(
+            {
+                "sources": [
+                    {
+                        "source_id": 1,
+                        "source_label": "Gate 1",
+                        "signal_options": [
+                            {
+                                "signal_family": "detector",
+                                "options": [{"key": "PERSON", "label": "PERSON"}],
+                                "unavailable_reason": None,
+                            }
+                        ],
+                    }
+                ]
+            }
+        )
+        mock_list_connector_rows.return_value = []
+
+        with self.assertRaises(external_routes.HTTPException) as exc_info:
+            external_routes.replace_trigger_rules(
+                db,
+                [
+                    external_routes.TriggerRule(
+                        trigger_key="alert_rule_trigger",
+                        source_ids=[1],
+                        rule_kind="detector",
+                        signal_family="detector",
+                        target_key="PERSON",
+                        min_confidence=0.5,
+                        alert_level="medium",
+                        delivery_target_ids=[41],
+                    )
+                ],
+            )
+
+        self.assertEqual(exc_info.exception.status_code, 404)
+        self.assertIn("connector target 41 not found", str(exc_info.exception.detail))
 
 
 if __name__ == "__main__":

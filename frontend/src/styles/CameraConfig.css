@@ -152,6 +152,40 @@
   margin-top: 14px;
 }
 
+.button-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.readonly-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-soft);
+}
+
+.readonly-field span {
+  color: var(--color-text-soft);
+  font-size: 0.82rem;
+}
+
+.readonly-field strong {
+  color: var(--color-text);
+  overflow-wrap: anywhere;
+}
+
+.source-always-enabled-note {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--color-info-bg) 62%, var(--color-bg-card-strong) 38%);
+  color: var(--color-info-text);
+}
+
 .model-binding-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
@@ -161,6 +195,28 @@
 
 .model-binding-grid .full-width-field {
   grid-column: 1 / -1;
+}
+
+.rule-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.rule-summary-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  background: var(--color-bg-elevated);
+}
+
+.rule-summary-grid > div strong {
+  overflow-wrap: anywhere;
 }
 
 .alert-option-grid {
@@ -286,6 +342,158 @@
   background: color-mix(in srgb, var(--color-bg-soft) 68%, var(--color-bg-card-strong) 32%);
 }
 
+.model-log-column {
+  width: 100%;
+}
+
+.model-log-filter-card,
+.model-log-card {
+  width: 100%;
+}
+
+.model-log-meta-panel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 18px;
+  width: 100%;
+}
+
+.model-log-filter-copy h3,
+.model-log-results-header h3 {
+  margin: 0;
+}
+
+.model-log-filter-copy p,
+.model-log-results-header p {
+  margin: 6px 0 0;
+}
+
+.model-log-filter-row {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  align-items: end;
+}
+
+.model-log-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.model-log-filter-field span {
+  color: var(--color-text-soft);
+  font-size: 0.82rem;
+}
+
+.model-log-filter-field select,
+.model-log-filter-field input {
+  width: 100%;
+  min-width: 0;
+}
+
+.model-log-filter-field-search {
+  min-width: 0;
+}
+
+.model-log-results-header {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.model-log-table-shell {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: var(--color-bg-elevated);
+}
+
+.model-log-table {
+  width: 100%;
+  min-width: 100%;
+}
+
+.model-log-table-head,
+.model-log-row {
+  display: grid;
+  grid-template-columns: minmax(11rem, 1.4fr) minmax(8rem, 1fr) minmax(8rem, 1fr) minmax(11rem, 1.2fr) minmax(5rem, 0.6fr) minmax(16rem, 2fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.model-log-table-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-soft);
+  font-size: 0.82rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: color-mix(in srgb, var(--color-bg-soft) 88%, transparent);
+}
+
+.model-log-row-wrap + .model-log-row-wrap {
+  border-top: 1px solid color-mix(in srgb, var(--color-border) 72%, transparent);
+}
+
+.model-log-row {
+  width: 100%;
+  padding: 14px 16px;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.model-log-row:hover,
+.model-log-row:focus {
+  background: color-mix(in srgb, var(--color-bg-soft) 70%, transparent);
+  outline: none;
+}
+
+.model-log-row span,
+.model-log-table-head span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.model-log-detail {
+  padding: 0 16px 16px;
+  background: color-mix(in srgb, var(--color-bg-card-strong) 90%, transparent);
+}
+
+.model-log-detail pre {
+  margin: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.model-log-actions {
+  justify-content: center;
+  margin-top: 10px;
+}
+
+@media (max-width: 1180px) {
+  .model-log-filter-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 820px) {
+  .model-log-filter-row {
+    grid-template-columns: 1fr;
+  }
+
+  .model-log-table-head,
+  .model-log-row {
+    grid-template-columns: minmax(10rem, 1.2fr) minmax(7rem, 0.9fr) minmax(7rem, 0.9fr) minmax(10rem, 1.1fr) minmax(4rem, 0.5fr) minmax(14rem, 1.8fr);
+    gap: 12px;
+  }
+}
+
 .model-mount-toggle-body {
   display: flex;
   flex-direction: column;
@@ -342,100 +550,6 @@
   display: flex;
   flex-direction: column;
   gap: 14px;
-}
-
-.model-log-filter-toolbar {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 18px;
-  flex-wrap: nowrap;
-}
-
-.model-log-filter-copy {
-  flex: 0 1 auto;
-  min-width: 0;
-}
-
-.model-log-filter-row {
-  display: grid;
-  grid-template-columns: minmax(12rem, 15rem) minmax(12rem, 15rem) minmax(18rem, 1fr);
-  gap: 12px;
-  align-items: end;
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.model-log-filter-field {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.model-log-filter-field span {
-  font-size: 0.86rem;
-  color: var(--color-text-soft);
-}
-
-.model-log-filter-field select,
-.model-log-filter-field input {
-  border: 1px solid var(--color-border);
-  border-radius: 9px;
-  padding: 11px 13px;
-  background: var(--color-bg-card-strong);
-  font: inherit;
-  width: 100%;
-  min-width: 0;
-}
-
-.model-log-filter-field-search {
-  min-width: 0;
-}
-
-.model-log-table {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.model-log-table-head,
-.model-log-row {
-  display: grid;
-  grid-template-columns: 1.3fr 1fr 1fr 1fr 0.8fr 2fr;
-  gap: 12px;
-  align-items: start;
-}
-
-.model-log-table-head {
-  font-size: 0.88rem;
-  color: var(--color-text-muted);
-  padding-bottom: 8px;
-  border-bottom: 1px solid var(--color-border);
-}
-
-.model-log-row {
-  width: 100%;
-  text-align: left;
-  border: 1px solid var(--color-border);
-  border-radius: 10px;
-  background: var(--color-bg-card-strong);
-  padding: 12px;
-  cursor: pointer;
-}
-
-.model-log-detail {
-  border: 1px solid var(--color-border);
-  border-top: 0;
-  border-radius: 0 0 10px 10px;
-  background: color-mix(in srgb, var(--color-info-bg) 42%, var(--color-bg-card-strong) 58%);
-  padding: 12px;
-}
-
-.model-log-detail pre {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
 }
 
 .model-library-summary {
