@@ -13,7 +13,7 @@ from .routes.operations_routes import operations_router
 
 app = FastAPI(
     title="Hearthlight API",
-    version="0.8.1",
+    version="0.8.2",
     description="Hearthlight control-plane and runtime management API.",
 )
 MAX_REQUEST_BYTES = int(os.environ.get("WEBAPP_MAX_REQUEST_BYTES", str(5 * 1024 * 1024)))

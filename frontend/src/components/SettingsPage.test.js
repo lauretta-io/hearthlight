@@ -34,7 +34,7 @@ beforeEach(() => {
         category: 'integrations',
         enabled: true,
         plugin_key: 'govee_light_connection',
-        plugin_version: '0.8.1',
+        plugin_version: '0.8.2',
         source_url: 'file:///workspace/shared/plugins/govee_light_connection/',
         installed: false,
       },

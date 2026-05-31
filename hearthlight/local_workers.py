@@ -29,7 +29,7 @@ from shared.utils.input_sources import (
     open_capture,
     probe_source_connection,
 )
-from shared.utils.local_worker_runtime import DEFAULT_LOCAL_WORKER_PORT
+from shared.utils.local_worker_runtime import DEFAULT_LOCAL_WORKER_PORT, get_worker_runtime_mode
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 STATE_DIR = ROOT_DIR / "shared" / "output" / "local_runtime"
@@ -146,12 +146,12 @@ class LocalWorkerSupervisor:
                 workers[module_name] = {
                     "running": alive,
                     "pid": process.pid if process is not None and alive else None,
-                    "reason": None if alive else self.reasons.get(module_name, "local CPU workers not started"),
+                    "reason": None if alive else self.reasons.get(module_name, "local host workers not started"),
                 }
         ready = all(worker["running"] for worker in workers.values())
         return {
             "status": "ready" if ready else "degraded",
-            "runtime": "hybrid-local-cpu",
+            "runtime": get_worker_runtime_mode(),
             "opencv_available": cv2 is not None,
             "workers": workers,
         }

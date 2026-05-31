@@ -1,0 +1,5 @@
+# Host-side MLX extras for Apple Silicon local workers.
+# These are intentionally excluded from Linux Docker worker images.
+mlx
+mlx-lm
+mlx-vlm

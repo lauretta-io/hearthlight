@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from hearthlight.cli import build_parser, main
 from hearthlight.onboarding import (
+    MLX_REQUIREMENTS_PATH,
     RuntimeProfileRecommendation,
     apply_runtime_profile_defaults,
     check_host_tools,
@@ -15,10 +16,12 @@ from hearthlight.onboarding import (
     configure_selected_third_party_model_env,
     detect_runtime_profile_recommendation,
     detect_system_package_plan,
+    install_python_requirements,
     load_workspace_model_catalog,
     persist_workspace_mounted_models,
     resolve_bootstrap_python,
     resolve_selected_mounted_models,
+    should_install_mlx_requirements,
     write_notification_env_defaults,
     write_runtime_profile_env_defaults,
 )
@@ -71,6 +74,13 @@ class OnboardingTests(unittest.TestCase):
         self.assertEqual(args.command, "start")
         self.assertFalse(args.skip_reset_db)
 
+    def test_prepare_images_parser_accepts_variant(self):
+        parser = build_parser()
+        args = parser.parse_args(["prepare-images", "--variant", "mlx", "--service", "webapp"])
+        self.assertEqual(args.command, "prepare-images")
+        self.assertEqual(args.variant, "mlx")
+        self.assertEqual(args.service, ["webapp"])
+
     def test_detect_system_package_plan_for_apt(self):
         with (
             patch("hearthlight.onboarding._libpq_available", return_value=False),
@@ -90,6 +100,36 @@ class OnboardingTests(unittest.TestCase):
             recommendation = detect_runtime_profile_recommendation()
         self.assertEqual(recommendation.profile, "cpu")
         self.assertEqual(recommendation.detector_device, "cpu")
+
+    def test_should_install_mlx_requirements_only_on_apple_silicon(self):
+        with (
+            patch("hearthlight.onboarding.platform.system", return_value="Darwin"),
+            patch("hearthlight.onboarding.platform.machine", return_value="arm64"),
+        ):
+            self.assertTrue(should_install_mlx_requirements())
+
+    def test_install_python_requirements_includes_mlx_extras_on_apple_silicon(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root_dir = Path(temp_dir)
+            for relative_path in (
+                Path("webapp/requirements.txt"),
+                Path("ingestor/requirements.txt"),
+                Path("reid/requirements.txt"),
+                Path("anomaly/requirements.txt"),
+                Path("association/requirements.txt"),
+                MLX_REQUIREMENTS_PATH,
+            ):
+                target = root_dir / relative_path
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("")
+            commands = []
+            with (
+                patch("hearthlight.onboarding._run", side_effect=lambda command, cwd: commands.append(command)),
+                patch("hearthlight.onboarding.platform.system", return_value="Darwin"),
+                patch("hearthlight.onboarding.platform.machine", return_value="arm64"),
+            ):
+                install_python_requirements(root_dir, python_executable="/tmp/python")
+        self.assertTrue(any(str(MLX_REQUIREMENTS_PATH) in " ".join(command) for command in commands))
 
     def test_check_host_tools_skips_docker_when_infra_init_is_skipped(self):
         with patch("hearthlight.onboarding.shutil.which", side_effect=lambda name: "/usr/bin/git" if name == "git" else None):

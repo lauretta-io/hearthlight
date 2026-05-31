@@ -58,7 +58,7 @@ class PluginApiResponseTests(unittest.TestCase):
                 SimpleNamespace(
                     plugin_key="core_builtin",
                     label="Hearthlight Core",
-                    version="0.8.1",
+                    version="0.8.2",
                     provider="Lauretta",
                     description="Built-in plugin bundle",
                     enabled_by_default=True,

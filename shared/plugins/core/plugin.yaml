@@ -1,6 +1,6 @@
 key: core_builtin
 label: Hearthlight Core
-version: "0.8.1"
+version: "0.8.2"
 provider: Lauretta
 description: Built-in Hearthlight models, triggers, connectors, and starter rule sets.
 enabled_by_default: true

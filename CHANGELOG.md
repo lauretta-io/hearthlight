@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2 - 2026-05-31
+
+- added system-aware Docker image-lane preparation through `hearthlight prepare-images`, with explicit `cpu`, `cuda`, and `mlx` variants
+- updated the compose stack and Docker publish flow to use variant-tagged local and published images such as `hearthlight-webapp:mlx` and `<tag>-cuda`
+- introduced `hybrid-local-mlx` as the Apple Silicon host-worker runtime and documented MLX as a hybrid control-plane plus host-worker deployment path
+- fixed Apple Silicon detection for translated macOS Python environments so MLX-capable hosts no longer fall back incorrectly to the CPU worker lane
+- aligned release metadata, plugin manifests, connector-zoo catalog metadata, and frontend package metadata to `0.8.2`
+
 ## 0.8.1 - 2026-05-31
 
 - finalized the operator workflow refresh across Monitoring, Rules, Incidents, and Model Logs, including compact rule editors, read-only saved rules with explicit edit mode, richer trigger detail media, and a more stable always-warm UI refresh model

@@ -31,6 +31,15 @@ from shared.utils.input_sources import (
     probe_source_connection,
     validate_uploaded_video_file,
 )
+from shared.utils.image_variants import (
+    IMAGE_VARIANT_CPU,
+    IMAGE_VARIANT_CUDA,
+    IMAGE_VARIANT_MLX,
+    build_local_image_name,
+    default_image_services_for_variant,
+    normalize_selected_services,
+    resolve_image_variant,
+)
 from shared.utils.logger import (
     get_bootstrap_log_dir,
     get_run_log_dir,
@@ -40,7 +49,10 @@ from shared.utils.file_retention import directory_size_bytes, prune_directory_fi
 from shared.utils.local_worker_runtime import (
     WORKER_RUNTIME_DOCKER,
     WORKER_RUNTIME_HYBRID_LOCAL_CPU,
+    WORKER_RUNTIME_HYBRID_LOCAL_MLX,
     detect_default_worker_runtime,
+    detect_host_machine,
+    host_supports_mlx,
     map_container_path_to_host,
 )
 from shared.utils.micro_batch import build_asset_reference, build_micro_batch_envelope
@@ -222,15 +234,79 @@ class ConfigTests(unittest.TestCase):
 
 
 class LocalWorkerRuntimeTests(unittest.TestCase):
+    def test_detect_host_machine_prefers_uname_on_translated_macos_python(self):
+        with (
+            patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"),
+            patch("shared.utils.local_worker_runtime.platform.machine", return_value="x86_64"),
+            patch(
+                "shared.utils.local_worker_runtime.subprocess.check_output",
+                side_effect=["0\n", "arm64\n"],
+            ),
+        ):
+            self.assertEqual(detect_host_machine(), "arm64")
+
+    def test_detect_host_machine_prefers_sysctl_arm64_signal(self):
+        with (
+            patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"),
+            patch("shared.utils.local_worker_runtime.platform.machine", return_value="x86_64"),
+            patch("shared.utils.local_worker_runtime.subprocess.check_output", return_value="1\n"),
+        ):
+            self.assertEqual(detect_host_machine(), "arm64")
+
     def test_detect_default_worker_runtime_prefers_hybrid_on_macos_cpu_full_stack(self):
-        with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
+        with (
+            patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"),
+            patch("shared.utils.local_worker_runtime.platform.machine", return_value="x86_64"),
+            patch(
+                "shared.utils.local_worker_runtime.subprocess.check_output",
+                side_effect=["0\n", "x86_64\n"],
+            ),
+        ):
             runtime = detect_default_worker_runtime(profile="cpu")
         self.assertEqual(runtime, WORKER_RUNTIME_HYBRID_LOCAL_CPU)
+
+    def test_detect_default_worker_runtime_prefers_mlx_on_apple_silicon(self):
+        with (
+            patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"),
+            patch("shared.utils.local_worker_runtime.platform.machine", return_value="arm64"),
+        ):
+            runtime = detect_default_worker_runtime(profile="cpu")
+        self.assertEqual(runtime, WORKER_RUNTIME_HYBRID_LOCAL_MLX)
 
     def test_detect_default_worker_runtime_keeps_docker_for_cuda(self):
         with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
             runtime = detect_default_worker_runtime(profile="cuda")
         self.assertEqual(runtime, WORKER_RUNTIME_DOCKER)
+
+    def test_host_supports_mlx_only_on_apple_silicon(self):
+        with (
+            patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"),
+            patch("shared.utils.local_worker_runtime.platform.machine", return_value="arm64"),
+        ):
+            self.assertTrue(host_supports_mlx())
+
+
+class ImageVariantTests(unittest.TestCase):
+    def test_resolve_image_variant_prefers_cuda(self):
+        self.assertEqual(resolve_image_variant(use_cuda=True, worker_runtime="docker"), IMAGE_VARIANT_CUDA)
+
+    def test_resolve_image_variant_prefers_mlx_for_mlx_runtime(self):
+        self.assertEqual(
+            resolve_image_variant(use_cuda=False, worker_runtime="hybrid-local-mlx"),
+            IMAGE_VARIANT_MLX,
+        )
+
+    def test_default_image_services_for_mlx_are_core_only(self):
+        self.assertEqual(default_image_services_for_variant(IMAGE_VARIANT_MLX), ["rabbitmq", "webapp"])
+
+    def test_normalize_selected_services_filters_to_variant_capabilities(self):
+        self.assertEqual(
+            normalize_selected_services(["webapp", "ingestor"], variant=IMAGE_VARIANT_MLX),
+            ["webapp"],
+        )
+
+    def test_build_local_image_name_uses_variant_tag(self):
+        self.assertEqual(build_local_image_name("webapp", IMAGE_VARIANT_CPU), "hearthlight-webapp:cpu")
 
     def test_map_container_path_to_host_uses_host_project_root(self):
         with patch.dict(

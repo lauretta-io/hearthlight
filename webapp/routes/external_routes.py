@@ -181,7 +181,8 @@ from ...shared.utils.input_sources import (
 )
 from ...shared.utils.local_worker_runtime import (
     build_local_worker_url,
-    is_hybrid_local_cpu_runtime,
+    get_worker_runtime_mode,
+    is_hybrid_local_runtime,
     map_container_path_to_host,
 )
 from ...shared.utils.model_registry import (
@@ -488,7 +489,7 @@ def build_host_upload_path(upload_path: str | None) -> str | None:
 
 
 def get_local_worker_health() -> dict:
-    if not is_hybrid_local_cpu_runtime():
+    if not is_hybrid_local_runtime():
         return {
             "status": "not-applicable",
             "runtime": "docker",
@@ -504,12 +505,12 @@ def get_local_worker_health() -> dict:
         logger.warning("Failed to query local worker health", exc_info=True)
         return {
             "status": "unavailable",
-            "runtime": "hybrid-local-cpu",
+            "runtime": get_worker_runtime_mode(),
             "workers": {
                 module_name: {
                     "running": False,
                     "pid": None,
-                    "reason": "local CPU workers not started",
+                    "reason": "local host workers not started",
                 }
                 for module_name in get_expected_module_names()
             },
@@ -526,7 +527,7 @@ def require_local_worker_ready() -> dict:
         for details in workers.values()
         if isinstance(details, dict) and str(details.get("reason") or "").strip()
     ]
-    reason = reasons[0] if reasons else "local CPU workers not started"
+    reason = reasons[0] if reasons else "local host workers not started"
     raise HTTPException(status_code=409, detail=reason)
 
 
@@ -699,7 +700,7 @@ def merge_hybrid_operator_status(
 ) -> dict[str, str]:
     """Keep top-level operator status aligned with local worker health in hybrid mode."""
     merged = dict(module_state or {})
-    if not is_hybrid_local_cpu_runtime():
+    if not is_hybrid_local_runtime():
         return merged
     workers = (local_worker_health or {}).get("workers") or {}
     for module_name in (ModuleNames.INGESTOR, ModuleNames.ANOMALY):
@@ -911,7 +912,7 @@ def build_live_resource_snapshot(db: Session) -> dict:
         get_previous_resource_snapshot(db),
         thresholds=get_resource_drift_thresholds(),
     )
-    local_worker_health = get_local_worker_health() if is_hybrid_local_cpu_runtime() else None
+    local_worker_health = get_local_worker_health() if is_hybrid_local_runtime() else None
     snapshot["dependency_status"] = collect_dependency_status()
     snapshot["module_status"] = merge_hybrid_operator_status({
         ModuleNames.WEBAPP: DataModels.Status.RUNNING,
@@ -935,7 +936,7 @@ def build_live_resource_snapshot(db: Session) -> dict:
         thresholds=get_resource_thresholds(),
     )
     source_errors = build_enabled_source_errors(source_rows, db)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         if local_worker_health.get("status") != "ready":
             workers = local_worker_health.get("workers") or {}
             reasons = [
@@ -943,7 +944,7 @@ def build_live_resource_snapshot(db: Session) -> dict:
                 for details in workers.values()
                 if isinstance(details, dict) and str(details.get("reason") or "").strip()
             ]
-            reason = reasons[0] if reasons else "local CPU workers not started"
+            reason = reasons[0] if reasons else "local host workers not started"
             if admission.get("allowed", True):
                 admission["allowed"] = False
                 admission["reason"] = reason
@@ -989,7 +990,7 @@ def get_current_resource_snapshot(db: Session) -> dict:
         source_rows = get_active_source_rows(db)
         enabled_source_rows = [row for row in source_rows if row.enabled]
         registry_bundle = get_registry_bundle(db, source_rows=source_rows)
-        local_worker_health = get_local_worker_health() if is_hybrid_local_cpu_runtime() else None
+        local_worker_health = get_local_worker_health() if is_hybrid_local_runtime() else None
         snapshot["dependency_status"] = collect_dependency_status()
         snapshot["drift"] = build_resource_drift(
             snapshot,
@@ -1018,7 +1019,7 @@ def get_current_resource_snapshot(db: Session) -> dict:
             thresholds=get_resource_thresholds(),
         )
         source_errors = build_enabled_source_errors(source_rows, db)
-        if is_hybrid_local_cpu_runtime():
+        if is_hybrid_local_runtime():
             if local_worker_health.get("status") != "ready":
                 workers = local_worker_health.get("workers") or {}
                 reasons = [
@@ -1026,7 +1027,7 @@ def get_current_resource_snapshot(db: Session) -> dict:
                     for details in workers.values()
                     if isinstance(details, dict) and str(details.get("reason") or "").strip()
                 ]
-                reason = reasons[0] if reasons else "local CPU workers not started"
+                reason = reasons[0] if reasons else "local host workers not started"
                 if snapshot["admission"].get("allowed", True):
                     snapshot["admission"]["allowed"] = False
                     snapshot["admission"]["reason"] = reason
@@ -1577,7 +1578,7 @@ def build_source_responses(db: Session, resource_snapshot: dict):
     )
     recordings = get_run_recordings_by_source_id(db)
     current_frame_override = (
-        get_latest_run_frame_id(db) if is_hybrid_local_cpu_runtime() else None
+        get_latest_run_frame_id(db) if is_hybrid_local_runtime() else None
     )
     return [
         build_input_source_response(
@@ -3032,7 +3033,7 @@ def build_runtime_cfg(db: Session, run_identifier: str):
             ),
         )
         if derived_error is None:
-            if is_hybrid_local_cpu_runtime():
+            if is_hybrid_local_runtime():
                 derived_error = probe_source_via_local_worker(
                     source_row.kind,
                     source_row.source_value,
@@ -3052,7 +3053,7 @@ def build_runtime_cfg(db: Session, run_identifier: str):
         if source_row.upload_id is not None and upload_path is not None:
             upload_paths[source_row.upload_id] = (
                 build_host_upload_path(upload_path)
-                if is_hybrid_local_cpu_runtime()
+                if is_hybrid_local_runtime()
                 else upload_path
             )
     model_health = build_model_health(registry_bundle, has_gpu=has_gpu)
@@ -3071,7 +3072,7 @@ def build_runtime_cfg(db: Session, run_identifier: str):
     runtime_cfg = clone_cfg()
     runtime_cfg.run_id = run_identifier
     runtime_cfg.input.cameras = build_runtime_camera_map(source_rows, upload_paths)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         # Local hybrid workers run headless; disable GUI preview paths and persist
         # periodic frames so status APIs can surface concrete frame progress.
         runtime_cfg.output.visualize.show_vid = False
@@ -3685,7 +3686,7 @@ async def start(db: Session = Depends(get_db)):
             )
         )
         raise HTTPException(status_code=409, detail=reason)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         require_local_worker_ready()
 
     next_run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -3798,7 +3799,7 @@ def get_status(db: Session = Depends(get_db)):
     snapshot_module_status = merge_hybrid_operator_status(
         snapshot.get("module_status"),
         snapshot.get("dependency_status"),
-        get_local_worker_health() if is_hybrid_local_cpu_runtime() else None,
+        get_local_worker_health() if is_hybrid_local_runtime() else None,
     )
     effective_statuses = [
         normalize_module_status(
@@ -3815,7 +3816,7 @@ def get_status(db: Session = Depends(get_db)):
             status = reconciled_status
         current_status = reconciled_status
     effective_frame_id = frame_id
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         db_frame_id = get_latest_run_frame_id(db)
         if db_frame_id is not None:
             effective_frame_id = db_frame_id
@@ -4431,7 +4432,7 @@ def fire_demo_trigger(
 @external_router.get("/sources/{source_id}/preview.mjpeg")
 async def get_source_preview(source_id: int, request: Request, db: Session = Depends(get_db)):
     source_row = get_source_row_by_id(source_id, db)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         upload_path = None
         if source_row.upload_id is not None:
             upload_row = get_upload_rows_by_id(db, [source_row.upload_id]).get(source_row.upload_id)

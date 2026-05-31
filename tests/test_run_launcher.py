@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from io import StringIO
 from pathlib import Path
 from unittest.mock import patch
 
@@ -13,6 +14,7 @@ from run.launcher import (
     get_nested_scalar,
     get_top_level_block,
     list_config_templates,
+    prepare_local_images,
     read_current_selection,
     set_top_level_block,
     set_nested_scalar,
@@ -24,6 +26,14 @@ class LauncherHelpersTests(unittest.TestCase):
         with patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"):
             runtime, _ = detect_worker_runtime("cpu")
         self.assertEqual(runtime, "hybrid-local-cpu")
+
+    def test_detect_worker_runtime_defaults_to_hybrid_mlx_on_apple_silicon(self):
+        with (
+            patch("shared.utils.local_worker_runtime.platform.system", return_value="Darwin"),
+            patch("shared.utils.local_worker_runtime.platform.machine", return_value="arm64"),
+        ):
+            runtime, _ = detect_worker_runtime("cpu")
+        self.assertEqual(runtime, "hybrid-local-mlx")
 
     def test_extract_registry_model_names_contains_known_entries(self):
         names = extract_registry_model_names()
@@ -203,6 +213,51 @@ class LauncherHelpersTests(unittest.TestCase):
             self.assertIn("preset_camera", generated_text)
             self.assertNotIn("base_camera", generated_text)
             self.assertIn("zone_a", generated_text)
+
+    def test_prepare_local_images_cpu_lane_builds_full_cpu_services(self):
+        with (
+            patch("run.launcher.find_docker_binary", return_value="/usr/bin/docker"),
+            patch("sys.stdout", new_callable=StringIO) as stdout,
+        ):
+            prepare_local_images(
+                profile="cpu",
+                worker_runtime="hybrid-local-cpu",
+                dry_run=True,
+            )
+        output = stdout.getvalue()
+        self.assertIn("Image variant: cpu", output)
+        self.assertIn("Services: anomaly, association, ingestor, rabbitmq, webapp", output)
+        self.assertIn("docker-compose.yaml build anomaly association ingestor rabbitmq webapp", output)
+
+    def test_prepare_local_images_cuda_lane_uses_cuda_overlay(self):
+        with (
+            patch("run.launcher.find_docker_binary", return_value="/usr/bin/docker"),
+            patch("sys.stdout", new_callable=StringIO) as stdout,
+        ):
+            prepare_local_images(
+                profile="cuda",
+                worker_runtime="docker",
+                dry_run=True,
+            )
+        output = stdout.getvalue()
+        self.assertIn("Image variant: cuda", output)
+        self.assertIn("run/docker-compose.cuda.yaml", output)
+        self.assertIn("Services: anomaly, association, ingestor, rabbitmq, webapp", output)
+
+    def test_prepare_local_images_mlx_lane_builds_control_plane_only(self):
+        with (
+            patch("run.launcher.find_docker_binary", return_value="/usr/bin/docker"),
+            patch("sys.stdout", new_callable=StringIO) as stdout,
+        ):
+            prepare_local_images(
+                profile="cpu",
+                worker_runtime="hybrid-local-mlx",
+                dry_run=True,
+            )
+        output = stdout.getvalue()
+        self.assertIn("Image variant: mlx", output)
+        self.assertIn("Services: rabbitmq, webapp", output)
+        self.assertNotIn("ingestor", output)
 
 
 if __name__ == "__main__":
