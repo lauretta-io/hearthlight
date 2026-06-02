@@ -92,6 +92,7 @@ services:
     environment:
       - PYTHONPATH=/app/src
       - RELOAD=${RELOAD:-}
+      - WEBAPP_WORKERS=${WEBAPP_WORKERS:-2}
       - HEARTHLIGHT_LOCAL_STACK=${HEARTHLIGHT_LOCAL_STACK:-true}
       - HEARTHLIGHT_CONFIG_PATH=/app/src/shared/configs/config.yaml
       - HEARTHLIGHT_WORKER_RUNTIME=${HEARTHLIGHT_WORKER_RUNTIME:-docker}

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BaseURL } from '../config';
+import { fetchWithTimeout, parseApiJson } from '../utils/api';
 import MonitoringPage from './MonitoringPage';
 import {
   formatUploadedVideoSummary,
@@ -146,40 +147,6 @@ const extractDefaultBindings = (bindingPayload, modelPayload) => {
 };
 
 const MODEL_OPTIONS_FETCH_TIMEOUT_MS = 60000;
-
-const fetchWithTimeout = (url, options = {}, timeoutMs = 20000) => (
-  fetch(url, {
-    ...options,
-    signal: typeof AbortSignal.timeout === 'function'
-      ? AbortSignal.timeout(timeoutMs)
-      : options.signal,
-  })
-);
-
-const parseApiJson = async (response, fallbackMessage) => {
-  const text = await response.text();
-  if (!response.ok) {
-    let detail = fallbackMessage;
-    try {
-      const payload = text ? JSON.parse(text) : {};
-      if (typeof payload?.detail === 'string' && payload.detail.trim()) {
-        detail = payload.detail;
-      }
-    } catch (error) {
-      if (text?.trim()) {
-        detail = `${fallbackMessage} (${text.trim().slice(0, 120)})`;
-      }
-    }
-    throw new Error(detail);
-  }
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch (error) {
-    throw new Error(
-      `${fallbackMessage}: server returned non-JSON (${response.status})`,
-    );
-  }
-};
 
 const normalizeListPayload = (payload) => {
   if (Array.isArray(payload)) return payload;
@@ -801,53 +768,35 @@ const SettingsPage = ({
   }, [currentThemeKey]);
 
   const reloadAlertRuleState = async ({ includeRules = true, sourcesSnapshot = [] } = {}) => {
-    let ruleResponse = null;
-    const optionResponse = await fetchWithTimeout(`${BaseURL}/settings/alert-rule-options`);
-    if (includeRules) {
-      ruleResponse = await fetchWithTimeout(`${BaseURL}/settings/trigger-rules`);
-      if (ruleResponse.ok) {
-        try {
-          const preview = await ruleResponse.clone().json();
-          if (!Array.isArray(preview)) {
-            ruleResponse = await fetch(`${BaseURL}/settings/alert-rules`);
-          }
-        } catch (error) {
-          ruleResponse = await fetch(`${BaseURL}/settings/alert-rules`);
-        }
+    try {
+      const optionResponse = await fetchWithTimeout(`${BaseURL}/settings/alert-rule-options`, {}, 30000);
+      const optionData = await parseApiJson(optionResponse, 'Failed to load alert rule options');
+      if (!includeRules) {
+        setAlertRuleOptions(optionData || { sources: [] });
+        setAlertRuleLoadHint(buildAlertRuleSetupHint(sourcesSnapshot));
+        return;
       }
-    }
-    const responses = includeRules ? [ruleResponse, optionResponse] : [optionResponse];
-    const firstFailure = responses.find((response) => !response.ok);
-    if (firstFailure) {
-      let detail = null;
+      const ruleResponse = await fetchWithTimeout(`${BaseURL}/settings/trigger-rules`, {}, 30000);
+      let ruleData = [];
       try {
-        const payload = await firstFailure.json();
-        detail = payload?.detail || null;
+        ruleData = await parseApiJson(ruleResponse, 'Failed to load trigger rules');
+        if (!Array.isArray(ruleData)) {
+          throw new Error('Trigger rules response was not a list');
+        }
       } catch (error) {
-        detail = null;
+        const legacyResponse = await fetchWithTimeout(`${BaseURL}/settings/alert-rules`, {}, 30000);
+        ruleData = await parseApiJson(legacyResponse, 'Failed to load alert rules');
       }
-      setAlertRules([]);
-      setPersistedAlertRules([]);
-      setAlertRuleOptions({ sources: [] });
-      setAlertRuleLoadHint(buildAlertRuleSetupHint(sourcesSnapshot, detail));
-      return;
-    }
-    if (includeRules) {
-      const [ruleResponse, optionResponse] = responses;
-      const [ruleData, optionData] = await Promise.all([
-        ruleResponse.json(),
-        optionResponse.json(),
-      ]);
       const hydratedRules = (Array.isArray(ruleData) ? ruleData : []).map((rule, index) => hydrateAlertRule(rule, index));
       setAlertRules(hydratedRules);
       setPersistedAlertRules(hydratedRules);
       setAlertRuleOptions(optionData || { sources: [] });
       setAlertRuleLoadHint(buildAlertRuleSetupHint(sourcesSnapshot));
-    } else {
-      const [optionResponse] = responses;
-      const optionData = await optionResponse.json();
-      setAlertRuleOptions(optionData || { sources: [] });
-      setAlertRuleLoadHint(buildAlertRuleSetupHint(sourcesSnapshot));
+    } catch (error) {
+      setAlertRules([]);
+      setPersistedAlertRules([]);
+      setAlertRuleOptions({ sources: [] });
+      setAlertRuleLoadHint(buildAlertRuleSetupHint(sourcesSnapshot, error.message));
     }
   };
 
@@ -949,75 +898,76 @@ const SettingsPage = ({
   useEffect(() => {
     const bootstrapSettings = async () => {
       try {
-        try {
-          await reloadModelRegistryState();
-        } catch (error) {
-          console.warn('Model registry settings failed to load', error);
-          setBanner({
-            kind: 'error',
-            text: error.message || 'Model registry settings failed to load. Retry with Refresh.',
-          });
-        }
-        let sourceData = [];
-        try {
-          const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`, {}, 30000);
-          sourceData = await parseApiJson(sourceResponse, 'Failed to load input source settings');
-          if (!Array.isArray(sourceData)) {
-            sourceData = [];
-          }
-        } catch (error) {
-          console.warn('Input sources API unavailable; using local draft', error);
-        }
-        const hydratedSources = sourceData.length > 0
-          ? sourceData.map((source, index) => hydrateSource(source, index))
-          : [createSourceDraft()];
-        setSources(hydratedSources);
-        try {
-          let standardPromptData = EMPTY_PROMPT_SETTINGS;
-          const standardPromptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts/standard`);
-          if (standardPromptResponse.ok) {
-            standardPromptData = await standardPromptResponse.json();
-            setStandardPromptSettings({
-              anomaly_items: standardPromptData.anomaly_items || [],
-              anomaly_behaviors: standardPromptData.anomaly_behaviors || [],
-            });
-          }
-          const promptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts`);
-          if (promptResponse.ok) {
-            const promptData = await promptResponse.json();
-            setAnomalyItems((promptData.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
-            setAnomalyBehaviors((promptData.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
-          } else {
-            setAnomalyItems((standardPromptData.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
-            setAnomalyBehaviors((standardPromptData.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
-          }
-        } catch {
-          // Keep model and source controls available even if prompt files are unavailable.
-        }
-        const optionalConnectorReloads = [
-          reloadTelegramSubscriptionState,
-          reloadAppleMessageSubscriptionState,
-          reloadGoveeEndpointState,
-          reloadGenericConnectorEndpointState,
-          reloadConnectorZooRepoSettings,
-        ];
-        for (const reload of optionalConnectorReloads) {
-          try {
-            await reload();
-          } catch (error) {
-            console.warn('Optional connector settings failed to load', error);
-          }
-        }
-        try {
-          await reloadAlertRuleState({
-            sourcesSnapshot: sourceData,
-          });
-        } catch (error) {
-          console.warn('Alert rule settings failed to load', error);
+        await reloadModelRegistryState();
+        setBanner((current) => (
+          current?.kind === 'error' && String(current.text || '').includes('Model registry')
+            ? null
+            : current
+        ));
+      } catch (error) {
+        console.warn('Model registry settings failed to load', error);
+        setBanner({
+          kind: 'error',
+          text: error.message || 'Model registry settings failed to load. Refresh the page.',
+        });
+      }
+
+      let sourceData = [];
+      try {
+        const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`, {}, 30000);
+        sourceData = await parseApiJson(sourceResponse, 'Failed to load input source settings');
+        if (!Array.isArray(sourceData)) {
+          sourceData = [];
         }
       } catch (error) {
-        setBanner({ kind: 'error', text: error.message });
+        console.warn('Input sources API unavailable; using local draft', error);
       }
+      const hydratedSources = sourceData.length > 0
+        ? sourceData.map((source, index) => hydrateSource(source, index))
+        : [createSourceDraft()];
+      setSources(hydratedSources);
+
+      try {
+        let standardPromptData = EMPTY_PROMPT_SETTINGS;
+        const standardPromptResponse = await fetchWithTimeout(`${BaseURL}/settings/anomaly-prompts/standard`, {}, 30000);
+        if (standardPromptResponse.ok) {
+          standardPromptData = await parseApiJson(standardPromptResponse, 'Failed to load standard anomaly prompts');
+          setStandardPromptSettings({
+            anomaly_items: standardPromptData.anomaly_items || [],
+            anomaly_behaviors: standardPromptData.anomaly_behaviors || [],
+          });
+        }
+        const promptResponse = await fetchWithTimeout(`${BaseURL}/settings/anomaly-prompts`, {}, 30000);
+        if (promptResponse.ok) {
+          const promptData = await parseApiJson(promptResponse, 'Failed to load anomaly prompts');
+          setAnomalyItems((promptData.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
+          setAnomalyBehaviors((promptData.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
+        } else {
+          setAnomalyItems((standardPromptData.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
+          setAnomalyBehaviors((standardPromptData.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
+        }
+      } catch (error) {
+        console.warn('Anomaly prompt settings failed to load', error);
+      }
+
+      const optionalConnectorReloads = [
+        reloadTelegramSubscriptionState,
+        reloadAppleMessageSubscriptionState,
+        reloadGoveeEndpointState,
+        reloadGenericConnectorEndpointState,
+        reloadConnectorZooRepoSettings,
+      ];
+      for (const reload of optionalConnectorReloads) {
+        try {
+          await reload();
+        } catch (error) {
+          console.warn('Optional connector settings failed to load', error);
+        }
+      }
+
+      await reloadAlertRuleState({
+        sourcesSnapshot: sourceData,
+      });
     };
 
     bootstrapSettings();
