@@ -1,4 +1,4 @@
-import { parseApiJson } from './api';
+import { formatApiError, parseApiJson } from './api';
 
 const buildResponse = (body, status, ok = status >= 200 && status < 300) => ({
   ok,
@@ -24,6 +24,11 @@ describe('parseApiJson', () => {
     await expect(parseApiJson(response, 'Failed to load')).rejects.toThrow(
       /non-JSON/i,
     );
+  });
+
+  it('maps SyntaxError messages to a friendly fallback', () => {
+    const error = new SyntaxError('Unexpected token \'I\', "Internal S"... is not valid JSON');
+    expect(formatApiError(error, 'Server error')).toBe('Server error');
   });
 
   it('supports fetch mocks that only implement json()', async () => {

@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BaseURL } from '../config';
-import { fetchWithTimeout, parseApiJson } from '../utils/api';
+import { fetchWithTimeout, formatApiError, parseApiJson } from '../utils/api';
 import MonitoringPage from './MonitoringPage';
 import {
   formatUploadedVideoSummary,
@@ -897,30 +897,46 @@ const SettingsPage = ({
 
   useEffect(() => {
     const bootstrapSettings = async () => {
-      try {
-        await reloadModelRegistryState();
+      const loadInputSources = async () => {
+        const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`, {}, 30000);
+        const parsed = await parseApiJson(sourceResponse, 'Failed to load input source settings');
+        return Array.isArray(parsed) ? parsed : [];
+      };
+
+      const [modelOutcome, sourceOutcome] = await Promise.allSettled([
+        reloadModelRegistryState(),
+        loadInputSources(),
+      ]);
+
+      if (modelOutcome.status === 'fulfilled') {
         setBanner((current) => (
           current?.kind === 'error' && String(current.text || '').includes('Model registry')
             ? null
             : current
         ));
-      } catch (error) {
-        console.warn('Model registry settings failed to load', error);
+      } else {
+        console.warn('Model registry settings failed to load', modelOutcome.reason);
         setBanner({
           kind: 'error',
-          text: error.message || 'Model registry settings failed to load. Refresh the page.',
+          text: formatApiError(
+            modelOutcome.reason,
+            'Model registry settings failed to load. Refresh the page or restart the webapp container.',
+          ),
         });
       }
 
       let sourceData = [];
-      try {
-        const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`, {}, 30000);
-        sourceData = await parseApiJson(sourceResponse, 'Failed to load input source settings');
-        if (!Array.isArray(sourceData)) {
-          sourceData = [];
-        }
-      } catch (error) {
-        console.warn('Input sources API unavailable; using local draft', error);
+      if (sourceOutcome.status === 'fulfilled') {
+        sourceData = sourceOutcome.value;
+      } else {
+        console.warn('Input sources API unavailable; using local draft', sourceOutcome.reason);
+        setBanner((current) => current ?? {
+          kind: 'error',
+          text: formatApiError(
+            sourceOutcome.reason,
+            'Saved sources could not be loaded from the server. Showing your local draft.',
+          ),
+        });
       }
       const hydratedSources = sourceData.length > 0
         ? sourceData.map((source, index) => hydrateSource(source, index))
@@ -1545,7 +1561,10 @@ const SettingsPage = ({
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
       setBanner({ kind: 'success', text: 'Default model bindings saved.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({
+        kind: 'error',
+        text: formatApiError(error, 'Failed to save default model bindings.'),
+      });
     } finally {
       setIsSavingBindings(false);
     }
@@ -1665,17 +1684,14 @@ const SettingsPage = ({
         },
         body: JSON.stringify(sanitizeSourcesForApi(sources)),
       });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save source settings');
-      }
+      const data = await parseApiJson(response, 'Failed to save source settings');
       const hydratedSources = data.map((source, index) => hydrateSource(source, index));
       setSources(hydratedSources);
       await reloadModelRegistryState();
       await reloadAlertRuleState({ sourcesSnapshot: data });
       setBanner({ kind: 'success', text: 'Source settings updated.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Failed to save source settings.') });
     } finally {
       setIsSaving(false);
     }

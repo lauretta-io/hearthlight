@@ -12,9 +12,25 @@ const readResponseText = async (response) => {
     return response.text();
   }
   if (typeof response.json === 'function') {
-    return JSON.stringify(await response.json());
+    try {
+      return JSON.stringify(await response.json());
+    } catch (error) {
+      return '';
+    }
   }
   return '';
+};
+
+export const formatApiError = (error, fallbackMessage) => {
+  const message = error?.message || '';
+  if (
+    error instanceof SyntaxError
+    || /Unexpected token/i.test(message)
+    || /is not valid JSON/i.test(message)
+  ) {
+    return fallbackMessage;
+  }
+  return message || fallbackMessage;
 };
 
 export const parseApiJson = async (response, fallbackMessage) => {

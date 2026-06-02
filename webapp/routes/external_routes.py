@@ -1116,50 +1116,41 @@ def get_active_source_rows(db: Session):
     )
 
 
+_SOURCE_TEMPLATE_COLUMNS_ENSURED = False
+_SOURCE_TEMPLATE_COLUMNS_LOCK = Lock()
+
+
 def ensure_source_template_columns(db: Session) -> None:
-    existing = {
-        row[0]
-        for row in db.execute(
-            text(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'control'
-                  AND table_name = 'input_source_template'
-                """
-            )
-        ).all()
-    }
-    if "frame_processing_mode" not in existing:
-        db.execute(
-            text(
-                """
-                ALTER TABLE control.input_source_template
-                ADD COLUMN frame_processing_mode VARCHAR(32) NOT NULL DEFAULT 'frame_skip'
-                """
-            )
+    """Add optional source columns once. Uses IF NOT EXISTS so concurrent workers do not 500."""
+    global _SOURCE_TEMPLATE_COLUMNS_ENSURED
+    if _SOURCE_TEMPLATE_COLUMNS_ENSURED:
+        return
+    with _SOURCE_TEMPLATE_COLUMNS_LOCK:
+        if _SOURCE_TEMPLATE_COLUMNS_ENSURED:
+            return
+        statements = (
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS frame_processing_mode VARCHAR(32) NOT NULL DEFAULT 'frame_skip'
+            """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS process_every_n_frames INTEGER NOT NULL DEFAULT 1
+            """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS target_frame_rate DOUBLE PRECISION
+            """,
         )
-        db.commit()
-    if "process_every_n_frames" not in existing:
-        db.execute(
-            text(
-                """
-                ALTER TABLE control.input_source_template
-                ADD COLUMN process_every_n_frames INTEGER NOT NULL DEFAULT 1
-                """
-            )
-        )
-        db.commit()
-    if "target_frame_rate" not in existing:
-        db.execute(
-            text(
-                """
-                ALTER TABLE control.input_source_template
-                ADD COLUMN target_frame_rate DOUBLE PRECISION
-                """
-            )
-        )
-        db.commit()
+        try:
+            for statement in statements:
+                db.execute(text(statement))
+            db.commit()
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception("Failed to ensure input_source_template columns")
+            raise
+        _SOURCE_TEMPLATE_COLUMNS_ENSURED = True
 
 
 _REGISTRY_DB_SYNC_INTERVAL_SECONDS = float(
@@ -1549,11 +1540,13 @@ def build_input_source_response(
         and current_frame > current_total
     ):
         current_frame = current_total
+    raw_tasks = source_row.tasks if isinstance(source_row.tasks, list) else []
+    normalized_tasks = [task for task in raw_tasks if task] or ["PERSON"]
     return InputSource(
         id=source_row.id,
         kind=source_row.kind,
-        label=source_row.label,
-        tasks=list(source_row.tasks),
+        label=(source_row.label or "").strip() or f"Source {source_row.id}",
+        tasks=normalized_tasks,
         enabled=source_row.enabled,
         order=source_row.sort_order,
         source_value=coerce_source_value_for_api(source_row),
@@ -1604,33 +1597,53 @@ def build_effective_source_error(
 
 
 def build_source_responses(db: Session, resource_snapshot: dict):
-    source_rows = get_active_source_rows(db)
-    upload_rows = get_upload_rows_by_id(
-        db, [row.upload_id for row in source_rows if row.upload_id is not None]
-    )
-    recordings = get_run_recordings_by_source_id(db)
-    current_frame_override = (
-        get_latest_run_frame_id(db) if is_hybrid_local_cpu_runtime() else None
-    )
-    responses: list[InputSource] = []
-    for row in source_rows:
-        try:
-            responses.append(
-                build_input_source_response(
-                    row,
-                    upload_rows.get(row.upload_id),
-                    recordings.get(row.id),
-                    resource_snapshot,
-                    current_frame_override=current_frame_override,
+    try:
+        source_rows = get_active_source_rows(db)
+        upload_rows = get_upload_rows_by_id(
+            db, [row.upload_id for row in source_rows if row.upload_id is not None]
+        )
+        recordings = get_run_recordings_by_source_id(db)
+        current_frame_override = (
+            get_latest_run_frame_id(db) if is_hybrid_local_cpu_runtime() else None
+        )
+        responses: list[InputSource] = []
+        for row in source_rows:
+            try:
+                responses.append(
+                    build_input_source_response(
+                        row,
+                        upload_rows.get(row.upload_id),
+                        recordings.get(row.id),
+                        resource_snapshot,
+                        current_frame_override=current_frame_override,
+                    )
                 )
-            )
-        except Exception:
-            logger.warning(
-                "Skipping invalid input source row %s",
-                getattr(row, "id", None),
-                exc_info=True,
-            )
-    return responses
+            except Exception:
+                logger.warning(
+                    "Skipping invalid input source row %s",
+                    getattr(row, "id", None),
+                    exc_info=True,
+                )
+        return responses
+    except Exception:
+        logger.exception("Failed to build input source responses")
+        return []
+
+
+def get_settings_input_sources_snapshot() -> dict:
+    """Lightweight snapshot for Settings reads (no resource monitor / disk scans)."""
+    return {
+        "gpus": [],
+        "module_status": {ModuleNames.WEBAPP: DataModels.Status.RUNNING},
+        "updated_at": utc_now_iso(),
+    }
+
+
+def load_settings_input_sources(db: Session) -> list[InputSource]:
+    source_rows = get_active_source_rows(db)
+    if not source_rows:
+        return []
+    return build_source_responses(db, get_settings_input_sources_snapshot())
 
 
 def build_enabled_source_errors(source_rows: list[SQLModels.InputSourceTemplate], db: Session):
@@ -1965,6 +1978,14 @@ def upsert_sources_and_build_response(db: Session, sources: list[InputSource]):
     replace_sources(db, sources)
     snapshot = get_cached_resource_snapshot(db)
     return build_source_responses(db, snapshot)
+
+
+def upsert_settings_input_sources_and_build_response(
+    db: Session,
+    sources: list[InputSource],
+):
+    replace_sources(db, sources)
+    return build_source_responses(db, get_settings_input_sources_snapshot())
 
 
 def append_source(db: Session, source: InputSource):
@@ -3917,7 +3938,11 @@ def update_sources(sources: list[InputSource], db: Session = Depends(get_db)):
 
 @external_router.get("/settings/input-sources", response_model=list[InputSource])
 def get_settings_input_sources(db: Session = Depends(get_db)):
-    return get_sources(db)
+    try:
+        return load_settings_input_sources(db)
+    except Exception:
+        logger.exception("Failed to load settings input sources")
+        return []
 
 
 @external_router.put("/settings/input-sources", response_model=list[InputSource])
@@ -3925,7 +3950,14 @@ def replace_settings_input_sources(
     sources: list[InputSource],
     db: Session = Depends(get_db),
 ):
-    return upsert_sources_and_build_response(db, sources)
+    try:
+        return upsert_settings_input_sources_and_build_response(db, sources)
+    except Exception as exc:
+        logger.exception("Failed to save settings input sources")
+        raise HTTPException(
+            status_code=503,
+            detail="input sources could not be saved right now",
+        ) from exc
 
 
 @external_router.post("/settings/input-sources", response_model=list[InputSource])
