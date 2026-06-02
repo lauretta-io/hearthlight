@@ -324,5 +324,48 @@ class PluginApiResponseTests(unittest.TestCase):
         self.assertIn("connector target 41 not found", str(exc_info.exception.detail))
 
 
+class RegistryBundleSyncTests(unittest.TestCase):
+    def setUp(self):
+        external_routes._registry_db_sync_in_progress = False
+        external_routes._last_registry_db_sync_at = 0.0
+
+    @patch.object(external_routes, "sync_registry_bundle_to_db")
+    @patch.object(external_routes, "sync_plugin_catalog_to_db")
+    @patch.object(external_routes, "ensure_plugin_tables")
+    @patch.object(
+        external_routes,
+        "load_registry_bundle",
+        return_value={"mounted_models": {}, "plugin_catalog": {"components": []}},
+    )
+    def test_get_registry_bundle_force_sync_does_not_raise_unbound_local(
+        self,
+        _load_bundle,
+        _ensure_tables,
+        _sync_plugins,
+        _sync_registry,
+    ):
+        db = _DBStub([])
+
+        bundle = external_routes.get_registry_bundle(db, force_sync=True)
+
+        self.assertIn("mounted_models", bundle)
+        self.assertFalse(external_routes._registry_db_sync_in_progress)
+        self.assertTrue(db.committed)
+        _sync_registry.assert_called_once()
+        _sync_plugins.assert_called_once()
+
+    @patch.object(external_routes, "build_source_responses", return_value=[])
+    @patch.object(external_routes, "get_active_source_rows", return_value=[])
+    def test_load_settings_input_sources_returns_empty_without_snapshot_work(
+        self,
+        _rows,
+        _responses,
+    ):
+        db = _DBStub([])
+        result = external_routes.load_settings_input_sources(db)
+        self.assertEqual(result, [])
+        _responses.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main()

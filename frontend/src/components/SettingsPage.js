@@ -1,7 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BaseURL } from '../config';
-import { fetchWithTimeout, formatApiError, parseApiJson } from '../utils/api';
+import {
+  fetchJson,
+  fetchWithTimeout,
+  formatApiError,
+  parseApiJson,
+  readApiPayload,
+} from '../utils/api';
 import MonitoringPage from './MonitoringPage';
 import {
   formatUploadedVideoSummary,
@@ -801,66 +807,42 @@ const SettingsPage = ({
   };
 
   const reloadTelegramSubscriptionState = async () => {
-    const response = await fetch(`${BaseURL}/settings/telegram-trigger-subscriptions`);
-    if (!response.ok) {
-      let detail = null;
-      try {
-        const payload = await response.json();
-        detail = payload?.detail || null;
-      } catch (error) {
-        detail = null;
-      }
-      throw new Error(detail || 'Failed to load Telegram trigger subscriptions');
-    }
-    const data = await response.json();
+    const data = await fetchJson(
+      `${BaseURL}/settings/telegram-trigger-subscriptions`,
+      {},
+      'Failed to load Telegram trigger subscriptions',
+      30000,
+    );
     setTelegramSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
   };
 
   const reloadAppleMessageSubscriptionState = async () => {
-    const response = await fetch(`${BaseURL}/settings/apple-message-trigger-subscriptions`);
-    if (!response.ok) {
-      let detail = null;
-      try {
-        const payload = await response.json();
-        detail = payload?.detail || null;
-      } catch (error) {
-        detail = null;
-      }
-      throw new Error(detail || 'Failed to load Apple Messages trigger subscriptions');
-    }
-    const data = await response.json();
+    const data = await fetchJson(
+      `${BaseURL}/settings/apple-message-trigger-subscriptions`,
+      {},
+      'Failed to load Apple Messages trigger subscriptions',
+      30000,
+    );
     setAppleMessageSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
   };
 
   const reloadGoveeEndpointState = async () => {
-    const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints`);
-    if (!response.ok) {
-      let detail = null;
-      try {
-        const payload = await response.json();
-        detail = payload?.detail || null;
-      } catch (error) {
-        detail = null;
-      }
-      throw new Error(detail || 'Failed to load Govee connector endpoints');
-    }
-    const data = await response.json();
+    const data = await fetchJson(
+      `${BaseURL}/settings/govee-connector-endpoints`,
+      {},
+      'Failed to load Govee connector endpoints',
+      30000,
+    );
     setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
   };
 
   const reloadGenericConnectorEndpointState = async () => {
-    const response = await fetch(`${BaseURL}/settings/connector-endpoints`);
-    if (!response.ok) {
-      let detail = null;
-      try {
-        const payload = await response.json();
-        detail = payload?.detail || null;
-      } catch (error) {
-        detail = null;
-      }
-      throw new Error(detail || 'Failed to load connector endpoints');
-    }
-    const data = await response.json();
+    const data = await fetchJson(
+      `${BaseURL}/settings/connector-endpoints`,
+      {},
+      'Failed to load connector endpoints',
+      30000,
+    );
     setGenericConnectorEndpoints(
       normalizeListPayload(data).filter(
         (endpoint) => !['telegram', 'apple_messages', 'govee'].includes(endpoint.connector_key),
@@ -869,29 +851,24 @@ const SettingsPage = ({
   };
 
   const reloadConnectorZooRepoSettings = async () => {
-    const response = await fetch(`${BaseURL}/settings/connector-zoo-repo`);
-    if (!response.ok) {
-      throw new Error('Failed to load Connector Zoo repo settings');
-    }
-    const data = await response.json();
+    const data = await fetchJson(
+      `${BaseURL}/settings/connector-zoo-repo`,
+      {},
+      'Failed to load Connector Zoo repo settings',
+      30000,
+    );
     setConnectorZooRepoSettings({
       catalog_url: data?.catalog_url ?? '',
     });
   };
 
   const reloadRepoConnectorZooCatalog = async () => {
-    const response = await fetch(`${BaseURL}/connector-zoo/repo`);
-    if (!response.ok) {
-      let detail = null;
-      try {
-        const payload = await response.json();
-        detail = payload?.detail || null;
-      } catch (error) {
-        detail = null;
-      }
-      throw new Error(detail || 'Failed to refresh Connector Zoo');
-    }
-    const data = await response.json();
+    const data = await fetchJson(
+      `${BaseURL}/connector-zoo/repo`,
+      {},
+      'Failed to refresh Connector Zoo',
+      30000,
+    );
     setRepoConnectorZooCatalog(normalizeRepoConnectorZooPayload(data));
   };
 
@@ -994,7 +971,10 @@ const SettingsPage = ({
       return;
     }
     reloadRepoConnectorZooCatalog().catch((error) => {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({
+        kind: 'error',
+        text: formatApiError(error, 'Failed to refresh Connector Zoo.'),
+      });
     });
   }, [activeTab, connectorSubTab]);
 
@@ -1541,22 +1521,18 @@ const SettingsPage = ({
         model_key: defaultBindings[option.stage] || null,
         binding_scope: 'default',
       }));
-      const response = await fetch(`${BaseURL}/model-bindings`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
+      await fetchJson(
+        `${BaseURL}/model-bindings`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      });
-      let data = {};
-      try {
-        data = await response.json();
-      } catch (error) {
-        data = {};
-      }
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save default model bindings');
-      }
+        'Failed to save default model bindings',
+        30000,
+      );
       await reloadModelRegistryState();
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
       setBanner({ kind: 'success', text: 'Default model bindings saved.' });
@@ -1632,28 +1608,29 @@ const SettingsPage = ({
     }
     setIsSavingAnomalyPrompts(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/anomaly-prompts`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/anomaly-prompts`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            anomaly_items: anomalyItems.map((item) => ({
+              item: item.item.trim(),
+            })),
+            anomaly_behaviors: anomalyBehaviors.map((behavior) => behavior.value.trim()).filter(Boolean),
+          }),
         },
-        body: JSON.stringify({
-          anomaly_items: anomalyItems.map((item) => ({
-            item: item.item.trim(),
-          })),
-          anomaly_behaviors: anomalyBehaviors.map((behavior) => behavior.value.trim()).filter(Boolean),
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save anomaly prompts');
-      }
+        'Failed to save anomaly prompts',
+        30000,
+      );
       setAnomalyItems((data.anomaly_items || []).map((item, index) => hydrateAnomalyItem(item, index)));
       setAnomalyBehaviors((data.anomaly_behaviors || []).map((item, index) => hydrateAnomalyBehavior(item, index)));
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
       setBanner({ kind: 'success', text: 'Anomaly detection config saved.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Failed to save anomaly prompts.') });
     } finally {
       setIsSavingAnomalyPrompts(false);
     }
@@ -1677,14 +1654,18 @@ const SettingsPage = ({
 
     setIsSaving(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/input-sources`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/input-sources`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(sanitizeSourcesForApi(sources)),
         },
-        body: JSON.stringify(sanitizeSourcesForApi(sources)),
-      });
-      const data = await parseApiJson(response, 'Failed to save source settings');
+        'Failed to save source settings',
+        60000,
+      );
       const hydratedSources = data.map((source, index) => hydrateSource(source, index));
       setSources(hydratedSources);
       await reloadModelRegistryState();
@@ -1733,7 +1714,7 @@ const SettingsPage = ({
         },
         body: JSON.stringify(payload),
       });
-      const data = await response.json();
+      const data = await readApiPayload(response, 'Failed to save mounted models');
       if (!response.ok) {
         const conflict = normalizeMountedModelConflict(data);
         if (conflict) {
@@ -1751,7 +1732,7 @@ const SettingsPage = ({
       await reloadModelRegistryState();
       setBanner({ kind: 'success', text: 'Mounted model inventory updated.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Failed to save mounted models.') });
     } finally {
       setIsSavingMountedModels(false);
     }
@@ -1783,14 +1764,15 @@ const SettingsPage = ({
     const formData = new FormData();
     formData.append('file', file);
     try {
-      const response = await fetch(`${BaseURL}/settings/input-sources/uploads`, {
-        method: 'POST',
-        body: formData,
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to upload video');
-      }
+      const data = await fetchJson(
+        `${BaseURL}/settings/input-sources/uploads`,
+        {
+          method: 'POST',
+          body: formData,
+        },
+        'Failed to upload video',
+        120000,
+      );
       setSources((previous) =>
         previous.map((source) =>
           source.clientKey === clientKey
@@ -1814,11 +1796,12 @@ const SettingsPage = ({
       }));
       setBanner({ kind: 'success', text: successMessage });
     } catch (error) {
+      const uploadError = formatApiError(error, 'Failed to upload video.');
       setUploadFeedback((previous) => ({
         ...previous,
-        [clientKey]: { kind: 'error', text: error.message },
+        [clientKey]: { kind: 'error', text: uploadError },
       }));
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: uploadError });
     } finally {
       setBusyUploads((previous) => ({ ...previous, [clientKey]: false }));
     }
@@ -1831,17 +1814,16 @@ const SettingsPage = ({
     }
     setIsSavingAlertRules(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/trigger-rules`, {
+      let response = await fetch(`${BaseURL}/settings/trigger-rules`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(sanitizeAlertRulesForApi(alertRules)),
       });
-      let data = await response.json();
-      let finalResponse = response;
-      if (!finalResponse.ok || !Array.isArray(data)) {
-        finalResponse = await fetch(`${BaseURL}/settings/alert-rules`, {
+      let data = await readApiPayload(response, 'Failed to save alert rules');
+      if (!response.ok || !Array.isArray(data)) {
+        response = await fetch(`${BaseURL}/settings/alert-rules`, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -1861,9 +1843,9 @@ const SettingsPage = ({
               })),
           ),
         });
-        data = await finalResponse.json();
+        data = await readApiPayload(response, 'Failed to save alert rules');
       }
-      if (!finalResponse.ok) {
+      if (!response.ok) {
         throw new Error(data.detail || 'Failed to save alert rules');
       }
       const hydratedRules = (Array.isArray(data) ? data : []).map((rule, index) => hydrateAlertRule(rule, index));
@@ -1873,7 +1855,7 @@ const SettingsPage = ({
       await reloadAlertRuleState({ includeRules: false, sourcesSnapshot: sources.filter((source) => source.id) });
       setBanner({ kind: 'success', text: 'Alert rules saved.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setIsSavingAlertRules(false);
     }
@@ -1886,22 +1868,23 @@ const SettingsPage = ({
     }
     setIsSavingTelegramSubscriptions(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/telegram-trigger-subscriptions`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/telegram-trigger-subscriptions`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(sanitizeTelegramSubscriptionsForApi(telegramSubscriptions)),
         },
-        body: JSON.stringify(sanitizeTelegramSubscriptionsForApi(telegramSubscriptions)),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save Telegram trigger subscriptions');
-      }
+        'Failed to save Telegram trigger subscriptions',
+        30000,
+      );
       setTelegramSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
       setTelegramSubscriptionErrors({});
       setBanner({ kind: 'success', text: 'Telegram trigger subscriptions saved.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setIsSavingTelegramSubscriptions(false);
     }
@@ -1924,27 +1907,28 @@ const SettingsPage = ({
     }
     setBusyTelegramTests((previous) => ({ ...previous, [subscription.clientKey]: true }));
     try {
-      const response = await fetch(`${BaseURL}/settings/telegram-trigger-subscriptions/test`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/telegram-trigger-subscriptions/test`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            enabled: subscription.enabled,
+            subscription_label: subscription.subscription_label?.trim() || null,
+            bot_token: subscription.bot_token.trim(),
+            chat_id: subscription.chat_id.trim(),
+            send_media: Boolean(subscription.send_media),
+            media_source: subscription.media_source || 'none',
+          }),
         },
-        body: JSON.stringify({
-          enabled: subscription.enabled,
-          subscription_label: subscription.subscription_label?.trim() || null,
-          bot_token: subscription.bot_token.trim(),
-          chat_id: subscription.chat_id.trim(),
-          send_media: Boolean(subscription.send_media),
-          media_source: subscription.media_source || 'none',
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to send Telegram test message');
-      }
+        'Failed to send Telegram test message',
+        30000,
+      );
       setBanner({ kind: 'success', text: data.detail || 'Telegram test message sent.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setBusyTelegramTests((previous) => ({ ...previous, [subscription.clientKey]: false }));
     }
@@ -1957,22 +1941,23 @@ const SettingsPage = ({
     }
     setIsSavingAppleMessageSubscriptions(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/apple-message-trigger-subscriptions`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/apple-message-trigger-subscriptions`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(sanitizeAppleMessageSubscriptionsForApi(appleMessageSubscriptions)),
         },
-        body: JSON.stringify(sanitizeAppleMessageSubscriptionsForApi(appleMessageSubscriptions)),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save Apple Messages trigger subscriptions');
-      }
+        'Failed to save Apple Messages trigger subscriptions',
+        30000,
+      );
       setAppleMessageSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
       setAppleMessageSubscriptionErrors({});
       setBanner({ kind: 'success', text: 'Apple Messages trigger subscriptions saved.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setIsSavingAppleMessageSubscriptions(false);
     }
@@ -1989,25 +1974,26 @@ const SettingsPage = ({
     }
     setBusyAppleMessageTests((previous) => ({ ...previous, [subscription.clientKey]: true }));
     try {
-      const response = await fetch(`${BaseURL}/settings/apple-message-trigger-subscriptions/test`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/apple-message-trigger-subscriptions/test`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            enabled: subscription.enabled,
+            subscription_label: subscription.subscription_label?.trim() || null,
+            recipient_handle: subscription.recipient_handle.trim(),
+            service: subscription.service,
+          }),
         },
-        body: JSON.stringify({
-          enabled: subscription.enabled,
-          subscription_label: subscription.subscription_label?.trim() || null,
-          recipient_handle: subscription.recipient_handle.trim(),
-          service: subscription.service,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to send Apple Messages test message');
-      }
+        'Failed to send Apple Messages test message',
+        30000,
+      );
       setBanner({ kind: 'success', text: data.detail || 'Apple Messages test message sent.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setBusyAppleMessageTests((previous) => ({ ...previous, [subscription.clientKey]: false }));
     }
@@ -2027,20 +2013,21 @@ const SettingsPage = ({
       const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
         ? `?endpoint_id=${endpoint.id}`
         : '';
-      const response = await fetch(`${BaseURL}/settings/govee/test${query}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/govee/test${query}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ api_key: endpoint.api_key.trim() }),
         },
-        body: JSON.stringify({ api_key: endpoint.api_key.trim() }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to validate Govee API key');
-      }
+        'Failed to validate Govee API key',
+        60000,
+      );
       setBanner({ kind: 'success', text: data.message || 'Govee API key is valid.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: false }));
     }
@@ -2060,17 +2047,18 @@ const SettingsPage = ({
       const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
         ? `?endpoint_id=${endpoint.id}`
         : '';
-      const response = await fetch(`${BaseURL}/settings/govee/devices${query}`, {
-        headers: endpoint.api_key.trim() === MASKED_SECRET_VALUE
-          ? {}
-          : {
-              'x-govee-api-key': endpoint.api_key.trim(),
-            },
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to discover Govee devices');
-      }
+      const data = await fetchJson(
+        `${BaseURL}/settings/govee/devices${query}`,
+        {
+          headers: endpoint.api_key.trim() === MASKED_SECRET_VALUE
+            ? {}
+            : {
+                'x-govee-api-key': endpoint.api_key.trim(),
+              },
+        },
+        'Failed to discover Govee devices',
+        120000,
+      );
       setGoveeDiscoveryResults((previous) => ({
         ...previous,
         [endpoint.clientKey]: data || [],
@@ -2088,7 +2076,7 @@ const SettingsPage = ({
           : 'Govee API key is valid, but no light-capable devices were returned.',
       });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setBusyGoveeDiscovery((previous) => ({ ...previous, [endpoint.clientKey]: false }));
     }
@@ -2101,22 +2089,23 @@ const SettingsPage = ({
     }
     setIsSavingGoveeEndpoints(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/govee-connector-endpoints`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(sanitizeGoveeEndpointsForApi(goveeEndpoints)),
         },
-        body: JSON.stringify(sanitizeGoveeEndpointsForApi(goveeEndpoints)),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save Govee light connections');
-      }
+        'Failed to save Govee light connections',
+        30000,
+      );
       setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
       setGoveeEndpointErrors({});
       setBanner({ kind: 'success', text: 'Govee light connections saved.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setIsSavingGoveeEndpoints(false);
     }
@@ -2132,20 +2121,21 @@ const SettingsPage = ({
       const query = endpoint.api_key.trim() === MASKED_SECRET_VALUE && endpoint.id
         ? `?endpoint_id=${endpoint.id}`
         : '';
-      const response = await fetch(`${BaseURL}/settings/govee-connector-endpoints/test${query}`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/govee-connector-endpoints/test${query}`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(sanitizeGoveeEndpointsForApi([endpoint])[0]),
         },
-        body: JSON.stringify(sanitizeGoveeEndpointsForApi([endpoint])[0]),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to send Govee test action');
-      }
+        'Failed to send Govee test action',
+        60000,
+      );
       setBanner({ kind: 'success', text: data.detail || 'Govee trigger action sent.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setBusyGoveeTests((previous) => ({ ...previous, [endpoint.clientKey]: false }));
     }
@@ -2154,26 +2144,27 @@ const SettingsPage = ({
   const saveConnectorZooRepoSettings = async () => {
     setIsSavingConnectorZooRepoSettings(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/connector-zoo-repo`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/settings/connector-zoo-repo`,
+        {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            catalog_url: connectorZooRepoSettings.catalog_url.trim() || null,
+          }),
         },
-        body: JSON.stringify({
-          catalog_url: connectorZooRepoSettings.catalog_url.trim() || null,
-        }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to save Connector Zoo repo settings');
-      }
+        'Failed to save Connector Zoo repo settings',
+        30000,
+      );
       setConnectorZooRepoSettings({
         catalog_url: data?.catalog_url ?? '',
       });
       await reloadRepoConnectorZooCatalog();
       setBanner({ kind: 'success', text: 'Connector Zoo catalog settings updated.' });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setIsSavingConnectorZooRepoSettings(false);
     }
@@ -2182,17 +2173,18 @@ const SettingsPage = ({
   const installRepoConnector = async (connectorKey) => {
     setInstallingRepoConnectorKey(connectorKey);
     try {
-      const response = await fetch(`${BaseURL}/connector-zoo/repo/install`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      const data = await fetchJson(
+        `${BaseURL}/connector-zoo/repo/install`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ connector_key: connectorKey }),
         },
-        body: JSON.stringify({ connector_key: connectorKey }),
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        throw new Error(data.detail || 'Failed to add connector from Connector Zoo');
-      }
+        'Failed to add connector from Connector Zoo',
+        120000,
+      );
       await Promise.all([
         reloadGenericConnectorEndpointState(),
         reloadGoveeEndpointState(),
@@ -2204,7 +2196,7 @@ const SettingsPage = ({
         text: data.message || 'Connector added. Restart Hearthlight to activate the plugin runtime.',
       });
     } catch (error) {
-      setBanner({ kind: 'error', text: error.message });
+      setBanner({ kind: 'error', text: formatApiError(error, 'Request failed.') });
     } finally {
       setInstallingRepoConnectorKey('');
     }
@@ -3988,7 +3980,10 @@ const SettingsPage = ({
                       </div>
                       <button
                         type="button"
-                        onClick={() => reloadRepoConnectorZooCatalog().catch((error) => setBanner({ kind: 'error', text: error.message }))}
+                        onClick={() => reloadRepoConnectorZooCatalog().catch((error) => setBanner({
+                          kind: 'error',
+                          text: formatApiError(error, 'Failed to refresh Connector Zoo.'),
+                        }))}
                         className="secondary-button"
                       >
                         Refresh Zoo

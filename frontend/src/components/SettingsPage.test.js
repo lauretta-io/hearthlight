@@ -2,18 +2,33 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import SettingsPage from './SettingsPage';
 
-const buildJsonResponse = (body) =>
-  Promise.resolve({
-    ok: true,
-    json: () => Promise.resolve(body),
+const buildJsonResponse = (body, status = 200) => {
+  const serialized = typeof body === 'string' ? body : JSON.stringify(body);
+  const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+  return Promise.resolve({
+    ok: status >= 200 && status < 300,
+    status,
+    text: () => Promise.resolve(serialized),
+    json: () => Promise.resolve(parsed),
   });
+};
 
-const buildErrorResponse = (status, body) =>
-  Promise.resolve({
+const buildErrorResponse = (status, body) => {
+  const serialized = typeof body === 'string' ? body : JSON.stringify(body);
+  const parsed = typeof body === 'string' ? (() => {
+    try {
+      return JSON.parse(body);
+    } catch (error) {
+      return { detail: body };
+    }
+  })() : body;
+  return Promise.resolve({
     ok: false,
     status,
-    json: () => Promise.resolve(body),
+    text: () => Promise.resolve(serialized),
+    json: () => Promise.resolve(parsed),
   });
+};
 
 beforeEach(() => {
   let connectorZooRepoSettings = {

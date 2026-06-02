@@ -1,4 +1,4 @@
-import { formatApiError, parseApiJson } from './api';
+import { fetchJson, formatApiError, parseApiJson, readApiPayload } from './api';
 
 const buildResponse = (body, status, ok = status >= 200 && status < 300) => ({
   ok,
@@ -24,6 +24,16 @@ describe('parseApiJson', () => {
     await expect(parseApiJson(response, 'Failed to load')).rejects.toThrow(
       /non-JSON/i,
     );
+  });
+
+  it('readApiPayload parses error bodies without throwing SyntaxError', async () => {
+    const response = buildResponse('Internal Server Error', 500, false);
+    await expect(readApiPayload(response, 'Failed')).rejects.toThrow(/non-JSON/i);
+  });
+
+  it('fetchJson rejects plain-text 500 responses with a readable message', async () => {
+    global.fetch = jest.fn(() => Promise.resolve(buildResponse('Internal Server Error', 500, false)));
+    await expect(fetchJson('/api/test', {}, 'Failed to load')).rejects.toThrow(/Failed to load/i);
   });
 
   it('maps SyntaxError messages to a friendly fallback', () => {

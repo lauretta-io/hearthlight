@@ -7,6 +7,17 @@ export const fetchWithTimeout = (url, options = {}, timeoutMs = 20000) => (
   })
 );
 
+export const readApiPayload = async (response, fallbackMessage) => {
+  const text = await readResponseText(response);
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw new Error(
+      `${fallbackMessage}: server returned non-JSON (${response.status})`,
+    );
+  }
+};
+
 const readResponseText = async (response) => {
   if (typeof response.text === 'function') {
     return response.text();
@@ -33,27 +44,24 @@ export const formatApiError = (error, fallbackMessage) => {
   return message || fallbackMessage;
 };
 
+export const fetchJson = async (
+  url,
+  options = {},
+  fallbackMessage,
+  timeoutMs = 20000,
+) => {
+  const response = await fetchWithTimeout(url, options, timeoutMs);
+  return parseApiJson(response, fallbackMessage);
+};
+
 export const parseApiJson = async (response, fallbackMessage) => {
-  const text = await readResponseText(response);
+  const payload = await readApiPayload(response, fallbackMessage);
   if (!response.ok) {
     let detail = fallbackMessage;
-    try {
-      const payload = text ? JSON.parse(text) : {};
-      if (typeof payload?.detail === 'string' && payload.detail.trim()) {
-        detail = payload.detail;
-      }
-    } catch (error) {
-      if (text?.trim()) {
-        detail = `${fallbackMessage} (${text.trim().slice(0, 120)})`;
-      }
+    if (typeof payload?.detail === 'string' && payload.detail.trim()) {
+      detail = payload.detail;
     }
     throw new Error(detail);
   }
-  try {
-    return text ? JSON.parse(text) : {};
-  } catch (error) {
-    throw new Error(
-      `${fallbackMessage}: server returned non-JSON (${response.status})`,
-    );
-  }
+  return payload;
 };

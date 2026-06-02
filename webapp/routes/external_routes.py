@@ -1902,7 +1902,7 @@ def replace_sources(db: Session, sources: list[InputSource]):
     existing_rows = get_active_source_rows(db)
     existing_by_id = {row.id: row for row in existing_rows}
     validate_upload_references(db, sources)
-    bundle = get_registry_bundle(db, source_rows=existing_rows)
+    bundle = get_registry_bundle(db, source_rows=existing_rows, force_sync=True)
     mounted_models = build_effective_mounted_models(bundle, bundle.get("mounted_models"))
 
     seen_ids = set()
@@ -1953,8 +1953,9 @@ def replace_sources(db: Session, sources: list[InputSource]):
             seen_ids.add(row.id)
 
     db.flush()
-    get_registry_bundle(db, source_rows=persisted_rows)
+    get_registry_bundle(db, source_rows=persisted_rows, force_sync=True)
     persist_mounted_models(mounted_models)
+    invalidate_registry_bundle_cache()
     seen_ids.update(row.id for row in persisted_rows if row.id is not None)
     for row in existing_rows:
         if row.id not in seen_ids:
@@ -3954,6 +3955,8 @@ def replace_settings_input_sources(
 ):
     try:
         return upsert_settings_input_sources_and_build_response(db, sources)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Failed to save settings input sources")
         raise HTTPException(
@@ -3962,9 +3965,46 @@ def replace_settings_input_sources(
         ) from exc
 
 
+def append_settings_input_source(db: Session, source: InputSource):
+    existing_sources = build_source_responses(
+        db,
+        get_settings_input_sources_snapshot(),
+    )
+    new_source = InputSource(
+        kind=source.kind,
+        label=source.label,
+        tasks=list(source.tasks),
+        enabled=source.enabled,
+        order=len(existing_sources),
+        source_value=source.source_value,
+        upload_id=source.upload_id,
+        frame_processing_mode=source.frame_processing_mode,
+        process_every_n_frames=source.process_every_n_frames,
+        target_frame_rate=source.target_frame_rate,
+        detector_model_key=source.detector_model_key,
+        tracker_model_key=source.tracker_model_key,
+        reid_model_key=source.reid_model_key,
+        anomaly_stage_1_model_key=source.anomaly_stage_1_model_key,
+        anomaly_stage_2_model_key=source.anomaly_stage_2_model_key,
+    )
+    return upsert_settings_input_sources_and_build_response(
+        db,
+        [*existing_sources, new_source],
+    )
+
+
 @external_router.post("/settings/input-sources", response_model=list[InputSource])
 def add_settings_input_source(source: InputSource, db: Session = Depends(get_db)):
-    return append_source(db, source)
+    try:
+        return append_settings_input_source(db, source)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Failed to append settings input source")
+        raise HTTPException(
+            status_code=503,
+            detail="input source could not be added right now",
+        ) from exc
 
 
 @external_router.get("/settings/anomaly-prompts", response_model=AnomalyPromptSettings)
