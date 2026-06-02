@@ -3895,7 +3895,18 @@ def get_status(db: Session = Depends(get_db)):
 
 @external_router.get("/sources", response_model=list[InputSource])
 def get_sources(db: Session = Depends(get_db)):
-    snapshot = get_cached_resource_snapshot(db)
+    source_rows = get_active_source_rows(db)
+    if not source_rows:
+        return []
+    try:
+        snapshot = get_cached_resource_snapshot(db)
+    except Exception:
+        logger.exception("Failed to build resource snapshot for source list; using minimal snapshot")
+        snapshot = {
+            "gpus": [],
+            "module_status": {ModuleNames.WEBAPP: DataModels.Status.RUNNING},
+            "updated_at": utc_now_iso(),
+        }
     return build_source_responses(db, snapshot)
 
 
@@ -4710,8 +4721,15 @@ def build_model_option_catalog_response(bundle: dict, *, has_gpu: bool | None = 
 
 @external_router.get("/model-options", response_model=ModelOptionCatalog)
 def get_model_options(db: Session = Depends(get_db)):
-    bundle = load_registry_bundle()
-    return ModelOptionCatalog.model_validate(build_model_option_catalog_response(bundle))
+    try:
+        bundle = load_registry_bundle()
+        return ModelOptionCatalog.model_validate(build_model_option_catalog_response(bundle))
+    except Exception as exc:
+        logger.exception("Failed to load model options")
+        raise HTTPException(
+            status_code=503,
+            detail="model options are temporarily unavailable",
+        ) from exc
 
 
 @external_router.get("/model-logs", response_model=ModelResultLogPage)

@@ -156,6 +156,31 @@ const fetchWithTimeout = (url, options = {}, timeoutMs = 20000) => (
   })
 );
 
+const parseApiJson = async (response, fallbackMessage) => {
+  const text = await response.text();
+  if (!response.ok) {
+    let detail = fallbackMessage;
+    try {
+      const payload = text ? JSON.parse(text) : {};
+      if (typeof payload?.detail === 'string' && payload.detail.trim()) {
+        detail = payload.detail;
+      }
+    } catch (error) {
+      if (text?.trim()) {
+        detail = `${fallbackMessage} (${text.trim().slice(0, 120)})`;
+      }
+    }
+    throw new Error(detail);
+  }
+  try {
+    return text ? JSON.parse(text) : {};
+  } catch (error) {
+    throw new Error(
+      `${fallbackMessage}: server returned non-JSON (${response.status})`,
+    );
+  }
+};
+
 const normalizeListPayload = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.items)) return payload.items;
@@ -928,15 +953,18 @@ const SettingsPage = ({
           await reloadModelRegistryState();
         } catch (error) {
           console.warn('Model registry settings failed to load', error);
-          setBanner({ kind: 'error', text: error.message });
+          setBanner({
+            kind: 'error',
+            text: error.message || 'Model registry settings failed to load. Retry with Refresh.',
+          });
         }
         let sourceData = [];
         try {
-          const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`);
-          if (!sourceResponse.ok) {
-            throw new Error('Failed to load input source settings');
+          const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`, {}, 30000);
+          sourceData = await parseApiJson(sourceResponse, 'Failed to load input source settings');
+          if (!Array.isArray(sourceData)) {
+            sourceData = [];
           }
-          sourceData = await sourceResponse.json();
         } catch (error) {
           console.warn('Input sources API unavailable; using local draft', error);
         }
@@ -1516,15 +1544,12 @@ const SettingsPage = ({
         {},
         MODEL_OPTIONS_FETCH_TIMEOUT_MS,
       );
-      if (!modelResponse.ok) {
-        throw new Error('Failed to load model registry settings');
-      }
-      const modelData = await modelResponse.json();
+      const modelData = await parseApiJson(modelResponse, 'Failed to load model registry settings');
       let bindingData = [];
       try {
         const bindingResponse = await fetchWithTimeout(`${BaseURL}/model-bindings`, {}, 30000);
         if (bindingResponse.ok) {
-          bindingData = await bindingResponse.json();
+          bindingData = await parseApiJson(bindingResponse, 'Failed to load model bindings');
         }
       } catch (error) {
         console.warn('model-bindings unavailable; using model-options defaults', error);
