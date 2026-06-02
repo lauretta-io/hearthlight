@@ -198,6 +198,7 @@ from ...shared.utils.model_registry import (
     ensure_mounted_model_key,
     get_registration,
     get_stage_field_name,
+    invalidate_registry_bundle_cache,
     load_registry_bundle,
     MODEL_BINDINGS_PATH,
     persist_mounted_models,
@@ -1778,6 +1779,7 @@ def persist_model_bindings(defaults: dict[str, str | None]):
     bindings = {"defaults": dict(defaults)}
     MODEL_BINDINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(config=OmegaConf.create(bindings), f=str(MODEL_BINDINGS_PATH))
+    invalidate_registry_bundle_cache()
 
 
 def ensure_run_row(

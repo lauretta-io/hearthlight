@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from importlib import metadata
 from importlib.util import find_spec
 from pathlib import Path
@@ -253,6 +254,7 @@ def persist_mounted_models(mounted_models: dict[str, list[str]]):
     }
     MOUNTED_MODELS_PATH.parent.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(config=OmegaConf.create(payload), f=str(MOUNTED_MODELS_PATH))
+    invalidate_registry_bundle_cache()
 
 
 def build_effective_mounted_models(
@@ -314,7 +316,27 @@ def collect_required_mounted_models(
     return required
 
 
-def load_registry_bundle() -> dict[str, Any]:
+_REGISTRY_BUNDLE_CACHE: dict[str, Any] | None = None
+_REGISTRY_BUNDLE_CACHE_AT = 0.0
+_REGISTRY_BUNDLE_CACHE_SECONDS = float(
+    os.environ.get("HEARTHLIGHT_REGISTRY_BUNDLE_CACHE_SECONDS", "30")
+)
+
+
+def invalidate_registry_bundle_cache() -> None:
+    global _REGISTRY_BUNDLE_CACHE
+    _REGISTRY_BUNDLE_CACHE = None
+
+
+def load_registry_bundle(*, force_reload: bool = False) -> dict[str, Any]:
+    global _REGISTRY_BUNDLE_CACHE, _REGISTRY_BUNDLE_CACHE_AT
+    now = time.monotonic()
+    if (
+        not force_reload
+        and _REGISTRY_BUNDLE_CACHE is not None
+        and (now - _REGISTRY_BUNDLE_CACHE_AT) < _REGISTRY_BUNDLE_CACHE_SECONDS
+    ):
+        return _REGISTRY_BUNDLE_CACHE
     bundle = {
         "models": load_model_registries(),
         "bindings": load_model_bindings(),
@@ -325,6 +347,8 @@ def load_registry_bundle() -> dict[str, Any]:
     bundle["plugin_catalog"] = load_plugin_catalog(
         upstream_model_catalog=_load_upstream_master_catalog(),
     )
+    _REGISTRY_BUNDLE_CACHE = bundle
+    _REGISTRY_BUNDLE_CACHE_AT = now
     return bundle
 
 

@@ -1087,3 +1087,85 @@ test('shows workspace defaults when model-bindings is empty but model-options in
   expect(await screen.findByText(/Saved defaults:.*YOLOX Small \(CPU\)/)).toBeTruthy();
   expect(screen.getByText(/Use default \(YOLOX Small \(CPU\)\)/)).toBeTruthy();
 });
+
+test('derives defaults from mounted stage options when bindings and default_bindings are empty', async () => {
+  global.fetch = jest.fn((url, options = {}) => {
+    if (url.endsWith('/settings/input-sources') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/model-options')) {
+      return buildJsonResponse({
+        model_zoo: { catalog_available: true },
+        default_bindings: {},
+        mounted_models: {},
+        stages: [
+          {
+            stage: 'detector',
+            options: [
+              { model_key: 'builtin_yolox_s_cpu', display_name: 'YOLOX Small (CPU)', stage: 'detector', is_mounted: true },
+            ],
+          },
+          {
+            stage: 'tracker',
+            options: [
+              { model_key: 'builtin_bytetrack', display_name: 'ByteTrack', stage: 'tracker', is_mounted: true },
+            ],
+          },
+          {
+            stage: 'anomaly_stage_1',
+            options: [
+              { model_key: 'siglip_stage_1_cpu', display_name: 'SigLIP Stage 1 (CPU)', stage: 'anomaly_stage_1', is_mounted: true },
+            ],
+          },
+          {
+            stage: 'anomaly_stage_2',
+            options: [
+              { model_key: 'smolvlm_stage_2_cpu', display_name: 'SmolVLM Stage 2 (CPU)', stage: 'anomaly_stage_2', is_mounted: true },
+            ],
+          },
+        ],
+      });
+    }
+    if (url.endsWith('/model-bindings') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/anomaly-prompts/standard')) {
+      return buildJsonResponse({ anomaly_items: [], anomaly_behaviors: [] });
+    }
+    if (url.endsWith('/settings/anomaly-prompts')) {
+      return buildJsonResponse({ anomaly_items: [], anomaly_behaviors: [] });
+    }
+    if (url.endsWith('/settings/trigger-rules')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/alert-rule-options')) {
+      return buildJsonResponse({ sources: [] });
+    }
+    if (url.endsWith('/settings/telegram-trigger-subscriptions')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/apple-message-trigger-subscriptions')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/govee-connector-endpoints')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/connector-endpoints')) {
+      return buildJsonResponse([]);
+    }
+    if (url.endsWith('/settings/connector-zoo-repo')) {
+      return buildJsonResponse({ catalog_url: '' });
+    }
+    return buildJsonResponse({});
+  });
+
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText(/Saved defaults:.*ByteTrack/)).toBeTruthy();
+});

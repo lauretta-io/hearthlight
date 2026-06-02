@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BaseURL } from '../config';
 import MonitoringPage from './MonitoringPage';
@@ -130,8 +130,22 @@ const extractDefaultBindings = (bindingPayload, modelPayload) => {
     }
   });
 
+  (modelPayload?.stages || []).forEach((stageEntry) => {
+    const stage = stageEntry?.stage;
+    if (!stage || nextDefaults[stage]) {
+      return;
+    }
+    const options = Array.isArray(stageEntry.options) ? stageEntry.options : [];
+    const preferred = options.find((option) => option.is_mounted) || options[0];
+    if (preferred?.model_key) {
+      nextDefaults[stage] = preferred.model_key;
+    }
+  });
+
   return nextDefaults;
 };
+
+const MODEL_OPTIONS_FETCH_TIMEOUT_MS = 60000;
 
 const fetchWithTimeout = (url, options = {}, timeoutMs = 20000) => (
   fetch(url, {
@@ -692,6 +706,7 @@ const SettingsPage = ({
   const [busyGoveeDiscovery, setBusyGoveeDiscovery] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
+  const modelRegistryLoadRef = useRef(null);
   const [alertRules, setAlertRules] = useState([]);
   const [persistedAlertRules, setPersistedAlertRules] = useState([]);
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
@@ -907,8 +922,14 @@ const SettingsPage = ({
   };
 
   useEffect(() => {
-    const loadSources = async () => {
+    const bootstrapSettings = async () => {
       try {
+        try {
+          await reloadModelRegistryState();
+        } catch (error) {
+          console.warn('Model registry settings failed to load', error);
+          setBanner({ kind: 'error', text: error.message });
+        }
         let sourceData = [];
         try {
           const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`);
@@ -923,11 +944,6 @@ const SettingsPage = ({
           ? sourceData.map((source, index) => hydrateSource(source, index))
           : [createSourceDraft()];
         setSources(hydratedSources);
-        try {
-          await reloadModelRegistryState();
-        } catch (error) {
-          console.warn('Failed to refresh model registry while loading sources', error);
-        }
         try {
           let standardPromptData = EMPTY_PROMPT_SETTINGS;
           const standardPromptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts/standard`);
@@ -976,7 +992,7 @@ const SettingsPage = ({
       }
     };
 
-    loadSources();
+    bootstrapSettings();
   }, []);
 
   useEffect(() => {
@@ -1491,43 +1507,40 @@ const SettingsPage = ({
   };
 
   const reloadModelRegistryState = async () => {
-    const modelResponse = await fetchWithTimeout(`${BaseURL}/model-options`);
-    if (!modelResponse.ok) {
-      throw new Error('Failed to load model registry settings');
+    if (modelRegistryLoadRef.current) {
+      return modelRegistryLoadRef.current;
     }
-    const modelData = await modelResponse.json();
-    let bindingData = [];
-    try {
-      const bindingResponse = await fetchWithTimeout(`${BaseURL}/model-bindings`);
-      if (bindingResponse.ok) {
-        bindingData = await bindingResponse.json();
+    modelRegistryLoadRef.current = (async () => {
+      const modelResponse = await fetchWithTimeout(
+        `${BaseURL}/model-options`,
+        {},
+        MODEL_OPTIONS_FETCH_TIMEOUT_MS,
+      );
+      if (!modelResponse.ok) {
+        throw new Error('Failed to load model registry settings');
       }
-    } catch (error) {
-      console.warn('model-bindings unavailable; using model-options defaults', error);
-    }
-    setModelOptionCatalog(modelData || { stages: [] });
-    setMountedModels(modelData?.mounted_models || {});
-    const bindingList = normalizeBindingsPayload(bindingData);
-    setDefaultBindings(extractDefaultBindings(bindingList, modelData));
-    return { modelData, bindingData: bindingList };
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    const loadModelRegistry = async () => {
+      const modelData = await modelResponse.json();
+      let bindingData = [];
       try {
-        await reloadModelRegistryState();
-      } catch (error) {
-        if (!cancelled) {
-          setBanner({ kind: 'error', text: error.message });
+        const bindingResponse = await fetchWithTimeout(`${BaseURL}/model-bindings`, {}, 30000);
+        if (bindingResponse.ok) {
+          bindingData = await bindingResponse.json();
         }
+      } catch (error) {
+        console.warn('model-bindings unavailable; using model-options defaults', error);
       }
-    };
-    loadModelRegistry();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+      setModelOptionCatalog(modelData || { stages: [] });
+      setMountedModels(modelData?.mounted_models || {});
+      const bindingList = normalizeBindingsPayload(bindingData);
+      setDefaultBindings(extractDefaultBindings(bindingList, modelData));
+      return { modelData, bindingData: bindingList };
+    })();
+    try {
+      return await modelRegistryLoadRef.current;
+    } finally {
+      modelRegistryLoadRef.current = null;
+    }
+  };
 
   const saveDefaultBindings = async () => {
     setIsSavingBindings(true);
