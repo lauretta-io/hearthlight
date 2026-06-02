@@ -4096,7 +4096,9 @@ const SettingsPage = ({
             </section>
           ))}
 
-          {renderTabSection('monitoring', <MonitoringPage />)}
+          {renderTabSection('monitoring', (
+            <MonitoringPage pollingEnabled={activeTab === 'monitoring'} />
+          ))}
 
           {renderTabSection('initialization', (
             <div className="control-column">
