@@ -3,14 +3,7 @@ setlocal EnableExtensions
 title Hearthlight - Full Video (CPU)
 cd /d "%~dp0\..\.."
 
-echo.
-echo  Hearthlight - Full Video Test (CPU)
-echo  ====================================
-echo  Repo: %CD%
-echo.
-echo  This starts ingestor, association, and anomaly for video processing.
-echo  First build can take 30-60+ minutes. Use a short MP4 for your first test.
-echo.
+call :show_steps
 
 call :require_docker
 if errorlevel 1 goto :fail
@@ -50,6 +43,36 @@ echo    3. Monitor Run - Start
 echo.
 start http://localhost:3000
 goto :done
+
+:show_steps
+echo.
+echo  ============================================================
+echo   HEARTHLIGHT - FULL VIDEO TEST (CPU)
+echo  ============================================================
+echo   Repo: %CD%
+echo.
+echo   BEFORE THIS SCRIPT:
+echo     1. Docker Desktop is running
+echo     2. You cloned the repo with submodules (see README.md)
+echo.
+echo   THIS SCRIPT WILL:
+echo     [1/5] Build rabbitmq, webapp, ingestor, association, anomaly
+echo     [2/5] Start database + RabbitMQ
+echo     [3/5] Initialize database
+echo     [4/5] Start full stack
+echo     [5/5] Show status + open browser
+echo.
+echo   FIRST BUILD: often 30-60+ minutes. Use a short MP4 for testing.
+echo.
+echo   AFTER THIS SCRIPT (in the browser):
+echo     1. Settings - Sources - upload short MP4 - Save
+echo     2. Monitor Run - Start
+echo     3. Wait several minutes on CPU
+echo.
+echo   Online guide: github.com/lauretta-io/hearthlight/tree/main/scripts/windows
+echo  ============================================================
+echo.
+exit /b 0
 
 :require_docker
 docker version >nul 2>&1

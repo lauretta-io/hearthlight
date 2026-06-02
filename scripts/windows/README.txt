@@ -1,23 +1,8 @@
-Hearthlight — Windows quick start
-==================================
+Windows steps (readable on GitHub without downloading this file):
 
-Before you run any .bat file:
-  1. Install Docker Desktop (WSL2 enabled) and start it.
-  2. Install Git for Windows.
-  3. Clone this repo (ZIP alone is not enough — submodules are required):
+  https://github.com/lauretta-io/hearthlight/tree/main/scripts/windows
 
-       git clone https://github.com/lauretta-io/hearthlight.git
-       cd hearthlight
-       git submodule update --init --recursive
+Open README.md in that folder, or double-click a .bat file — steps print in the window.
 
-Then double-click ONE of these (from this folder):
-
-  1-control-plane.bat   — Dashboard + API only (fastest check)
-  2-full-video-cpu.bat  — Full video test on CPU (upload a clip in the UI)
-
-After 2-full-video-cpu.bat finishes:
-  - Open http://localhost:3000
-  - Settings → Sources → upload a short MP4 → Save
-  - Monitor Run → Start
-
-More help: Hearthlight_Windows_Setup_Guide.docx (repo root) or docs/containers.md
+  1-control-plane.bat   = dashboard + API
+  2-full-video-cpu.bat  = full video test (CPU)

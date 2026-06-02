@@ -92,6 +92,6 @@ jobs:
             dist/Hearthlight.dmg
             scripts/windows/1-control-plane.bat
             scripts/windows/2-full-video-cpu.bat
-            scripts/windows/README.txt
+            scripts/windows/README.md
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

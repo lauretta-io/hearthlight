@@ -3,11 +3,7 @@ setlocal EnableExtensions
 title Hearthlight - Control Plane
 cd /d "%~dp0\..\.."
 
-echo.
-echo  Hearthlight - Control Plane (UI + API only)
-echo  ==========================================
-echo  Repo: %CD%
-echo.
+call :show_steps
 
 call :require_docker
 if errorlevel 1 goto :fail
@@ -44,6 +40,29 @@ echo  Open the dashboard: http://localhost:3000
 start http://localhost:3000
 echo.
 goto :done
+
+:show_steps
+echo.
+echo  ============================================================
+echo   HEARTHLIGHT - CONTROL PLANE (UI + API only)
+echo  ============================================================
+echo   Repo: %CD%
+echo.
+echo   BEFORE THIS SCRIPT:
+echo     1. Docker Desktop is running
+echo     2. You cloned the repo with submodules (see README.md)
+echo.
+echo   THIS SCRIPT WILL:
+echo     [1/4] Build rabbitmq + webapp
+echo     [2/4] Start database + RabbitMQ
+echo     [3/4] Initialize database
+echo     [4/4] Start webapp + dashboard
+echo.
+echo   WHEN DONE: open http://localhost:3000
+echo   Online guide: github.com/lauretta-io/hearthlight/tree/main/scripts/windows
+echo  ============================================================
+echo.
+exit /b 0
 
 :require_docker
 docker version >nul 2>&1

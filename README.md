@@ -138,7 +138,7 @@ After cloning the repo (with submodules) and starting Docker Desktop:
 1. `scripts\windows\1-control-plane.bat` — dashboard and API only
 2. `scripts\windows\2-full-video-cpu.bat` — full CPU video pipeline
 
-See `scripts/windows/README.txt` for prerequisites. Release `v0.8.1` also attaches these `.bat` files for download.
+See **[scripts/windows/README.md](scripts/windows/README.md)** (readable on GitHub without downloading). Release `v0.8.1` also attaches the `.bat` files; steps print in the window when you run them.
 
 ## Environment Files
 
