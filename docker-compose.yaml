@@ -29,6 +29,7 @@ services:
 
   rabbitmq:
     image: ${HEARTHLIGHT_RABBITMQ_IMAGE:-hearthlight-rabbitmq:latest}
+    pull_policy: never
     build: ./rabbitmq
     networks:
       - mynetwork
@@ -46,6 +47,7 @@ services:
 
   reset_db:
     image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
+    pull_policy: never
     build: ./webapp
     networks:
       - mynetwork
@@ -64,6 +66,7 @@ services:
 
   webapp:
     image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
+    pull_policy: never
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./webapp
@@ -138,6 +141,7 @@ services:
 
   ingestor:
     image: ${HEARTHLIGHT_INGESTOR_IMAGE:-hearthlight-ingestor:latest}
+    pull_policy: never
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./ingestor
@@ -173,6 +177,7 @@ services:
 
   association:
     image: ${HEARTHLIGHT_ASSOCIATION_IMAGE:-hearthlight-association:latest}
+    pull_policy: never
     build: ./association
     networks:
       - mynetwork
@@ -202,6 +207,7 @@ services:
 
   anomaly:
     image: ${HEARTHLIGHT_ANOMALY_IMAGE:-hearthlight-anomaly:latest}
+    pull_policy: never
     build: ./anomaly
     networks:
       - mynetwork
