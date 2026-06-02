@@ -32,6 +32,6 @@ exit /b 0
 
 :fail
 echo Failed. Logs: docker compose logs --tail=120 ingestor
-echo Help: scripts\windows\README.md
+echo Help: scripts\windows\README.md (WSL2 if Docker will not start)
 pause
 exit /b 1

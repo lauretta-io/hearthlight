@@ -31,6 +31,6 @@ pause
 exit /b 0
 
 :fail
-echo Failed. See scripts\windows\README.md
+echo Failed. See scripts\windows\README.md (WSL2 if Docker will not start)
 pause
 exit /b 1
