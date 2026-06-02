@@ -99,6 +99,49 @@ const normalizeBindingsPayload = (payload) => {
   return [];
 };
 
+const extractDefaultBindings = (bindingPayload, modelPayload) => {
+  const nextDefaults = {};
+  normalizeBindingsPayload(bindingPayload)
+    .filter((binding) => binding.binding_scope === 'default')
+    .forEach((binding) => {
+      if (binding.model_key) {
+        nextDefaults[binding.stage] = binding.model_key;
+      }
+    });
+
+  const catalogDefaults = modelPayload?.default_bindings;
+  if (catalogDefaults && typeof catalogDefaults === 'object') {
+    MODEL_STAGE_OPTIONS.forEach((option) => {
+      const modelKey = catalogDefaults[option.stage];
+      if (modelKey && !nextDefaults[option.stage]) {
+        nextDefaults[option.stage] = modelKey;
+      }
+    });
+  }
+
+  const mounted = modelPayload?.mounted_models || {};
+  MODEL_STAGE_OPTIONS.forEach((option) => {
+    if (nextDefaults[option.stage]) {
+      return;
+    }
+    const mountedKeys = mounted[option.stage];
+    if (Array.isArray(mountedKeys) && mountedKeys[0]) {
+      nextDefaults[option.stage] = mountedKeys[0];
+    }
+  });
+
+  return nextDefaults;
+};
+
+const fetchWithTimeout = (url, options = {}, timeoutMs = 20000) => (
+  fetch(url, {
+    ...options,
+    signal: typeof AbortSignal.timeout === 'function'
+      ? AbortSignal.timeout(timeoutMs)
+      : options.signal,
+  })
+);
+
 const normalizeListPayload = (payload) => {
   if (Array.isArray(payload)) return payload;
   if (Array.isArray(payload?.items)) return payload.items;
@@ -877,7 +920,11 @@ const SettingsPage = ({
           ? sourceData.map((source, index) => hydrateSource(source, index))
           : [createSourceDraft()];
         setSources(hydratedSources);
-        await reloadModelRegistryState();
+        try {
+          await reloadModelRegistryState();
+        } catch (error) {
+          console.warn('Failed to refresh model registry while loading sources', error);
+        }
         try {
           let standardPromptData = EMPTY_PROMPT_SETTINGS;
           const standardPromptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts/standard`);
@@ -1428,29 +1475,43 @@ const SettingsPage = ({
   };
 
   const reloadModelRegistryState = async () => {
-    const [modelResponse, bindingResponse] = await Promise.all([
-      fetch(`${BaseURL}/model-options`),
-      fetch(`${BaseURL}/model-bindings`),
-    ]);
-    if (!modelResponse.ok || !bindingResponse.ok) {
+    const modelResponse = await fetchWithTimeout(`${BaseURL}/model-options`);
+    if (!modelResponse.ok) {
       throw new Error('Failed to load model registry settings');
     }
-    const [modelData, bindingData] = await Promise.all([
-      modelResponse.json(),
-      bindingResponse.json(),
-    ]);
+    const modelData = await modelResponse.json();
+    let bindingData = [];
+    try {
+      const bindingResponse = await fetchWithTimeout(`${BaseURL}/model-bindings`);
+      if (bindingResponse.ok) {
+        bindingData = await bindingResponse.json();
+      }
+    } catch (error) {
+      console.warn('model-bindings unavailable; using model-options defaults', error);
+    }
     setModelOptionCatalog(modelData || { stages: [] });
     setMountedModels(modelData?.mounted_models || {});
     const bindingList = normalizeBindingsPayload(bindingData);
-    const nextDefaults = {};
-    bindingList
-      .filter((binding) => binding.binding_scope === 'default')
-      .forEach((binding) => {
-        nextDefaults[binding.stage] = binding.model_key || '';
-      });
-    setDefaultBindings(nextDefaults);
+    setDefaultBindings(extractDefaultBindings(bindingList, modelData));
     return { modelData, bindingData: bindingList };
   };
+
+  useEffect(() => {
+    let cancelled = false;
+    const loadModelRegistry = async () => {
+      try {
+        await reloadModelRegistryState();
+      } catch (error) {
+        if (!cancelled) {
+          setBanner({ kind: 'error', text: error.message });
+        }
+      }
+    };
+    loadModelRegistry();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const saveDefaultBindings = async () => {
     setIsSavingBindings(true);
@@ -2141,11 +2202,19 @@ const SettingsPage = ({
     }, {});
     return result;
   }, {});
+  const getEffectiveDefaultKey = (stage) => (
+    defaultBindings[stage]
+    || modelOptionCatalog?.default_bindings?.[stage]
+    || mountedModelsByStage[stage]?.[0]
+    || ''
+  );
+
   const getDisplayNameForStage = (stage, modelKey, fallbackLabel) => {
-    if (!modelKey) {
+    const effectiveKey = modelKey || getEffectiveDefaultKey(stage);
+    if (!effectiveKey) {
       return fallbackLabel;
     }
-    return modelDisplayNamesByStage[stage]?.[modelKey] || modelKey;
+    return modelDisplayNamesByStage[stage]?.[effectiveKey] || effectiveKey;
   };
   const detectionRules = alertRules.filter((rule) => rule.rule_kind === 'detector');
   const anomalyRules = alertRules.filter((rule) => rule.rule_kind === 'anomaly');
@@ -2306,7 +2375,7 @@ const SettingsPage = ({
 
   const renderDefaultBindingOptions = (stage) => {
     const stageOptions = modelOptionsByStage[stage] || [];
-    const currentKey = defaultBindings[stage];
+    const currentKey = getEffectiveDefaultKey(stage);
     const mountedOptions = stageOptions.filter(
       (option) => (mountedModelsByStage[stage] || []).includes(option.model_key),
     );
@@ -2593,7 +2662,7 @@ const SettingsPage = ({
                                   onChange={(event) => setSourceField(source.clientKey, option.field, event.target.value || null)}
                                 >
                                   <option value="">
-                                    Use default ({getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'None')})
+                                    Use default ({getDisplayNameForStage(option.stage, getEffectiveDefaultKey(option.stage), 'None')})
                                   </option>
                                   {renderModelOptions(option.stage)}
                                 </select>
@@ -2633,7 +2702,7 @@ const SettingsPage = ({
                           Saved defaults:
                           {' '}
                           {MODEL_STAGE_OPTIONS.map((option) => (
-                            `${option.label}: ${getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'No default')}`
+                            `${option.label}: ${getDisplayNameForStage(option.stage, getEffectiveDefaultKey(option.stage), 'No default')}`
                           )).join(' · ')}
                         </p>
                       </div>

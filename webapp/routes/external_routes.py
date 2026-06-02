@@ -4653,10 +4653,29 @@ def get_models_by_stage(stage: str, db: Session = Depends(get_db)):
     ]
 
 
+def infer_has_gpu_for_model_bindings() -> bool | None:
+    snapshot = get_resource_monitor().get_snapshot()
+    if snapshot is not None:
+        return bool(snapshot.get("gpus"))
+    return False
+
+
+def build_model_option_catalog_response(bundle: dict, *, has_gpu: bool | None = None) -> dict:
+    if has_gpu is None:
+        has_gpu = infer_has_gpu_for_model_bindings()
+    catalog = build_model_option_catalog(bundle)
+    defaults = build_default_bindings(bundle, has_gpu=has_gpu)
+    catalog["default_bindings"] = {
+        stage: defaults.get(stage)
+        for stage in OPERATOR_MODEL_STAGES
+    }
+    return catalog
+
+
 @external_router.get("/model-options", response_model=ModelOptionCatalog)
 def get_model_options(db: Session = Depends(get_db)):
     bundle = load_registry_bundle()
-    return ModelOptionCatalog.model_validate(build_model_option_catalog(bundle))
+    return ModelOptionCatalog.model_validate(build_model_option_catalog_response(bundle))
 
 
 @external_router.get("/model-logs", response_model=ModelResultLogPage)
@@ -4684,11 +4703,10 @@ def get_model_logs(
 def get_model_bindings(db: Session = Depends(get_db)):
     source_rows = get_active_source_rows(db)
     bundle = load_registry_bundle()
-    snapshot = get_cached_resource_snapshot(db)
     return build_model_binding_responses(
         bundle,
         source_rows,
-        has_gpu=bool(snapshot.get("gpus")),
+        has_gpu=infer_has_gpu_for_model_bindings(),
     )
 
 

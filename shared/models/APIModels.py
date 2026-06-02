@@ -340,6 +340,7 @@ class ModelOptionCatalog(BaseModel):
     model_zoo: ModelZooSource
     mounted_models: dict[str, list[str]] = Field(default_factory=dict)
     stages: list[ModelOptionStage] = Field(default_factory=list)
+    default_bindings: dict[str, str | None] = Field(default_factory=dict)
 
 
 class ModelBinding(BaseModel):
