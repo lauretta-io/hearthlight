@@ -2151,9 +2151,14 @@ const SettingsPage = ({
   const anomalyRules = alertRules.filter((rule) => rule.rule_kind === 'anomaly');
   const modelZooSource = modelOptionCatalog.model_zoo || {};
   const persistedMountedModelsByStage = modelOptionCatalog.mounted_models || {};
-  const mountedModelsByStage = Object.keys(mountedModels || {}).length > 0
-    ? mountedModels
-    : persistedMountedModelsByStage;
+  const mountedModelsByStage = MODEL_STAGE_OPTIONS.reduce((result, option) => {
+    const draftKeys = mountedModels?.[option.stage];
+    const persistedKeys = persistedMountedModelsByStage?.[option.stage];
+    result[option.stage] = Array.isArray(draftKeys) && draftKeys.length > 0
+      ? draftKeys
+      : (Array.isArray(persistedKeys) ? persistedKeys : []);
+    return result;
+  }, {});
   const modelZooSummary = modelZooSource.commit_short
     ? `Options prepared from model-zoo commit ${modelZooSource.commit_short}${modelZooSource.resolved_from ? ` via ${modelZooSource.resolved_from.replace('_', ' ')}` : ''}.`
     : 'Options prepared from the installed model-zoo catalog.';
@@ -2281,24 +2286,53 @@ const SettingsPage = ({
     return option.requires_gpu ? 'Moderate' : 'Heavy';
   };
 
-  const renderModelOptions = (stage) => {
+  const renderMountedModelOptions = (stage) => {
     const stageOptions = modelOptionsByStage[stage] || [];
     const mountedKeys = new Set(mountedModelsByStage[stage] || []);
     const mountedOptions = stageOptions.filter((option) => mountedKeys.has(option.model_key));
+    if (mountedOptions.length === 0) {
+      return null;
+    }
+    return (
+      <optgroup label="Mounted">
+        {mountedOptions.map((registration) => (
+          <option key={registration.model_key} value={registration.model_key}>
+            {registration.display_name || registration.model_key}
+          </option>
+        ))}
+      </optgroup>
+    );
+  };
+
+  const renderDefaultBindingOptions = (stage) => {
+    const stageOptions = modelOptionsByStage[stage] || [];
+    const currentKey = defaultBindings[stage];
+    const mountedOptions = stageOptions.filter(
+      (option) => (mountedModelsByStage[stage] || []).includes(option.model_key),
+    );
+    const mountedKeySet = new Set(mountedOptions.map((option) => option.model_key));
+    const savedDefaultOption = currentKey && !mountedKeySet.has(currentKey)
+      ? stageOptions.find((option) => option.model_key === currentKey)
+      : null;
+
     return (
       <>
-        {mountedOptions.length > 0 && (
-          <optgroup label="Mounted">
-            {mountedOptions.map((registration) => (
-              <option key={registration.model_key} value={registration.model_key}>
-                {registration.display_name || registration.model_key}
-              </option>
-            ))}
-          </optgroup>
+        <option value="">No default</option>
+        {savedDefaultOption && (
+          <option value={savedDefaultOption.model_key}>
+            {savedDefaultOption.display_name || savedDefaultOption.model_key}
+          </option>
         )}
+        {renderMountedModelOptions(stage)}
       </>
     );
   };
+
+  const renderModelOptions = (stage) => (
+    <>
+      {renderMountedModelOptions(stage)}
+    </>
+  );
 
   const getSourceDisplayName = (sourceId) => {
     const sourceIndex = sources.findIndex((source) => source.id === sourceId);
@@ -2595,6 +2629,13 @@ const SettingsPage = ({
                         <p>Set default detector, tracker, Heuristic Filter, and anomaly detection models for new runs.</p>
                         <p className="muted-text">{modelZooSummary}</p>
                         <p className="muted-text">Defaults and camera overrides can only use models that are already mounted in Model Inventory.</p>
+                        <p className="muted-text">
+                          Saved defaults:
+                          {' '}
+                          {MODEL_STAGE_OPTIONS.map((option) => (
+                            `${option.label}: ${getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'No default')}`
+                          )).join(' · ')}
+                        </p>
                       </div>
                     </div>
                     <div className="model-binding-grid">
@@ -2608,8 +2649,7 @@ const SettingsPage = ({
                               [option.stage]: event.target.value,
                             }))}
                           >
-                            <option value="">No default</option>
-                            {renderModelOptions(option.stage)}
+                            {renderDefaultBindingOptions(option.stage)}
                           </select>
                         </label>
                       ))}
