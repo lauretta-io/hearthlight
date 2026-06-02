@@ -133,7 +133,7 @@ Minimum practical local tooling:
 
 ## Windows
 
-Clone with submodules, start Docker Desktop, then run `scripts\windows\control-plane.bat` or `full-video.bat`. See [scripts/windows/README.md](scripts/windows/README.md).
+Install **Docker Desktop** and **Git**, clone with submodules, start Docker, then run `scripts\windows\control-plane.bat` or `full-video.bat`. Python is not required for that path. See [scripts/windows/README.md](scripts/windows/README.md).
 
 ## Environment Files
 

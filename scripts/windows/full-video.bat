@@ -4,6 +4,7 @@ title Hearthlight - Full Video (CPU)
 cd /d "%~dp0\..\.."
 
 echo Hearthlight full video (CPU). First build may take 30-60+ minutes.
+echo Requires: Docker Desktop running. Git was used to clone this repo.
 echo Repo: %CD%
 echo.
 

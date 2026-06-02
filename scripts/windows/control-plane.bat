@@ -4,6 +4,7 @@ title Hearthlight - Control Plane
 cd /d "%~dp0\..\.."
 
 echo Hearthlight control plane (UI + API)
+echo Requires: Docker Desktop running. Git was used to clone this repo.
 echo Repo: %CD%
 echo.
 
