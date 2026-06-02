@@ -104,6 +104,7 @@ celerybeat.pid
 
 # Environments
 *.env
+!example.env
 .venv
 hearthlight_model_zoo
 env/
