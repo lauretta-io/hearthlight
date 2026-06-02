@@ -7,19 +7,33 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def directory_size_bytes(path: str | Path | None) -> int | None:
+def directory_size_bytes(
+    path: str | Path | None,
+    *,
+    max_files: int | None = 2000,
+) -> int | None:
     if not path:
         return None
     target = Path(path)
     if not target.exists():
         return 0
     total = 0
+    scanned = 0
     for child in target.rglob("*"):
-        if child.is_file():
-            try:
-                total += child.stat().st_size
-            except OSError:
-                continue
+        if not child.is_file():
+            continue
+        scanned += 1
+        if max_files is not None and scanned > max_files:
+            logger.debug(
+                "Stopped directory size scan at %s files for %s",
+                max_files,
+                target,
+            )
+            break
+        try:
+            total += child.stat().st_size
+        except OSError:
+            continue
     return total
 
 

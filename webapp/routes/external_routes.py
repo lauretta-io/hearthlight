@@ -834,10 +834,11 @@ def get_upload_dir() -> Path:
 
 
 def get_runtime_output_paths() -> list[Path]:
+    # Do not scan the upload directory here: large MP4 trees on bind mounts
+    # (common on Windows Docker) can block the API for tens of seconds.
     candidates = {
         PROJECT_ROOT / "shared" / "output",
         PROJECT_ROOT / "src" / "shared" / "output",
-        get_upload_dir(),
     }
     try:
         runtime_output_dir = Path(str(get_cfg().output.output_dir)).resolve()
@@ -978,6 +979,15 @@ def get_resource_monitor():
         )
         resource_monitor.start()
     return resource_monitor
+
+
+def get_cached_resource_snapshot(db: Session) -> dict:
+    """Fast path for hot polls: use the background monitor snapshot when available."""
+    monitor = get_resource_monitor()
+    snapshot = monitor.get_snapshot()
+    if snapshot is not None:
+        return snapshot
+    return build_live_resource_snapshot(db)
 
 
 def get_current_resource_snapshot(db: Session) -> dict:
@@ -3816,7 +3826,7 @@ async def stop(db: Session = Depends(get_db)):
 def get_status(db: Session = Depends(get_db)):
     global status
     current_status = refresh_runtime_status()
-    snapshot = get_current_resource_snapshot(db)
+    snapshot = get_cached_resource_snapshot(db)
     snapshot_module_status = merge_hybrid_operator_status(
         snapshot.get("module_status"),
         snapshot.get("dependency_status"),
@@ -4674,7 +4684,7 @@ def get_model_logs(
 def get_model_bindings(db: Session = Depends(get_db)):
     source_rows = get_active_source_rows(db)
     bundle = load_registry_bundle()
-    snapshot = get_current_resource_snapshot(db)
+    snapshot = get_cached_resource_snapshot(db)
     return build_model_binding_responses(
         bundle,
         source_rows,
