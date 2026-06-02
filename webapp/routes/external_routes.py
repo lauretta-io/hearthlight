@@ -1611,16 +1611,25 @@ def build_source_responses(db: Session, resource_snapshot: dict):
     current_frame_override = (
         get_latest_run_frame_id(db) if is_hybrid_local_cpu_runtime() else None
     )
-    return [
-        build_input_source_response(
-            row,
-            upload_rows.get(row.upload_id),
-            recordings.get(row.id),
-            resource_snapshot,
-            current_frame_override=current_frame_override,
-        )
-        for row in source_rows
-    ]
+    responses: list[InputSource] = []
+    for row in source_rows:
+        try:
+            responses.append(
+                build_input_source_response(
+                    row,
+                    upload_rows.get(row.upload_id),
+                    recordings.get(row.id),
+                    resource_snapshot,
+                    current_frame_override=current_frame_override,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "Skipping invalid input source row %s",
+                getattr(row, "id", None),
+                exc_info=True,
+            )
+    return responses
 
 
 def build_enabled_source_errors(source_rows: list[SQLModels.InputSourceTemplate], db: Session):
@@ -1952,12 +1961,12 @@ def replace_sources(db: Session, sources: list[InputSource]):
 
 def upsert_sources_and_build_response(db: Session, sources: list[InputSource]):
     replace_sources(db, sources)
-    snapshot = get_current_resource_snapshot(db)
+    snapshot = get_cached_resource_snapshot(db)
     return build_source_responses(db, snapshot)
 
 
 def append_source(db: Session, source: InputSource):
-    snapshot = get_current_resource_snapshot(db)
+    snapshot = get_cached_resource_snapshot(db)
     existing_sources = build_source_responses(db, snapshot)
     new_source = InputSource(
         kind=source.kind,
@@ -2201,9 +2210,7 @@ def build_alert_rule_responses(db: Session):
 
 def build_trigger_rule_responses(db: Session):
     ensure_alert_rule_tables()
-    ensure_plugin_tables()
-    source_rows = get_active_source_rows(db)
-    bundle = get_registry_bundle(db, source_rows=source_rows)
+    bundle = load_registry_bundle()
     plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
     trigger_components = plugin_component_lookup.get(COMPONENT_TYPE_TRIGGER, {})
     rows = (
@@ -2217,36 +2224,45 @@ def build_trigger_rule_responses(db: Session):
         )
         .all()
     )
-    return [
-        TriggerRule(
-            id=row.id,
-            trigger_key=row.trigger_key,
-            source_id=row.source_template_id,
-            source_ids=_deserialize_trigger_rule_source_ids(row),
-            enabled=row.enabled,
-            rule_label=row.rule_label,
-            rule_kind=_deserialize_trigger_rule_kind(row),
-            signal_family=row.signal_family,
-            anomaly_target_kind=_deserialize_trigger_rule_anomaly_target_kind(row),
-            target_key=row.target_key,
-            min_confidence=float(row.min_confidence),
-            anomaly_cutoff=_deserialize_trigger_rule_anomaly_cutoff(row),
-            alert_level=row.alert_level,
-            delivery_target_ids=parse_serialized_json(row.delivery_target_ids_json) or [],
-            metadata=parse_serialized_json(row.metadata_json) or {},
-            resolved=(
-                _deserialize_trigger_rule_key(row) in trigger_components
-            ),
-            unavailable_reason=(
-                None
-                if _deserialize_trigger_rule_key(row) in trigger_components
-                else f"trigger plugin component {_deserialize_trigger_rule_key(row)} is unavailable"
-            ),
-            created_at=row.created_at.isoformat() if row.created_at is not None else None,
-            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
-        )
-        for row in rows
-    ]
+    responses: list[TriggerRule] = []
+    for row in rows:
+        try:
+            responses.append(
+                TriggerRule(
+                    id=row.id,
+                    trigger_key=row.trigger_key,
+                    source_id=row.source_template_id,
+                    source_ids=_deserialize_trigger_rule_source_ids(row),
+                    enabled=row.enabled,
+                    rule_label=row.rule_label,
+                    rule_kind=_deserialize_trigger_rule_kind(row),
+                    signal_family=row.signal_family,
+                    anomaly_target_kind=_deserialize_trigger_rule_anomaly_target_kind(row),
+                    target_key=row.target_key,
+                    min_confidence=float(row.min_confidence),
+                    anomaly_cutoff=_deserialize_trigger_rule_anomaly_cutoff(row),
+                    alert_level=row.alert_level,
+                    delivery_target_ids=parse_serialized_json(row.delivery_target_ids_json) or [],
+                    metadata=parse_serialized_json(row.metadata_json) or {},
+                    resolved=(
+                        _deserialize_trigger_rule_key(row) in trigger_components
+                    ),
+                    unavailable_reason=(
+                        None
+                        if _deserialize_trigger_rule_key(row) in trigger_components
+                        else f"trigger plugin component {_deserialize_trigger_rule_key(row)} is unavailable"
+                    ),
+                    created_at=row.created_at.isoformat() if row.created_at is not None else None,
+                    updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "Skipping invalid trigger rule row %s",
+                getattr(row, "id", None),
+                exc_info=True,
+            )
+    return responses
 
 
 def _deserialize_trigger_rule_source_ids(row: SQLModels.TriggerRule) -> list[int]:
@@ -2309,7 +2325,7 @@ def _deserialize_trigger_rule_anomaly_cutoff(row: SQLModels.TriggerRule) -> int 
 
 def build_alert_rule_options_response(db: Session) -> AlertRuleOptionCatalog:
     source_rows = get_active_source_rows(db)
-    bundle = get_registry_bundle(db, source_rows=source_rows)
+    bundle = load_registry_bundle()
     try:
         anomaly_prompt_settings = read_anomaly_prompt_settings()
         anomaly_type_yaml = (
@@ -2324,12 +2340,12 @@ def build_alert_rule_options_response(db: Session) -> AlertRuleOptionCatalog:
         )
     except HTTPException:
         anomaly_type_yaml = None
-    snapshot = get_current_resource_snapshot(db)
+    has_gpu = infer_has_gpu_for_model_bindings()
     catalog = build_alert_rule_option_catalog(
         bundle=bundle,
         source_rows=source_rows,
         anomaly_type_yaml=anomaly_type_yaml,
-        has_gpu=bool(snapshot.get("gpus")),
+        has_gpu=has_gpu,
     )
     return AlertRuleOptionCatalog.model_validate(catalog)
 
@@ -3877,7 +3893,7 @@ def get_status(db: Session = Depends(get_db)):
 
 @external_router.get("/sources", response_model=list[InputSource])
 def get_sources(db: Session = Depends(get_db)):
-    snapshot = get_current_resource_snapshot(db)
+    snapshot = get_cached_resource_snapshot(db)
     return build_source_responses(db, snapshot)
 
 

@@ -762,9 +762,9 @@ const SettingsPage = ({
 
   const reloadAlertRuleState = async ({ includeRules = true, sourcesSnapshot = [] } = {}) => {
     let ruleResponse = null;
-    const optionResponse = await fetch(`${BaseURL}/settings/alert-rule-options`);
+    const optionResponse = await fetchWithTimeout(`${BaseURL}/settings/alert-rule-options`);
     if (includeRules) {
-      ruleResponse = await fetch(`${BaseURL}/settings/trigger-rules`);
+      ruleResponse = await fetchWithTimeout(`${BaseURL}/settings/trigger-rules`);
       if (ruleResponse.ok) {
         try {
           const preview = await ruleResponse.clone().json();
@@ -909,13 +909,16 @@ const SettingsPage = ({
   useEffect(() => {
     const loadSources = async () => {
       try {
-        const [sourceResponse] = await Promise.all([
-          fetch(`${BaseURL}/settings/input-sources`),
-        ]);
-        if (!sourceResponse.ok) {
-          throw new Error('Failed to load input source settings');
+        let sourceData = [];
+        try {
+          const sourceResponse = await fetchWithTimeout(`${BaseURL}/settings/input-sources`);
+          if (!sourceResponse.ok) {
+            throw new Error('Failed to load input source settings');
+          }
+          sourceData = await sourceResponse.json();
+        } catch (error) {
+          console.warn('Input sources API unavailable; using local draft', error);
         }
-        const sourceData = await sourceResponse.json();
         const hydratedSources = sourceData.length > 0
           ? sourceData.map((source, index) => hydrateSource(source, index))
           : [createSourceDraft()];
