@@ -1,12 +1,21 @@
 # Windows
 
-## Install once
+## Install once (no website downloads)
 
-| Tool | Required? | Why |
-|------|-----------|-----|
-| [Docker Desktop](https://www.docker.com/products/docker-desktop/) | **Yes** | Runs Hearthlight (enable WSL2 if Windows asks) |
-| [Git for Windows](https://git-scm.com/download/win) | **Yes** | Clone the repo and submodules (ZIP download is not enough) |
-| [Python 3.11](https://www.python.org/downloads/) | **No** | Not needed for the `.bat` scripts — everything runs in Docker |
+Open the **Microsoft Store** and install:
+
+| App | Required? |
+|-----|-----------|
+| **Docker Desktop** | **Yes** — enable WSL2 if Windows asks |
+| **App Installer** | Only if `winget` is missing (usually preinstalled on Windows 11) |
+
+**Git** is not in the Store. In PowerShell, run:
+
+```powershell
+winget install --id Git.Git -e
+```
+
+**Python** is not required for the `.bat` scripts (everything runs in Docker). Optional: install **Python 3.11** from the Store only if you want the `hearthlight` CLI on the host.
 
 ## Clone the repo
 
