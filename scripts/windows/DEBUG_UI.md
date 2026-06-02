@@ -2,6 +2,22 @@
 
 Use this when the browser Network tab shows many `(pending)` requests (often `status`).
 
+## Step 0 — After `docker compose restart webapp`, wait for the API
+
+Each restart runs frontend setup, then starts the API on port **8000**. For ~**60–90 seconds** you may see:
+
+- `curl: (52) Empty reply from server` and `CODE=000`
+- `docker compose ps` → `health: starting`
+
+**Wait until healthy**, then test:
+
+```powershell
+docker compose ps webapp
+curl.exe -m 10 http://localhost:8000/readyz
+```
+
+`readyz` must return `"status":"ready"` before timing `/status` or `/model-bindings`.
+
 ## Step 1 — Is the API alive?
 
 Run in PowerShell from the repo folder:
@@ -12,7 +28,7 @@ curl.exe -m 10 http://localhost:8000/healthz
 ```
 
 - **OK** → API process is up.
-- **Fails** → `docker compose ps` and `docker compose logs --tail=80 webapp`.
+- **Fails** or **empty reply** → wait (Step 0) or `docker compose logs --tail=80 webapp`.
 
 ## Step 2 — Which endpoint is slow?
 

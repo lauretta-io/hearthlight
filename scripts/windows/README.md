@@ -78,6 +78,7 @@ Open **Sources** before **Monitor Run** — the overview poll is heavy on CPU an
 | Problem | What to try |
 |---------|-------------|
 | Network tab all **pending**, then **504** | See [DEBUG_UI.md](DEBUG_UI.md). Usually `/status` is slow; run timed `curl` tests, then `git pull` + restart `webapp reverse_proxy`. Use **Sources** tab first in a fresh incognito window. |
+| `curl` **Empty reply** / `CODE=000` right after restart | API not up yet — wait until `docker compose ps webapp` shows **(healthy)**, then `curl readyz`. See [DEBUG_UI.md](DEBUG_UI.md) Step 0. |
 | Docker engine not running | WSL2 section above, then restart Docker Desktop |
 | `docker` not recognized | Start Docker Desktop; open a **new** PowerShell window |
 | Script fails immediately | Run from a cloned repo folder, not a lone downloaded `.bat` |

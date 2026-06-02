@@ -113,7 +113,9 @@ services:
     command: >
       bash -c '
       cd /app/src/frontend &&
-      npm ci --no-audit --no-fund &&
+      if [ ! -x node_modules/.bin/vite ]; then
+        npm ci --no-audit --no-fund;
+      fi &&
       (npm start &) &&
       cd /app &&
       until nc -z rabbitmq 15672; do
