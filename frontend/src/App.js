@@ -18,13 +18,10 @@ import { BaseURL } from './config';
 import { DEFAULT_THEME, getThemeOption, THEME_OPTIONS, THEME_STORAGE_KEY } from './theme';
 import './styles/App.css';
 
+// Mount only the active page so hidden routes do not poll the API (browser
+// connection limit + single-worker backend were leaving Settings requests pending).
 const PersistentPage = ({ active, children }) => (
-  <section
-    style={{ display: active ? 'block' : 'none' }}
-    aria-hidden={active ? 'false' : 'true'}
-  >
-    {children}
-  </section>
+  active ? <section>{children}</section> : null
 );
 
 const AppShell = ({

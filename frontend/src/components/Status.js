@@ -70,7 +70,7 @@ const Status = () => {
 
     const unsubscribePoll = subscribeToSharedPoll(
       'status',
-      1000,
+      3000,
       fetchStatus,
       { runImmediately: true },
     );

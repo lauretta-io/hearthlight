@@ -75,7 +75,7 @@ After `full-video.bat`: http://localhost:3000 → **Settings** → **Sources** �
 
 | Problem | What to try |
 |---------|-------------|
-| Network tab all **pending**, then **504** | API overload or slow endpoints. `docker compose restart webapp reverse_proxy`, hard-refresh browser (Ctrl+F5), use **Settings → Sources** first (not Monitor Run). Check `docker compose logs --tail=40 reverse_proxy` for `upstream timed out`. |
+| Network tab all **pending**, then **504** | Too many background API polls. `git pull`, `docker compose restart webapp reverse_proxy`, open a **new incognito** window to http://localhost:3000/settings?tab=sources . Stay on Sources first; avoid opening every nav tab at once. |
 | Docker engine not running | WSL2 section above, then restart Docker Desktop |
 | `docker` not recognized | Start Docker Desktop; open a **new** PowerShell window |
 | Script fails immediately | Run from a cloned repo folder, not a lone downloaded `.bat` |
