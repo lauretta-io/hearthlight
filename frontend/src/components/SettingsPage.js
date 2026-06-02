@@ -947,14 +947,27 @@ const SettingsPage = ({
         } catch {
           // Keep model and source controls available even if prompt files are unavailable.
         }
-        await reloadTelegramSubscriptionState();
-        await reloadAppleMessageSubscriptionState();
-        await reloadGoveeEndpointState();
-        await reloadGenericConnectorEndpointState();
-        await reloadConnectorZooRepoSettings();
-        await reloadAlertRuleState({
-          sourcesSnapshot: sourceData,
-        });
+        const optionalConnectorReloads = [
+          reloadTelegramSubscriptionState,
+          reloadAppleMessageSubscriptionState,
+          reloadGoveeEndpointState,
+          reloadGenericConnectorEndpointState,
+          reloadConnectorZooRepoSettings,
+        ];
+        for (const reload of optionalConnectorReloads) {
+          try {
+            await reload();
+          } catch (error) {
+            console.warn('Optional connector settings failed to load', error);
+          }
+        }
+        try {
+          await reloadAlertRuleState({
+            sourcesSnapshot: sourceData,
+          });
+        } catch (error) {
+          console.warn('Alert rule settings failed to load', error);
+        }
       } catch (error) {
         setBanner({ kind: 'error', text: error.message });
       }

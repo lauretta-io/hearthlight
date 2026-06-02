@@ -2532,28 +2532,38 @@ def get_connector_endpoint_rows(db: Session, connector_key: str | None = None):
 
 
 def build_connector_endpoint_responses(db: Session, connector_key: str | None = None):
-    bundle = get_registry_bundle(db, source_rows=get_active_source_rows(db))
+    bundle = load_registry_bundle()
     plugin_component_lookup = _build_plugin_component_lookup_from_bundle(bundle)
     connector_components = plugin_component_lookup.get(COMPONENT_TYPE_CONNECTOR, {})
-    return [
-        ConnectorEndpoint(
-            id=row.id,
-            connector_key=row.connector_key,
-            label=row.label,
-            enabled=row.enabled,
-            config=redact_connector_endpoint_config(get_connector_endpoint_config(row)),
-            delivery_capabilities=get_connector_delivery_capabilities(row),
-            resolved=row.connector_key in connector_components,
-            unavailable_reason=(
-                None
-                if row.connector_key in connector_components
-                else f"connector plugin component {row.connector_key} is unavailable"
-            ),
-            created_at=row.created_at.isoformat() if row.created_at is not None else None,
-            updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
-        )
-        for row in get_connector_endpoint_rows(db, connector_key=connector_key)
-    ]
+    responses: list[ConnectorEndpoint] = []
+    for row in get_connector_endpoint_rows(db, connector_key=connector_key):
+        try:
+            responses.append(
+                ConnectorEndpoint(
+                    id=row.id,
+                    connector_key=row.connector_key,
+                    label=row.label,
+                    enabled=row.enabled,
+                    config=redact_connector_endpoint_config(get_connector_endpoint_config(row)),
+                    delivery_capabilities=get_connector_delivery_capabilities(row),
+                    resolved=row.connector_key in connector_components,
+                    unavailable_reason=(
+                        None
+                        if row.connector_key in connector_components
+                        else f"connector plugin component {row.connector_key} is unavailable"
+                    ),
+                    created_at=row.created_at.isoformat() if row.created_at is not None else None,
+                    updated_at=row.updated_at.isoformat() if row.updated_at is not None else None,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "Skipping invalid connector endpoint row %s (%s)",
+                getattr(row, "id", None),
+                getattr(row, "connector_key", None),
+                exc_info=True,
+            )
+    return responses
 
 
 def replace_connector_endpoints(
@@ -4110,7 +4120,15 @@ def update_settings_connector_endpoints(
 
 @external_router.get("/settings/govee-connector-endpoints", response_model=list[ConnectorEndpoint])
 def get_settings_govee_connector_endpoints(db: Session = Depends(get_db)):
-    return build_connector_endpoint_responses(db, connector_key=CONNECTOR_KEY_GOVEE)
+    try:
+        ensure_connector_endpoint_tables()
+        return build_connector_endpoint_responses(db, connector_key=CONNECTOR_KEY_GOVEE)
+    except Exception as exc:
+        logger.exception("Failed to load Govee connector endpoints")
+        raise HTTPException(
+            status_code=503,
+            detail="Govee connector settings are temporarily unavailable",
+        ) from exc
 
 
 @external_router.put("/settings/govee-connector-endpoints", response_model=list[ConnectorEndpoint])
