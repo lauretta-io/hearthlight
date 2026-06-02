@@ -7,6 +7,6 @@ RUN apt-get update && \
 
 COPY init.sh /usr/local/bin/
 
-RUN chmod +x /usr/local/bin/init.sh
+RUN sed -i 's/\r$//' /usr/local/bin/init.sh && chmod +x /usr/local/bin/init.sh
 
 USER rabbitmq

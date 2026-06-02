@@ -37,7 +37,7 @@ services:
       - "${RABBITMQ_HOST_BIND:-127.0.0.1}:${RABBITMQ_HOST_PORT:-5673}:5672"
       - "${RABBITMQ_MANAGEMENT_HOST_BIND:-127.0.0.1}:${RABBITMQ_MANAGEMENT_HOST_PORT:-15672}:15672"
     restart: unless-stopped
-    command: sh /usr/local/bin/init.sh
+    command: /usr/local/bin/init.sh
     healthcheck:
       test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
       interval: 5s
@@ -90,6 +90,7 @@ services:
     env_file:
       - .env
     environment:
+      - PYTHONPATH=/app/src
       - RELOAD=${RELOAD:-}
       - HEARTHLIGHT_LOCAL_STACK=${HEARTHLIGHT_LOCAL_STACK:-true}
       - HEARTHLIGHT_CONFIG_PATH=/app/src/shared/configs/config.yaml
@@ -159,6 +160,7 @@ services:
     env_file:
       - .env
     environment:
+      PYTHONPATH: /app/src
       DISPLAY: ${DISPLAY}
       QT_X11_NO_MITSHIM: "1"
       RELOAD: ${RELOAD:-}
@@ -192,6 +194,7 @@ services:
     env_file:
       - .env
     environment:
+      - PYTHONPATH=/app/src
       - RELOAD=${RELOAD:-}
     restart: unless-stopped
     command: >
@@ -220,6 +223,7 @@ services:
     env_file:
       - .env
     environment:
+      PYTHONPATH: /app/src
       RELOAD: ${RELOAD:-}
       <<: *nvidia-env
     restart: unless-stopped
