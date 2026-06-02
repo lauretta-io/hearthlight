@@ -69,7 +69,9 @@ Start Docker Desktop, then double-click:
 | `control-plane.bat` | Dashboard + API |
 | `full-video.bat` | Video processing (CPU) |
 
-After `full-video.bat`: http://localhost:3000 → **Settings** → **Sources** → upload a short MP4 → **Save** → **Monitor Run** → **Start**.
+After `full-video.bat`: http://localhost:3000 → **Settings** → **Sources** (do this tab first) → upload a short MP4 → **Save** → **Monitor Run** → **Start**.
+
+Open **Sources** before **Monitor Run** — the overview poll is heavy on CPU and will block the UI if no source is saved yet.
 
 ## Troubleshooting
 

@@ -108,14 +108,28 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     }
 
     let isMounted = true;
+    let inFlight = false;
+    let abortController = null;
+    const overviewPollMs = embedded ? 15000 : 5000;
 
     const loadOverview = async () => {
+      if (inFlight) {
+        return;
+      }
+      if (abortController) {
+        abortController.abort();
+      }
+      abortController = new AbortController();
+      inFlight = true;
       try {
         const params = new URLSearchParams({ limit: '8' });
         if (selectedRunIdentifier) {
           params.set('run_identifier', selectedRunIdentifier);
         }
-        const response = await fetch(`${BaseURL}/monitoring/overview?${params.toString()}`);
+        const response = await fetch(
+          `${BaseURL}/monitoring/overview?${params.toString()}`,
+          { signal: abortController.signal },
+        );
         if (!response.ok) {
           throw new Error('Failed to load monitoring overview');
         }
@@ -129,15 +143,18 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
           setSelectedRunIdentifier(data.selected_run_identifier);
         }
       } catch (fetchError) {
-        if (isMounted) {
-          setError(fetchError.message);
+        if (!isMounted || fetchError.name === 'AbortError') {
+          return;
         }
+        setError(fetchError.message);
+      } finally {
+        inFlight = false;
       }
     };
 
     const unsubscribePoll = subscribeToSharedPoll(
       'monitoring-overview',
-      3000,
+      overviewPollMs,
       loadOverview,
       { runImmediately: true },
     );
@@ -148,6 +165,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
 
     return () => {
       isMounted = false;
+      if (abortController) {
+        abortController.abort();
+      }
       unsubscribePoll();
       unsubscribeSnapshot();
       unsubscribeRuns();

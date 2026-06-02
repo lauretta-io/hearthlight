@@ -37,11 +37,11 @@ const AppShell = ({
 
   useEffect(() => {
     if (location.pathname === '/') {
-      navigate('/settings?tab=monitoring', { replace: true });
+      navigate('/settings?tab=sources', { replace: true });
       return;
     }
     if (location.pathname === '/monitoring') {
-      navigate('/settings?tab=monitoring', { replace: true });
+      navigate('/settings?tab=sources', { replace: true });
       return;
     }
     if (location.pathname === '/poi') {
