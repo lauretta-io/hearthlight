@@ -1168,6 +1168,8 @@ def get_registry_bundle(
     sync_db: bool = True,
     force_sync: bool = False,
 ):
+    global _last_registry_db_sync_at, _registry_db_sync_in_progress
+
     bundle = load_registry_bundle()
     if db is None or not sync_db:
         return bundle
