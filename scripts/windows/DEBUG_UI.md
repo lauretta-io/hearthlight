@@ -27,7 +27,7 @@ curl.exe -m 120 -w "\nTIME_TOTAL=%{time_total}s CODE=%{http_code}\n" "http://loc
 | Result | Meaning |
 |--------|---------|
 | Direct `:8000/status` **fast**, `:3000/api/status` **slow** | nginx / `reverse_proxy` issue → `docker compose logs --tail=40 reverse_proxy` |
-| **Both slow** (>30s or timeout) | Backend blocked → Step 3 |
+| **Both slow** (>30s or timeout) | Backend blocked on registry DB sync (30–40s on CPU Windows). `git pull` + `docker compose restart webapp`. `/status` and `/model-bindings` should answer in under ~2s after the fix. |
 | **Both fast** | Browser pile-up → close tabs, new incognito, `git pull`, restart `webapp` |
 
 ## Step 3 — Backend blocked (common on CPU)

@@ -900,7 +900,7 @@ def get_previous_resource_snapshot(db: Session):
 def build_live_resource_snapshot(db: Session) -> dict:
     source_rows = get_active_source_rows(db)
     enabled_source_rows = [row for row in source_rows if row.enabled]
-    registry_bundle = get_registry_bundle(db, source_rows=source_rows)
+    registry_bundle = load_registry_bundle()
     snapshot = collect_resource_snapshot(
         module_status.copy(),
         disk_path=get_upload_dir(),
@@ -988,7 +988,7 @@ def get_current_resource_snapshot(db: Session) -> dict:
     else:
         source_rows = get_active_source_rows(db)
         enabled_source_rows = [row for row in source_rows if row.enabled]
-        registry_bundle = get_registry_bundle(db, source_rows=source_rows)
+        registry_bundle = load_registry_bundle()
         local_worker_health = get_local_worker_health() if is_hybrid_local_cpu_runtime() else None
         snapshot["dependency_status"] = collect_dependency_status()
         snapshot["drift"] = build_resource_drift(
@@ -1151,14 +1151,31 @@ def ensure_source_template_columns(db: Session) -> None:
         db.commit()
 
 
+_REGISTRY_DB_SYNC_INTERVAL_SECONDS = float(
+    os.environ.get("HEARTHLIGHT_REGISTRY_DB_SYNC_INTERVAL_SECONDS", "60")
+)
+_last_registry_db_sync_at = 0.0
+_registry_db_sync_in_progress = False
+_registry_db_sync_lock = Lock()
+
+
 def get_registry_bundle(
     db: Session | None = None,
     *,
     source_rows: list | None = None,
+    sync_db: bool = True,
+    force_sync: bool = False,
 ):
     bundle = load_registry_bundle()
-    if db is None:
+    if db is None or not sync_db:
         return bundle
+    now = time.monotonic()
+    with _registry_db_sync_lock:
+        if _registry_db_sync_in_progress:
+            return bundle
+        if not force_sync and (now - _last_registry_db_sync_at) < _REGISTRY_DB_SYNC_INTERVAL_SECONDS:
+            return bundle
+        _registry_db_sync_in_progress = True
     try:
         ensure_plugin_tables()
         sync_plugin_catalog_to_db(
@@ -1177,9 +1194,14 @@ def get_registry_bundle(
         for source_row in synced_source_rows:
             if getattr(source_row, "id", None) is not None:
                 db.refresh(source_row)
+        with _registry_db_sync_lock:
+            _last_registry_db_sync_at = time.monotonic()
     except Exception:
         db.rollback()
         logger.exception("Failed to mirror model registry metadata into control schema")
+    finally:
+        with _registry_db_sync_lock:
+            _registry_db_sync_in_progress = False
     return bundle
 
 
@@ -4623,8 +4645,7 @@ def get_models_by_stage(stage: str, db: Session = Depends(get_db)):
 
 @external_router.get("/model-options", response_model=ModelOptionCatalog)
 def get_model_options(db: Session = Depends(get_db)):
-    source_rows = get_active_source_rows(db)
-    bundle = get_registry_bundle(db, source_rows=source_rows)
+    bundle = load_registry_bundle()
     return ModelOptionCatalog.model_validate(build_model_option_catalog(bundle))
 
 
@@ -4652,7 +4673,7 @@ def get_model_logs(
 @external_router.get("/model-bindings", response_model=list[ModelBinding])
 def get_model_bindings(db: Session = Depends(get_db)):
     source_rows = get_active_source_rows(db)
-    bundle = get_registry_bundle(db, source_rows=source_rows)
+    bundle = load_registry_bundle()
     snapshot = get_current_resource_snapshot(db)
     return build_model_binding_responses(
         bundle,
@@ -4665,7 +4686,7 @@ def get_model_bindings(db: Session = Depends(get_db)):
 def get_mounted_models(db: Session = Depends(get_db)):
     try:
         source_rows = get_active_source_rows(db)
-        bundle = get_registry_bundle(db, source_rows=source_rows)
+        bundle = load_registry_bundle()
         return build_mounted_model_stage_responses(bundle)
     except Exception as exc:
         logger.exception("Failed to load mounted model inventory")
@@ -4703,7 +4724,9 @@ def update_model_bindings(bindings: list[ModelBinding], db: Session = Depends(ge
     persist_mounted_models(mounted_models)
     db.commit()
     refreshed_sources = get_active_source_rows(db)
-    refreshed_bundle = get_registry_bundle(db, source_rows=refreshed_sources)
+    refreshed_bundle = get_registry_bundle(
+        db, source_rows=refreshed_sources, force_sync=True
+    )
     snapshot = get_current_resource_snapshot(db)
     return build_model_binding_responses(
         refreshed_bundle,
@@ -4804,7 +4827,7 @@ def get_monitoring_overview(
     selected_run = get_run_row(db, run_identifier)
     snapshot = get_current_resource_snapshot(db)
     source_rows = get_active_source_rows(db)
-    registry_bundle = get_registry_bundle(db, source_rows=source_rows)
+    registry_bundle = load_registry_bundle()
     return MonitoringOverview(
         generated_at=utc_now_iso(),
         system_status=current_status,
