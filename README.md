@@ -131,6 +131,15 @@ Minimum practical local tooling:
 - Python 3.10+ for lightweight unit tests
 - Node 18+ if you want to run frontend tests outside Docker
 
+## Windows quick start
+
+After cloning the repo (with submodules) and starting Docker Desktop:
+
+1. `scripts\windows\1-control-plane.bat` — dashboard and API only
+2. `scripts\windows\2-full-video-cpu.bat` — full CPU video pipeline
+
+See `scripts/windows/README.txt` for prerequisites. Release `v0.8.1` also attaches these `.bat` files for download.
+
 ## Environment Files
 
 Create `.env`:
