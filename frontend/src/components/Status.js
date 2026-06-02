@@ -52,25 +52,45 @@ const Status = () => {
   });
 
   useEffect(() => {
+    let inFlight = false;
+    let abortController = null;
+
     const fetchStatus = async () => {
+      if (inFlight) {
+        return;
+      }
+      if (abortController) {
+        abortController.abort();
+      }
+      abortController = new AbortController();
+      inFlight = true;
       try {
-        const response = await fetch(`${BaseURL}/status`);
+        const response = await fetch(`${BaseURL}/status`, {
+          signal: typeof AbortSignal.timeout === 'function'
+            ? AbortSignal.timeout(20000)
+            : abortController.signal,
+        });
         if (!response.ok) {
           throw new Error('Failed to fetch status');
         }
         const data = await response.json();
         setStatusData(data);
       } catch (error) {
+        if (error.name === 'AbortError') {
+          return;
+        }
         setStatusData((previous) => ({
           ...previous,
           status: 'error',
         }));
+      } finally {
+        inFlight = false;
       }
     };
 
     const unsubscribePoll = subscribeToSharedPoll(
       'status',
-      3000,
+      5000,
       fetchStatus,
       { runImmediately: true },
     );
@@ -79,6 +99,9 @@ const Status = () => {
     const unsubscribeIncidents = subscribeToOperationsEvent('incidents.updated', fetchStatus);
     const unsubscribeAnomalies = subscribeToOperationsEvent('anomalies.updated', fetchStatus);
     return () => {
+      if (abortController) {
+        abortController.abort();
+      }
       unsubscribePoll();
       unsubscribeSnapshot();
       unsubscribeRuns();

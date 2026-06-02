@@ -77,7 +77,7 @@ Open **Sources** before **Monitor Run** — the overview poll is heavy on CPU an
 
 | Problem | What to try |
 |---------|-------------|
-| Network tab all **pending**, then **504** | Too many background API polls. `git pull`, `docker compose restart webapp reverse_proxy`, open a **new incognito** window to http://localhost:3000/settings?tab=sources . Stay on Sources first; avoid opening every nav tab at once. |
+| Network tab all **pending**, then **504** | See [DEBUG_UI.md](DEBUG_UI.md). Usually `/status` is slow; run timed `curl` tests, then `git pull` + restart `webapp reverse_proxy`. Use **Sources** tab first in a fresh incognito window. |
 | Docker engine not running | WSL2 section above, then restart Docker Desktop |
 | `docker` not recognized | Start Docker Desktop; open a **new** PowerShell window |
 | Script fails immediately | Run from a cloned repo folder, not a lone downloaded `.bat` |
