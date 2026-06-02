@@ -857,11 +857,13 @@ test('confirms before forcibly unmounting models that are still in use', async (
   });
 
   await screen.findAllByText('Model Inventory');
+  const gpuCheckbox = await screen.findByRole('checkbox', { name: /YOLOX Small \(GPU\) · Mounted/i });
   await act(async () => {
-    fireEvent.click(screen.getByRole('checkbox', { name: /YOLOX Small \(GPU\) · Mounted/i }));
+    fireEvent.click(gpuCheckbox);
   });
+  const saveMountedButton = await screen.findByRole('button', { name: /Remount Models|Mount Models/i });
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Remount Models' }));
+    fireEvent.click(saveMountedButton);
   });
 
   expect(await screen.findByRole('dialog')).toBeTruthy();

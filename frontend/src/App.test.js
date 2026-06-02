@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 describe('App routing shell', () => {
-  test('redirects root to settings monitoring tab and renders updated nav order', async () => {
+  test('redirects root to settings sources tab and renders updated nav order', async () => {
     window.history.pushState({}, '', '/');
 
     await act(async () => {
@@ -33,7 +33,7 @@ describe('App routing shell', () => {
 
     expect((await screen.findAllByText('Settings Page Mock')).length).toBeGreaterThan(0);
     expect(window.location.pathname).toBe('/settings');
-    expect(window.location.search).toBe('?tab=monitoring');
+    expect(window.location.search).toBe('?tab=sources');
 
     const navLinks = screen.getAllByRole('link').map((link) => link.textContent);
     expect(navLinks).toEqual([
@@ -48,13 +48,13 @@ describe('App routing shell', () => {
     expect(screen.getByText('Hearthlight')).toBeTruthy();
     expect(screen.getByAltText('Hearthlight logo')).toBeTruthy();
     expect(screen.queryByLabelText('Theme')).toBeNull();
-    expect(screen.getByText('Live Page Mock')).toBeTruthy();
-    expect(screen.getByText('Model Logs Mock')).toBeTruthy();
-    expect(screen.getByText('API Docs Mock')).toBeTruthy();
-    expect(screen.getByText('Triggers Mock')).toBeTruthy();
+    expect(screen.queryByText('Live Page Mock')).toBeNull();
+    expect(screen.queryByText('Model Logs Mock')).toBeNull();
+    expect(screen.queryByText('API Docs Mock')).toBeNull();
+    expect(screen.queryByText('Triggers Mock')).toBeNull();
   });
 
-  test('redirects monitoring route into settings monitoring tab', async () => {
+  test('redirects monitoring route into settings sources tab', async () => {
     window.history.pushState({}, '', '/monitoring');
 
     await act(async () => {
@@ -63,7 +63,7 @@ describe('App routing shell', () => {
 
     expect((await screen.findAllByText('Settings Page Mock')).length).toBeGreaterThan(0);
     expect(window.location.pathname).toBe('/settings');
-    expect(window.location.search).toBe('?tab=monitoring');
+    expect(window.location.search).toBe('?tab=sources');
   });
 
   test('routes standalone rules page outside the settings tab list', async () => {
