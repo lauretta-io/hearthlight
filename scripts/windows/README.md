@@ -55,6 +55,13 @@ copy shared\configs\example_config.yaml shared\configs\config.yaml
 
 ## Run
 
+The `.bat` scripts start **Postgres first**, run **`reset_db` before webapp/workers** (creates `control` and `runtime` schemas), then start the rest. If you see `schema "control" does not exist`, run:
+
+```powershell
+docker compose up -d db
+docker compose run --rm reset_db
+```
+
 Start Docker Desktop, then double-click:
 
 | Script | Purpose |
