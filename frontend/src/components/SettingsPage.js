@@ -1670,10 +1670,31 @@ const SettingsPage = ({
       setSources(hydratedSources);
       await reloadModelRegistryState();
       await reloadAlertRuleState({ sourcesSnapshot: data });
-      setBanner({
-        kind: 'success',
-        text: 'Source settings saved. Monitor Run will refresh on the next poll (or switch tabs).',
-      });
+      const hasEnabledSource = hydratedSources.some((source) => source.enabled);
+      let bannerText = 'Source settings saved.';
+      if (hasEnabledSource) {
+        try {
+          const statusResponse = await fetchWithTimeout(`${BaseURL}/status`, {}, 15000);
+          const statusPayload = await parseApiJson(statusResponse, 'Failed to read system status');
+          if (statusPayload.status === 'idle' && !statusPayload.run_id) {
+            await fetchJson(
+              `${BaseURL}/start`,
+              { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+              'Failed to start run after saving sources',
+              120000,
+            );
+            bannerText = 'Source settings saved. Run is starting — open Monitor Run to watch progress.';
+          }
+        } catch (startError) {
+          setBanner({
+            kind: 'error',
+            text: formatApiError(startError, 'Sources saved, but the run could not start.'),
+          });
+          window.dispatchEvent(new CustomEvent('hearthlight:sources-updated'));
+          return;
+        }
+      }
+      setBanner({ kind: 'success', text: bannerText });
       window.dispatchEvent(new CustomEvent('hearthlight:sources-updated'));
     } catch (error) {
       setBanner({ kind: 'error', text: formatApiError(error, 'Failed to save source settings.') });

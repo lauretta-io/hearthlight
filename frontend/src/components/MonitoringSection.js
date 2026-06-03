@@ -32,6 +32,11 @@ const describeFrameProcessing = (source) => {
   }
   return `Every ${source.effective_process_every_n_frames || source.process_every_n_frames || 1} frame(s)`;
 };
+const isSystemRunActive = (overview) => (
+  Boolean(overview?.current_run_id)
+  || ['running', 'initializing'].includes(overview?.system_status || '')
+);
+
 const sanitizeSourcesForApi = (sources) => sources.map((source, index) => ({
   id: source.id ?? undefined,
   kind: source.kind,
@@ -224,6 +229,41 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     return getDisplayNameForModelKey(effectiveKey, `No ${STAGE_LABELS[stage] || stage}`);
   };
   const formatStageLabel = (stage) => STAGE_LABELS[stage] || stage;
+  const handleSourceRunAction = async (source) => {
+    const runIsActive = isSystemRunActive(overview);
+    if (runIsActive && source.enabled) {
+      await updateSourceEnabledState(source.id, false);
+      return;
+    }
+    setBusySourceId(source.id);
+    try {
+      const nextSources = sources.map((item) => (
+        item.id === source.id ? { ...item, enabled: true } : item
+      ));
+      await fetchJson(
+        `${BaseURL}/settings/input-sources`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(sanitizeSourcesForApi(nextSources)),
+        },
+        'Failed to update source state',
+        60000,
+      );
+      await fetchJson(
+        `${BaseURL}/start`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+        'Failed to start run',
+        120000,
+      );
+      setBanner({ kind: 'success', text: `${source.label} run is starting.` });
+      setRefreshTick((value) => value + 1);
+    } catch (actionError) {
+      setBanner({ kind: 'error', text: formatApiError(actionError, 'Failed to start run.') });
+    } finally {
+      setBusySourceId(null);
+    }
+  };
   const updateSourceEnabledState = async (sourceId, enabled) => {
     const nextSources = sources.map((source) => (
       source.id === sourceId
@@ -547,16 +587,26 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                 </div>
                 <div className="monitor-source-meta">
                   <span className={`monitor-pill monitor-pill-${source.state}`}>{source.state}</span>
-                  <button
-                    type="button"
-                    className={source.enabled ? 'stop-button' : 'start-button'}
-                    disabled={busySourceId === source.id}
-                    onClick={() => updateSourceEnabledState(source.id, !source.enabled)}
-                  >
-                    {busySourceId === source.id
-                      ? (source.enabled ? 'Stopping...' : 'Starting...')
-                      : (source.enabled ? 'Stop Source' : 'Start Source')}
-                  </button>
+                  {(() => {
+                    const runIsActive = isSystemRunActive(overview);
+                    const showStop = runIsActive && source.enabled;
+                    return (
+                      <button
+                        type="button"
+                        className={showStop ? 'stop-button' : 'start-button'}
+                        disabled={busySourceId === source.id}
+                        onClick={() => (
+                          showStop
+                            ? updateSourceEnabledState(source.id, false)
+                            : handleSourceRunAction(source)
+                        )}
+                      >
+                        {busySourceId === source.id
+                          ? (showStop ? 'Stopping...' : 'Starting run...')
+                          : (showStop ? 'Stop Source' : 'Start Run')}
+                      </button>
+                    );
+                  })()}
                 </div>
               </div>
             ))}
