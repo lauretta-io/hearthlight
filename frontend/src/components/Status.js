@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BaseURL } from '../config';
-import { getFrameProgress, isRunActiveStatus } from '../utils/runActivity';
+import { getFrameProgress, getIngestorBackpressureHint, isRunActiveStatus } from '../utils/runActivity';
 import { RUN_STARTED_EVENT } from '../utils/runLifecycle';
 import { subscribeToOperationsEvent } from '../utils/sharedEvents';
 import { subscribeToSharedPoll } from '../utils/sharedPolling';
@@ -138,7 +138,8 @@ const Status = () => {
     systemStatus: statusData.status,
     admission: statusData.admission,
   });
-  const backpressureHint = getPipelineBackpressureHint(statusData);
+  const backpressureHint = getPipelineBackpressureHint(statusData)
+    || getIngestorBackpressureHint(statusData);
 
   return (
     <div className="status-container">

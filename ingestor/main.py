@@ -114,7 +114,11 @@ class Ingestor(Thread):
             self.no_frame_timeout = float(cfg.input.get("no_frame_timeout", 15.0))
             self.status_publisher = status_publisher
             self.detector_timeout_seconds = float(
-                os.environ.get("HEARTHLIGHT_DETECTOR_TIMEOUT_SECONDS", "20")
+                os.environ.get("HEARTHLIGHT_DETECTOR_TIMEOUT_SECONDS", "120")
+            )
+            self.backpressure_max = max(
+                1,
+                int(os.environ.get("HEARTHLIGHT_INGESTOR_BACKPRESSURE_MAX", "15")),
             )
             self.detector_executor = ThreadPoolExecutor(
                 max_workers=1,
@@ -130,7 +134,25 @@ class Ingestor(Thread):
     def _empty_detector_outputs(self, frame_count: int):
         return [None] * frame_count, [[] for _ in range(frame_count)]
 
-    def _publish_frame_status_if_due(self, last_frame_update: float) -> float:
+    def _queue_metrics_extra(self) -> dict:
+        return {
+            "queue_depths": {
+                "frames_thread": self.frames_thread.queue.qsize(),
+                "downstream_max": self.output_thread.get_limiting_queue_length(),
+                **self.output_thread.get_queue_metrics(),
+            },
+            "backpressure": summarize_queue_backpressure({
+                "frames_thread": self.frames_thread.queue.qsize(),
+                "downstream_max": self.output_thread.get_limiting_queue_length(),
+                **self.output_thread.get_queue_metrics(),
+            }),
+        }
+
+    def _publish_frame_status_if_due(
+        self,
+        last_frame_update: float,
+        extra: dict | None = None,
+    ) -> float:
         """Heartbeat-publish the most recent frame_id so the dashboard keeps moving
         even while a single frame is still draining through the detector / output
         pipeline. Returns the updated timestamp of the last status publish.
@@ -140,28 +162,61 @@ class Ingestor(Thread):
         now = time.time()
         if now - last_frame_update <= FRAME_UPDATE_INTERVAL:
             return last_frame_update
+        payload = {
+            "frame_id": self.last_frame_id,
+            "total_frames": self.capture.total_frames,
+        }
+        if extra:
+            payload.update(extra)
         self.status_publisher.publish(
             StatusMessage(
                 status=Status.INFO,
                 module=ModuleNames.INGESTOR,
-                extra={
-                    "frame_id": self.last_frame_id,
-                    "total_frames": self.capture.total_frames,
-                },
+                extra=payload,
             )
         )
         return now
 
-    def _infer_with_timeout(self, subset_frames: Frames):
+    def _wait_for_backpressure(self, last_frame_update: float) -> float:
+        while (
+            self.output_thread.get_limiting_queue_length() > self.backpressure_max
+            and self.process
+        ):
+            last_frame_update = self._publish_frame_status_if_due(
+                last_frame_update,
+                extra={
+                    "processing_phase": "downstream_backpressure",
+                    "downstream_backpressure": self.output_thread.get_limiting_queue_length(),
+                    **self._queue_metrics_extra(),
+                },
+            )
+            time.sleep(SHORT_SLEEP)
+        return last_frame_update
+
+    def _infer_with_timeout(self, subset_frames: Frames, last_frame_update: float) -> tuple:
         frame_count = len(subset_frames.frames)
         if frame_count == 0:
-            return self._empty_detector_outputs(0)
+            return self._empty_detector_outputs(0), last_frame_update
         if self.detector_disabled:
-            return self._empty_detector_outputs(frame_count)
+            return self._empty_detector_outputs(frame_count), last_frame_update
 
         future = self.detector_executor.submit(self.detector, subset_frames)
+        deadline = time.time() + self.detector_timeout_seconds
         try:
-            return future.result(timeout=self.detector_timeout_seconds)
+            while not future.done():
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                last_frame_update = self._publish_frame_status_if_due(
+                    last_frame_update,
+                    extra={
+                        "processing_phase": "detecting",
+                        "processing_frame_id": subset_frames.frame_id,
+                        **self._queue_metrics_extra(),
+                    },
+                )
+                time.sleep(min(0.5, max(0.05, remaining)))
+            return future.result(timeout=max(0.05, deadline - time.time())), last_frame_update
         except FuturesTimeout:
             self.detector_disabled = True
             reason = (
@@ -175,7 +230,7 @@ class Ingestor(Thread):
                     extra={"reason": reason},
                 )
             )
-            return self._empty_detector_outputs(frame_count)
+            return self._empty_detector_outputs(frame_count), last_frame_update
         except Exception:
             self.detector_disabled = True
             reason = "detector inference failed; disabling detector to keep stream running"
@@ -187,7 +242,7 @@ class Ingestor(Thread):
                     extra={"reason": reason},
                 )
             )
-            return self._empty_detector_outputs(frame_count)
+            return self._empty_detector_outputs(frame_count), last_frame_update
 
     def run(self):
         logger.info("Starting", extra={"task": self.name})
@@ -195,6 +250,18 @@ class Ingestor(Thread):
         self.process = True
         self.output_thread.start()
         self.frames_thread.start()
+
+        if self.capture.total_frames:
+            self.status_publisher.publish(
+                StatusMessage(
+                    status=Status.INFO,
+                    module=ModuleNames.INGESTOR,
+                    extra={
+                        "frame_id": 0,
+                        "total_frames": self.capture.total_frames,
+                    },
+                )
+            )
 
         last_frame_update = float("-inf")
         last_metrics_update = float("-inf")
@@ -364,8 +431,9 @@ class Ingestor(Thread):
                     frame.detections = []
             if frame_subset:
                 subset_frames = Frames(frame_id=frames.frame_id, frames=frame_subset)
-                subset_tracker_inputs, subset_detections = self._infer_with_timeout(
-                    subset_frames
+                subset_tracker_inputs, subset_detections, last_frame_update = self._infer_with_timeout(
+                    subset_frames,
+                    last_frame_update,
                 )
             else:
                 subset_tracker_inputs, subset_detections = [], []
@@ -396,14 +464,7 @@ class Ingestor(Thread):
                 self.output_thread.frames_dropped += 1
 
             timer.mark()
-            while self.output_thread.get_limiting_queue_length() > 5 and self.process:
-                # Keep the status heartbeat going while we're stalled on downstream
-                # backpressure, otherwise the dashboard appears stuck on the previous
-                # frame_id for the entire duration of a slow processing cycle.
-                last_frame_update = self._publish_frame_status_if_due(
-                    last_frame_update
-                )
-                time.sleep(SHORT_SLEEP)
+            last_frame_update = self._wait_for_backpressure(last_frame_update)
             timer.time("wait")
 
             timer.loop()

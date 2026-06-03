@@ -43,6 +43,23 @@ export const getFrameProgress = (statusData) => {
   };
 };
 
+export const getIngestorBackpressureHint = (statusData) => {
+  const metrics = statusData?.resources?.module_metrics?.INGESTOR
+    || statusData?.module_metrics?.INGESTOR;
+  const queueDepth = Number(metrics?.queue_depths?.downstream_max || 0);
+  const phase = metrics?.processing_phase || metrics?.hottest_queue;
+  if (queueDepth >= 5) {
+    return `Pipeline is processing earlier frames (queue depth ${queueDepth}). The counter updates when the next frame finishes.`;
+  }
+  if (phase === 'detecting') {
+    return 'Running detector on the current frame…';
+  }
+  if (phase === 'downstream_backpressure') {
+    return 'Waiting for tracker/anomaly workers to catch up…';
+  }
+  return null;
+};
+
 export const formatSourceFrameProgress = (source, { runActive = false } = {}) => {
   if (
     source.frames_processed !== null

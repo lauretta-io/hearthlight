@@ -1606,6 +1606,13 @@ def build_input_source_response(
         if recording is not None and recording.total_frames is not None and recording.total_frames > 0
         else None
     )
+    if (
+        current_total is None
+        and source_row.kind == SOURCE_KIND_VIDEO_UPLOAD
+        and total_frames is not None
+        and total_frames > 0
+    ):
+        current_total = total_frames
     effective_error = build_effective_source_error(source_row, upload_row)
     if (
         current_total is not None
@@ -3304,6 +3311,13 @@ def process_messages():
                             for key, value in drop_counts.items()
                             if value is not None
                         }
+                    for key in (
+                        "processing_phase",
+                        "processing_frame_id",
+                        "downstream_backpressure",
+                    ):
+                        if key in extra:
+                            next_metrics[key] = extra[key]
                     module_metrics[message.module] = next_metrics
                     module_runtime_details.setdefault(message.module, {}).update(
                         dict(extra)
