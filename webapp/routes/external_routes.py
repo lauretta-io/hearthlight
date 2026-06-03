@@ -1540,6 +1540,14 @@ def build_input_source_response(
         else {}
     )
     source_runtime = runtime_source_details.get(str(source_row.id), {})
+    runtime_processed_frames = source_runtime.get("processed_frames")
+    if runtime_processed_frames is not None:
+        try:
+            frames_processed_value = int(runtime_processed_frames)
+        except (TypeError, ValueError):
+            frames_processed_value = None
+    else:
+        frames_processed_value = None
     current_frame = current_frame_override if current_frame_override is not None else frame_id
     current_total = (
         recording.total_frames
@@ -1579,7 +1587,11 @@ def build_input_source_response(
             resource_snapshot,
             source_error=effective_error,
         ),
-        frames_processed=current_frame if source_row.enabled else None,
+        frames_processed=(
+            frames_processed_value
+            if frames_processed_value is not None
+            else (current_frame if source_row.enabled else None)
+        ),
         total_frames=current_total,
         fps=source_runtime.get("processed_fps"),
         capture_fps=source_runtime.get("capture_fps"),
@@ -3915,6 +3927,14 @@ def get_status(db: Session = Depends(get_db)):
         if db_frame_id is not None:
             effective_frame_id = db_frame_id
     sources = build_source_responses(db, snapshot)
+    if effective_frame_id is None:
+        runtime_frame_values = [
+            source.frames_processed
+            for source in sources
+            if source.frames_processed is not None
+        ]
+        if runtime_frame_values:
+            effective_frame_id = max(runtime_frame_values)
     return Status(
         status=current_status,
         frame_id=effective_frame_id,

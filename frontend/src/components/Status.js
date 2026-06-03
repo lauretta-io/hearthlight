@@ -1,7 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { BaseURL } from '../config';
+import { getFrameProgress, isRunActiveStatus } from '../utils/runActivity';
+import { RUN_STARTED_EVENT } from '../utils/runLifecycle';
 import { subscribeToOperationsEvent } from '../utils/sharedEvents';
 import { subscribeToSharedPoll } from '../utils/sharedPolling';
+
+const STATUS_POLL_MS = 2000;
 
 const formatPercent = (value) => (
   value === null || value === undefined ? 'n/a' : `${value.toFixed(1)}%`
@@ -90,10 +94,14 @@ const Status = () => {
 
     const unsubscribePoll = subscribeToSharedPoll(
       'status',
-      5000,
+      STATUS_POLL_MS,
       fetchStatus,
       { runImmediately: true },
     );
+    const refreshAfterRunStart = () => {
+      fetchStatus();
+    };
+    window.addEventListener(RUN_STARTED_EVENT, refreshAfterRunStart);
     const unsubscribeSnapshot = subscribeToOperationsEvent('snapshot', fetchStatus);
     const unsubscribeRuns = subscribeToOperationsEvent('runs.updated', fetchStatus);
     const unsubscribeIncidents = subscribeToOperationsEvent('incidents.updated', fetchStatus);
@@ -107,13 +115,16 @@ const Status = () => {
       unsubscribeRuns();
       unsubscribeIncidents();
       unsubscribeAnomalies();
+      window.removeEventListener(RUN_STARTED_EVENT, refreshAfterRunStart);
     };
   }, []);
 
-  const progressValue =
-    statusData.frame_id !== null && statusData.total_frames
-      ? Math.min((statusData.frame_id / statusData.total_frames) * 100, 100)
-      : 0;
+  const frameProgress = useMemo(() => getFrameProgress(statusData), [statusData]);
+  const progressValue = frameProgress?.total
+    ? Math.min((frameProgress.current / frameProgress.total) * 100, 100)
+    : 0;
+  const runIsActive = isRunActiveStatus(statusData.status, statusData.run_id);
+  const showFrameSection = runIsActive || frameProgress !== null;
   const dependencyStatus = Object.entries(statusData.resources?.dependency_status || {});
   const moduleMetrics = Object.entries(statusData.resources?.module_metrics || {}).filter(
     ([name]) => OPERATOR_MODULES.includes(name),
@@ -191,13 +202,18 @@ const Status = () => {
         <div className="status-warning">{backpressureHint}</div>
       )}
 
-      {statusData.frame_id !== null && (
+      {showFrameSection && (
         <div className="frame-progress">
           <span className="frame-count">
-            Frame: {statusData.frame_id}
-            {statusData.total_frames !== null && ` / ${statusData.total_frames}`}
+            {frameProgress
+              ? `${frameProgress.label}: ${frameProgress.current}${
+                frameProgress.total !== null && frameProgress.total !== undefined
+                  ? ` / ${frameProgress.total}`
+                  : ''
+              }`
+              : 'Frame: waiting for ingestor…'}
           </span>
-          {statusData.total_frames !== null && (
+          {frameProgress?.total !== null && frameProgress?.total !== undefined && (
             <div className="progress-container">
               <div
                 className="progress-bar"

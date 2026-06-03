@@ -3,6 +3,11 @@ import { BaseURL } from '../config';
 import { fetchJson, formatApiError } from '../utils/api';
 import { formatDateTime } from '../utils/time';
 import {
+  formatSourceFrameProgress,
+  getLiveRunHeadline,
+  isRunActiveStatus as isRunLifecycleActive,
+} from '../utils/runActivity';
+import {
   RUN_STARTED_EVENT,
   SOURCES_UPDATED_EVENT,
   applyOptimisticRunOverview,
@@ -44,8 +49,11 @@ const describeFrameProcessing = (source) => {
   return `Every ${source.effective_process_every_n_frames || source.process_every_n_frames || 1} frame(s)`;
 };
 const isSystemRunActive = (overview) => (
-  Boolean(overview?.current_run_id)
-  || ['running', 'initializing'].includes(overview?.system_status || '')
+  isRunLifecycleActive(overview?.system_status, overview?.current_run_id)
+);
+
+const getPreviewUrl = (source) => (
+  source?.id ? `${BaseURL}/sources/${source.id}/preview.mjpeg` : null
 );
 
 const sanitizeSourcesForApi = (sources) => sources.map((source, index) => ({
@@ -85,6 +93,35 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const [refreshTick, setRefreshTick] = useState(0);
   const [burstDeadline, setBurstDeadline] = useState(0);
   const loadOverviewRef = useRef(null);
+  const transientBannerTimeoutRef = useRef(null);
+
+  const showTransientBanner = (text, kind = 'info', durationMs = 4500) => {
+    if (transientBannerTimeoutRef.current) {
+      window.clearTimeout(transientBannerTimeoutRef.current);
+    }
+    setBanner({ kind, text });
+    transientBannerTimeoutRef.current = window.setTimeout(() => {
+      setBanner((current) => (current?.text === text ? null : current));
+      transientBannerTimeoutRef.current = null;
+    }, durationMs);
+  };
+
+  useEffect(() => () => {
+    if (transientBannerTimeoutRef.current) {
+      window.clearTimeout(transientBannerTimeoutRef.current);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!overview || banner?.kind === 'error') {
+      return;
+    }
+    const steadyState = overview.system_status === 'running'
+      || (overview.sources || []).some((source) => source.state === 'running');
+    if (steadyState && banner?.text && /starting/i.test(banner.text)) {
+      setBanner(null);
+    }
+  }, [overview, banner]);
 
   useEffect(() => {
     let isMounted = true;
@@ -302,7 +339,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       );
       setOverview((previous) => applyOptimisticRunOverview(previous, startPayload?.run_id));
       dispatchRunStarted(startPayload?.run_id);
-      setBanner({ kind: 'success', text: `${source.label} run is starting.` });
+      showTransientBanner(`${source.label} run is starting. Status updates within a few seconds.`);
       setRefreshTick((value) => value + 1);
     } catch (actionError) {
       setBanner({ kind: 'error', text: formatApiError(actionError, 'Failed to start run.') });
@@ -352,7 +389,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
           );
           setOverview((previous) => applyOptimisticRunOverview(previous, startPayload?.run_id));
           dispatchRunStarted(startPayload?.run_id);
-          setBanner({ kind: 'success', text: `${source.label} updated. The run restarted with the new source set.` });
+          showTransientBanner(`${source.label} updated. The run restarted with the new source set.`);
         } else {
           setBanner({ kind: 'success', text: `${source.label} stopped. No active sources remain, so the run was stopped.` });
         }
@@ -365,7 +402,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         );
         setOverview((previous) => applyOptimisticRunOverview(previous, startPayload?.run_id));
         dispatchRunStarted(startPayload?.run_id);
-        setBanner({ kind: 'success', text: `${source.label} is starting.` });
+        showTransientBanner(`${source.label} is starting. Status updates within a few seconds.`);
       } else if (!enabled) {
         setBanner({ kind: 'success', text: `${source.label} stopped.` });
       } else {
@@ -378,6 +415,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       setBusySourceId(null);
     }
   };
+
+  const runHeadline = getLiveRunHeadline(overview?.system_status, overview?.current_run_id);
+  const runIsActive = isSystemRunActive(overview);
 
   const content = (
     <div className={embedded ? 'monitor-shell monitor-shell-embedded' : 'monitor-shell'}>
@@ -413,11 +453,16 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       {banner && (
         <div className={`monitor-alert monitor-alert-${banner.kind === 'error' ? 'error' : 'info'}`}>{banner.text}</div>
       )}
+      {runHeadline && !banner && (
+        <div className="monitor-run-headline">{runHeadline}</div>
+      )}
 
       <div className="monitor-summary-grid">
         <div className="monitor-summary-card">
           <span className="monitor-label">System Status</span>
-          <strong>{overview?.system_status || 'loading'}</strong>
+          <strong className={`monitor-status-value monitor-status-${overview?.system_status || 'loading'}`}>
+            {overview?.system_status || 'loading'}
+          </strong>
           <span className="monitor-muted">
             {overview?.current_run_id ? `Current run ${overview.current_run_id}` : 'No active run'}
           </span>
@@ -621,14 +666,37 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
             {sources.length === 0 && (
               <div className="monitor-empty">No configured sources.</div>
             )}
-            {sources.map((source) => (
-              <div key={source.id || source.label} className="monitor-source-row">
+            {sources.map((source) => {
+              const frameProgressText = formatSourceFrameProgress(source, { runActive: runIsActive });
+              const previewUrl = source.enabled && (
+                source.kind === 'video_upload'
+                || (!runIsActive && source.kind !== 'video_upload')
+              )
+                ? getPreviewUrl(source)
+                : null;
+              return (
+              <div
+                key={source.id || source.label}
+                className={`monitor-source-row${previewUrl ? ' monitor-source-row--with-preview' : ''}`}
+              >
+                {previewUrl && (
+                  <div className="monitor-source-preview">
+                    <img
+                      className="monitor-source-preview__media"
+                      src={previewUrl}
+                      alt={`${source.label} preview`}
+                    />
+                  </div>
+                )}
                 <div>
                   <strong>{source.label}</strong>
                   <div className="monitor-muted">{normalizeSourceKindLabel(source.kind)} · {describeFrameProcessing(source)}</div>
                   <div className="monitor-muted">
                     {describeEffectiveBinding('detector', source.detector_model_key)} · {describeEffectiveBinding('tracker', source.tracker_model_key)} · {describeEffectiveBinding('anomaly_stage_1', source.anomaly_stage_1_model_key)} · {describeEffectiveBinding('anomaly_stage_2', source.anomaly_stage_2_model_key)}
                   </div>
+                  {frameProgressText && (
+                    <div className="monitor-source-frames">{frameProgressText}</div>
+                  )}
                   {(source.capture_fps || source.processed_fps) && (
                     <div className="monitor-muted">
                       Capture {source.capture_fps || 'n/a'} FPS · Processed {source.processed_fps || 'n/a'} FPS · Skipped {source.skipped_frames || 0}
@@ -659,7 +727,8 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                   })()}
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         </div>
 

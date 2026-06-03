@@ -1,10 +1,13 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BaseURL } from '../config';
+import { formatSourceFrameProgress } from '../utils/runActivity';
+import { RUN_STARTED_EVENT } from '../utils/runLifecycle';
 import { subscribeToOperationsEvent } from '../utils/sharedEvents';
 import { subscribeToSharedPoll } from '../utils/sharedPolling';
 import '../styles/LivePage.css';
 
 const REFRESH_INTERVAL_MS = 1500;
+const STATUS_POLL_MS = 2000;
 
 const getPreviewUrl = (source) => {
   if (!source.id) {
@@ -64,6 +67,7 @@ const mergeSources = (previousSources, nextSources) => {
 
 const LivePage = () => {
   const [sources, setSources] = useState([]);
+  const [runStatus, setRunStatus] = useState(null);
   const [error, setError] = useState(null);
   const [previewFailures, setPreviewFailures] = useState({});
 
@@ -111,6 +115,53 @@ const LivePage = () => {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    const loadRunStatus = async () => {
+      try {
+        const response = await fetch(`${BaseURL}/status`);
+        if (!response.ok) {
+          throw new Error('Failed to fetch run status');
+        }
+        const data = await response.json();
+        if (active) {
+          setRunStatus(data);
+        }
+      } catch (_statusError) {
+        if (active) {
+          setRunStatus((previous) => previous);
+        }
+      }
+    };
+
+    const unsubscribePoll = subscribeToSharedPoll(
+      'live-run-status',
+      STATUS_POLL_MS,
+      loadRunStatus,
+      { runImmediately: true },
+    );
+    const refreshStatus = () => {
+      loadRunStatus();
+    };
+    window.addEventListener(RUN_STARTED_EVENT, refreshStatus);
+
+    return () => {
+      active = false;
+      unsubscribePoll();
+      window.removeEventListener(RUN_STARTED_EVENT, refreshStatus);
+    };
+  }, []);
+
+  const runtimeSourcesById = useMemo(() => (
+    (runStatus?.sources || []).reduce((result, source) => {
+      if (source.id !== null && source.id !== undefined) {
+        result[source.id] = source;
+      }
+      return result;
+    }, {})
+  ), [runStatus?.sources]);
+
   const liveSources = useMemo(() => {
     const enabledSources = sources.filter((source) => source.enabled);
     const primaryLiveSources = enabledSources
@@ -148,7 +199,17 @@ const LivePage = () => {
         <div className="live-page__grid">
           {liveSources.map((source) => {
             const previewUrl = getPreviewUrl(source);
+            const runtimeSource = runtimeSourcesById[source.id] || source;
+            const frameProgressText = formatSourceFrameProgress(runtimeSource, {
+              runActive: Boolean(runStatus?.run_id),
+            });
+            const previewKey = `${source.id}-${runStatus?.run_id || 'idle'}`;
             const supportMessage = getSupportMessage(source, previewFailures[source.id]);
+            const runActivePreviewBlocked = Boolean(
+              runStatus?.run_id
+              && previewFailures[source.id]
+              && source.kind !== 'video_upload',
+            );
 
             return (
               <article key={source.id || source.label} className="live-card">
@@ -166,10 +227,15 @@ const LivePage = () => {
                   {supportMessage ? (
                     <div className="live-card__unsupported">
                       <strong>Inline preview unavailable</strong>
-                      <p>{supportMessage}</p>
+                      <p>
+                        {runActivePreviewBlocked
+                          ? 'This stream is already attached to the active run, so a second browser preview cannot stay open. Processing continues in the background — use the frame counter below to confirm progress.'
+                          : supportMessage}
+                      </p>
                     </div>
                   ) : (
                     <img
+                      key={previewKey}
                       className="live-card__media"
                       src={previewUrl}
                       alt={`${source.label} live stream`}
@@ -193,6 +259,9 @@ const LivePage = () => {
 
                 <div className="live-card__details">
                   <span><strong>Source:</strong> {getSourceDescription(source)}</span>
+                  {frameProgressText && (
+                    <span><strong>Frames:</strong> {frameProgressText}</span>
+                  )}
                   <span>
                     <strong>Processing:</strong>{' '}
                     {source.effective_frame_processing_mode === 'target_frame_rate'

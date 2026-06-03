@@ -67,3 +67,32 @@ test('renders status summary from the expanded status payload', async () => {
   expect(screen.getByText('ANOMALY: warning')).toBeTruthy();
   expect(screen.getByText('Frame: 25 / 100')).toBeTruthy();
 });
+
+test('shows per-source frame progress when global frame id is missing', async () => {
+  global.fetch = jest.fn(() =>
+    buildJsonResponse({
+      status: 'running',
+      frame_id: null,
+      total_frames: null,
+      run_id: '2026-06-03_15-20-51',
+      sources: [
+        {
+          id: 1,
+          enabled: true,
+          frames_processed: 57,
+          total_frames: null,
+          state: 'running',
+        },
+      ],
+      module_status: { INGESTOR: 'running' },
+      admission: { allowed: true, reason: null },
+      resources: {},
+    })
+  );
+
+  await act(async () => {
+    render(<Status />);
+  });
+
+  expect(await screen.findByText('Frames processed: 57')).toBeTruthy();
+});
