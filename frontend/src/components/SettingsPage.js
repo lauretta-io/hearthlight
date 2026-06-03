@@ -1670,7 +1670,11 @@ const SettingsPage = ({
       setSources(hydratedSources);
       await reloadModelRegistryState();
       await reloadAlertRuleState({ sourcesSnapshot: data });
-      setBanner({ kind: 'success', text: 'Source settings updated.' });
+      setBanner({
+        kind: 'success',
+        text: 'Source settings saved. Monitor Run will refresh on the next poll (or switch tabs).',
+      });
+      window.dispatchEvent(new CustomEvent('hearthlight:sources-updated'));
     } catch (error) {
       setBanner({ kind: 'error', text: formatApiError(error, 'Failed to save source settings.') });
     } finally {

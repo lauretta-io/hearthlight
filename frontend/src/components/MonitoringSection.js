@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { BaseURL } from '../config';
+import { fetchJson, formatApiError } from '../utils/api';
 import { formatDateTime } from '../utils/time';
 import { subscribeToOperationsEvent } from '../utils/sharedEvents';
 import { subscribeToSharedPoll } from '../utils/sharedPolling';
@@ -99,6 +100,16 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     loadMountedModels();
     return () => {
       isMounted = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    const refreshFromSettings = () => {
+      setRefreshTick((value) => value + 1);
+    };
+    window.addEventListener('hearthlight:sources-updated', refreshFromSettings);
+    return () => {
+      window.removeEventListener('hearthlight:sources-updated', refreshFromSettings);
     };
   }, []);
 
@@ -225,56 +236,45 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     }
     setBusySourceId(sourceId);
     try {
-      const saveResponse = await fetch(`${BaseURL}/sources`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(sanitizeSourcesForApi(nextSources)),
-      });
-      const saveData = await saveResponse.json().catch(() => ({}));
-      if (!saveResponse.ok) {
-        throw new Error(saveData.detail || 'Failed to update source state');
-      }
-
-      const remainingEnabledCount = nextSources.filter((item) => item.enabled).length;
-      if (overview?.current_run_id) {
-        const stopResponse = await fetch(`${BaseURL}/stop`, {
-          method: 'POST',
+      await fetchJson(
+        `${BaseURL}/settings/input-sources`,
+        {
+          method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
           },
-        });
-        const stopData = await stopResponse.json().catch(() => ({}));
-        if (!stopResponse.ok) {
-          throw new Error(stopData.detail || 'Failed to restart run');
-        }
+          body: JSON.stringify(sanitizeSourcesForApi(nextSources)),
+        },
+        'Failed to update source state',
+        60000,
+      );
+
+      const remainingEnabledCount = nextSources.filter((item) => item.enabled).length;
+      if (overview?.current_run_id) {
+        await fetchJson(
+          `${BaseURL}/stop`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+          'Failed to stop run',
+          60000,
+        );
         if (remainingEnabledCount > 0) {
-          const restartResponse = await fetch(`${BaseURL}/start`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-          });
-          const restartData = await restartResponse.json().catch(() => ({}));
-          if (!restartResponse.ok) {
-            throw new Error(restartData.detail || 'Failed to restart run');
-          }
+          await fetchJson(
+            `${BaseURL}/start`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+            'Failed to restart run',
+            120000,
+          );
           setBanner({ kind: 'success', text: `${source.label} updated. The run restarted with the new source set.` });
         } else {
           setBanner({ kind: 'success', text: `${source.label} stopped. No active sources remain, so the run was stopped.` });
         }
       } else if (enabled) {
-        const startResponse = await fetch(`${BaseURL}/start`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-        });
-        const startData = await startResponse.json().catch(() => ({}));
-        if (!startResponse.ok) {
-          throw new Error(startData.detail || 'Failed to start run');
-        }
+        await fetchJson(
+          `${BaseURL}/start`,
+          { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+          'Failed to start run',
+          120000,
+        );
         setBanner({ kind: 'success', text: `${source.label} is starting.` });
       } else if (!enabled) {
         setBanner({ kind: 'success', text: `${source.label} stopped.` });
@@ -283,7 +283,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       }
       setRefreshTick((value) => value + 1);
     } catch (actionError) {
-      setBanner({ kind: 'error', text: actionError.message });
+      setBanner({ kind: 'error', text: formatApiError(actionError, 'Failed to update source or start run.') });
     } finally {
       setBusySourceId(null);
     }
