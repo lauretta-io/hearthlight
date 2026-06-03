@@ -196,9 +196,11 @@ class Ingestor(Thread):
     def _infer_with_timeout(self, subset_frames: Frames, last_frame_update: float) -> tuple:
         frame_count = len(subset_frames.frames)
         if frame_count == 0:
-            return self._empty_detector_outputs(0), last_frame_update
+            tracker_inputs, detections = self._empty_detector_outputs(0)
+            return tracker_inputs, detections, last_frame_update
         if self.detector_disabled:
-            return self._empty_detector_outputs(frame_count), last_frame_update
+            tracker_inputs, detections = self._empty_detector_outputs(frame_count)
+            return tracker_inputs, detections, last_frame_update
 
         future = self.detector_executor.submit(self.detector, subset_frames)
         deadline = time.time() + self.detector_timeout_seconds
@@ -216,7 +218,10 @@ class Ingestor(Thread):
                     },
                 )
                 time.sleep(min(0.5, max(0.05, remaining)))
-            return future.result(timeout=max(0.05, deadline - time.time())), last_frame_update
+            tracker_inputs, detections = future.result(
+                timeout=max(0.05, deadline - time.time())
+            )
+            return tracker_inputs, detections, last_frame_update
         except FuturesTimeout:
             self.detector_disabled = True
             reason = (
@@ -230,7 +235,8 @@ class Ingestor(Thread):
                     extra={"reason": reason},
                 )
             )
-            return self._empty_detector_outputs(frame_count), last_frame_update
+            tracker_inputs, detections = self._empty_detector_outputs(frame_count)
+            return tracker_inputs, detections, last_frame_update
         except Exception:
             self.detector_disabled = True
             reason = "detector inference failed; disabling detector to keep stream running"
@@ -242,7 +248,8 @@ class Ingestor(Thread):
                     extra={"reason": reason},
                 )
             )
-            return self._empty_detector_outputs(frame_count), last_frame_update
+            tracker_inputs, detections = self._empty_detector_outputs(frame_count)
+            return tracker_inputs, detections, last_frame_update
 
     def run(self):
         logger.info("Starting", extra={"task": self.name})
