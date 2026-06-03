@@ -171,9 +171,13 @@ services:
     restart: unless-stopped
     command: >
       bash -c '
-      until nc -z rabbitmq 15672; do 
-        sleep 1; 
-      done; 
+      for attempt in $(seq 1 90); do
+        if getent hosts rabbitmq >/dev/null 2>&1 && nc -z rabbitmq 5672; then
+          break
+        fi
+        echo "Waiting for rabbitmq (attempt ${attempt})..."
+        sleep 1
+      done
       if [ ! -z "$RELOAD" ]; then
         hupper -m src.ingestor.main
       else

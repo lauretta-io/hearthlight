@@ -3236,6 +3236,15 @@ def build_runtime_cfg(db: Session, run_identifier: str):
 
     runtime_cfg = clone_cfg()
     runtime_cfg.run_id = run_identifier
+    resize_override = os.environ.get("HEARTHLIGHT_INGESTOR_RESIZE", "").strip()
+    if resize_override:
+        try:
+            resize_value = int(resize_override)
+            runtime_cfg.input.resize = [resize_value, resize_value]
+        except ValueError:
+            parts = [part.strip() for part in resize_override.split(",") if part.strip()]
+            if len(parts) == 2:
+                runtime_cfg.input.resize = [int(parts[0]), int(parts[1])]
     runtime_cfg.input.cameras = build_runtime_camera_map(source_rows, upload_paths)
     if is_hybrid_local_cpu_runtime():
         # Local hybrid workers run headless; disable GUI preview paths and persist
