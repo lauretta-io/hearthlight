@@ -283,6 +283,16 @@ def should_skip_source_probe_on_start() -> bool:
         "true",
         "yes",
     }
+
+
+def should_auto_start_on_source_save() -> bool:
+    """Start (or resume) the pipeline after Sources are saved when at least one source is enabled."""
+    return os.environ.get("HEARTHLIGHT_AUTO_START_ON_SOURCE_SAVE", "true").strip().lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS = float(
     os.environ.get("HEARTHLIGHT_LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS", "5.0")
@@ -301,6 +311,30 @@ def get_expected_module_names() -> list[str]:
         ModuleNames.INGESTOR,
         ModuleNames.ANOMALY,
     ]
+
+
+def get_orchestration_module_names() -> list[str]:
+    """Modules that indicate an active video-processing run (not auxiliary daemons)."""
+    return [ModuleNames.INGESTOR]
+
+
+def get_orchestration_module_statuses() -> list[str]:
+    return [
+        normalize_module_status(module_status.get(module_name, DataModels.Status.IDLE))
+        for module_name in get_orchestration_module_names()
+    ]
+
+
+def pipeline_run_is_active() -> bool:
+    if run_id is None:
+        return False
+    if status in {
+        SystemStatus.INITIALIZING,
+        SystemStatus.RUNNING,
+        SystemStatus.STOPPING,
+    }:
+        return True
+    return operator_pipeline_is_running()
 
 
 def get_auxiliary_status_module_names() -> set[str]:
@@ -3345,13 +3379,10 @@ def refresh_runtime_status(db: Session | None = None):
 
     process_messages()
     reconcile_active_run_from_workers(db)
-    relevant_statuses = [
-        normalize_module_status(module_status.get(module_name, DataModels.Status.IDLE))
-        for module_name in get_expected_module_names()
-    ]
+    orchestration_statuses = get_orchestration_module_statuses()
     if operator_pipeline_is_running():
         reconcile_active_run_from_workers(db)
-    next_status, reset_frames = derive_system_status(status, relevant_statuses)
+    next_status, reset_frames = derive_system_status(status, orchestration_statuses)
     if run_id is None and operator_pipeline_is_running():
         next_status = SystemStatus.RUNNING
         reset_frames = False
@@ -3365,6 +3396,14 @@ def refresh_runtime_status(db: Session | None = None):
         status = next_status
         if reset_frames:
             reset_runtime_state(clear_run=True)
+        elif (
+            run_id is not None
+            and next_status == SystemStatus.IDLE
+            and not operator_pipeline_is_running()
+        ):
+            run_id = None
+            frame_id = None
+            total_frames = None
         elif run_id is None and next_status == SystemStatus.IDLE:
             frame_id = None
             total_frames = None
@@ -3856,16 +3895,20 @@ def build_algorithm_feed_payload(
     )
 
 
-@external_router.post("/start")
-async def start(db: Session = Depends(get_db)):
+def execute_system_start(db: Session) -> dict:
     global status
     global run_id
 
     current_status = refresh_runtime_status(db)
-    with state_lock:
-        if current_status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}:
+    if pipeline_run_is_active():
+        if operator_pipeline_is_running():
+            return {"status": "running", "run_id": run_id}
+        if current_status == SystemStatus.INITIALIZING:
+            return {"status": "starting", "run_id": run_id}
+        if current_status == SystemStatus.STOPPING:
             raise HTTPException(
-                status_code=409, detail="system is already starting or running"
+                status_code=409,
+                detail="system is stopping; wait for stop to finish before starting again",
             )
     snapshot = get_current_resource_snapshot(db)
     admission = snapshot.get("admission") or {"allowed": True, "reason": None}
@@ -3946,6 +3989,25 @@ async def start(db: Session = Depends(get_db)):
     return {"status": "starting", "run_id": run_id}
 
 
+def maybe_auto_start_after_source_save(db: Session, sources: list[InputSource]) -> None:
+    if not should_auto_start_on_source_save():
+        return
+    if not any(source.enabled for source in sources):
+        return
+    try:
+        execute_system_start(db)
+    except HTTPException as exc:
+        if exc.status_code == 409:
+            logger.info("Auto-start skipped after source save: %s", exc.detail)
+            return
+        raise
+
+
+@external_router.post("/start")
+async def start(db: Session = Depends(get_db)):
+    return execute_system_start(db)
+
+
 @external_router.post("/stop")
 async def stop(db: Session = Depends(get_db)):
     global status
@@ -3995,16 +4057,21 @@ def get_status(db: Session = Depends(get_db)):
         snapshot.get("dependency_status"),
         get_local_worker_health() if is_hybrid_local_cpu_runtime() else None,
     )
-    effective_statuses = [
+    orchestration_statuses = [
         normalize_module_status(
             snapshot_module_status.get(
                 module_name,
                 module_status.get(module_name, DataModels.Status.IDLE),
             )
         )
-        for module_name in get_expected_module_names()
+        for module_name in get_orchestration_module_names()
     ]
-    reconciled_status, _ = derive_system_status(current_status, effective_statuses)
+    reconciled_status, _ = derive_system_status(current_status, orchestration_statuses)
+    if run_id is None and reconciled_status in {
+        SystemStatus.INITIALIZING,
+        SystemStatus.RUNNING,
+    }:
+        reconciled_status = SystemStatus.IDLE
     if reconciled_status != current_status:
         with state_lock:
             status = reconciled_status
@@ -4073,7 +4140,9 @@ def replace_settings_input_sources(
     db: Session = Depends(get_db),
 ):
     try:
-        return upsert_settings_input_sources_and_build_response(db, sources)
+        response = upsert_settings_input_sources_and_build_response(db, sources)
+        maybe_auto_start_after_source_save(db, sources)
+        return response
     except HTTPException:
         raise
     except Exception as exc:

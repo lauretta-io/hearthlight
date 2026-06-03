@@ -88,5 +88,6 @@ Open **Sources** before **Monitor Run** — the overview poll is heavy on CPU an
 | Frame count stuck (e.g. **16**) on uploaded MP4 | Normal on **CPU Docker**: detector + tracker + SmolVLM can take **1–3 minutes per frame**. Status should show a yellow hint about queue depth. Add `HEARTHLIGHT_INGESTOR_BACKPRESSURE_MAX=15` and `HEARTHLIGHT_DETECTOR_TIMEOUT_SECONDS=120` to `.env`, recreate **ingestor**. For faster demos use lighter models (Heuristic Filter + Prompt Rules) in Model Library. |
 | Ingestor logs show `mjpg/video.mjpg` at **3072x1728** | The active run is still the **camera URL**, not an uploaded MP4. Ingestor is working but each frame is huge on CPU. Set **Sources** to **Uploaded Video**, Save, or add `HEARTHLIGHT_INGESTOR_RESIZE=640` to `.env` and recreate ingestor. |
 | UI flickers **Idle** / **Running** | Caused by multiple API workers holding different in-memory run state. Set `WEBAPP_WORKERS=1` in `.env` and `docker compose up -d --force-recreate webapp`. |
+| **Idle**, `run_id` null, ingestor idle after Save | Ensure `HEARTHLIGHT_AUTO_START_ON_SOURCE_SAVE=true`, pull latest, recreate **webapp** and **ingestor**, then **Sources → Save** again (server starts the run). Or `curl.exe -X POST http://localhost:3000/api/start`. |
 
 More detail: [docs/containers.md](../../docs/containers.md)

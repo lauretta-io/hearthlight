@@ -35,7 +35,7 @@ const getIngestorExplanation = ({ moduleStatus, systemStatus, admission }) => {
     if (admission?.reason) {
       return `Ingestor is idle because the pipeline has not started. Current blocker: ${admission.reason}`;
     }
-    return 'Ingestor is idle because no active run is feeding video into the pipeline yet.';
+    return 'Ingestor is idle because no active run is feeding video into the pipeline yet. On Sources, enable your video and click Save (the run starts automatically), or use Start Run on Monitor Run.';
   }
   return 'Ingestor is not actively processing frames right now.';
 };

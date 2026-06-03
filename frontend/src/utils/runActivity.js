@@ -1,6 +1,5 @@
-export const areOperatorModulesActive = (moduleStatus) => (
+export const isIngestorProcessing = (moduleStatus) => (
   moduleStatus?.INGESTOR === 'running'
-  || moduleStatus?.ANOMALY === 'running'
 );
 
 export const resolveDisplaySystemStatus = (overviewOrStatus) => {
@@ -9,10 +8,10 @@ export const resolveDisplaySystemStatus = (overviewOrStatus) => {
   const moduleStatus = overviewOrStatus?.resources?.module_status
     ?? overviewOrStatus?.module_status
     ?? {};
-  if (runId && systemStatus === 'idle' && areOperatorModulesActive(moduleStatus)) {
-    return 'running';
+  if (!runId) {
+    return systemStatus || 'idle';
   }
-  if (areOperatorModulesActive(moduleStatus) && !runId) {
+  if (systemStatus === 'idle' && isIngestorProcessing(moduleStatus)) {
     return 'running';
   }
   return systemStatus || 'idle';
@@ -24,9 +23,8 @@ export const isRunActiveStatus = (systemStatus, runId, moduleStatus) => {
     current_run_id: runId,
     resources: { module_status: moduleStatus },
   });
-  return ['running', 'initializing'].includes(resolved)
-    || Boolean(runId)
-    || areOperatorModulesActive(moduleStatus);
+  return ['running', 'initializing', 'stopping'].includes(resolved)
+    || Boolean(runId);
 };
 
 export const getFrameProgress = (statusData) => {

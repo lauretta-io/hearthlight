@@ -13,14 +13,20 @@ describe('runActivity', () => {
     expect(isRunActiveStatus('idle', null)).toBe(false);
   });
 
-  test('isRunActiveStatus treats running operator modules as active', () => {
-    expect(isRunActiveStatus('idle', null, { INGESTOR: 'running', ANOMALY: 'idle' })).toBe(true);
+  test('isRunActiveStatus requires run id or initializing for idle ingestor-only activity', () => {
+    expect(isRunActiveStatus('idle', null, { INGESTOR: 'running', ANOMALY: 'running' })).toBe(false);
+    expect(isRunActiveStatus('running', 'run-1', { INGESTOR: 'running' })).toBe(true);
   });
 
-  test('resolveDisplaySystemStatus stays running when workers are active', () => {
+  test('resolveDisplaySystemStatus does not treat anomaly-only as running', () => {
     expect(resolveDisplaySystemStatus({
       system_status: 'idle',
       current_run_id: null,
+      resources: { module_status: { INGESTOR: 'idle', ANOMALY: 'running' } },
+    })).toBe('idle');
+    expect(resolveDisplaySystemStatus({
+      system_status: 'idle',
+      current_run_id: 'run-1',
       resources: { module_status: { INGESTOR: 'running' } },
     })).toBe('running');
   });
