@@ -16,6 +16,10 @@ import {
   VIDEO_UPLOAD_ACCEPT,
 } from '../utils/videoUpload';
 import { THEME_GROUP_LABELS, getThemeOption } from '../theme';
+import {
+  SOURCES_UPDATED_EVENT,
+  dispatchRunStarted,
+} from '../utils/runLifecycle';
 import '../styles/CameraConfig.css';
 
 const TASK_OPTIONS = ['PERSON', 'BAG'];
@@ -1677,12 +1681,13 @@ const SettingsPage = ({
           const statusResponse = await fetchWithTimeout(`${BaseURL}/status`, {}, 15000);
           const statusPayload = await parseApiJson(statusResponse, 'Failed to read system status');
           if (statusPayload.status === 'idle' && !statusPayload.run_id) {
-            await fetchJson(
+            const startPayload = await fetchJson(
               `${BaseURL}/start`,
               { method: 'POST', headers: { 'Content-Type': 'application/json' } },
               'Failed to start run after saving sources',
               120000,
             );
+            dispatchRunStarted(startPayload?.run_id);
             bannerText = 'Source settings saved. Run is starting — open Monitor Run to watch progress.';
           }
         } catch (startError) {
@@ -1690,12 +1695,12 @@ const SettingsPage = ({
             kind: 'error',
             text: formatApiError(startError, 'Sources saved, but the run could not start.'),
           });
-          window.dispatchEvent(new CustomEvent('hearthlight:sources-updated'));
+          window.dispatchEvent(new CustomEvent(SOURCES_UPDATED_EVENT));
           return;
         }
       }
       setBanner({ kind: 'success', text: bannerText });
-      window.dispatchEvent(new CustomEvent('hearthlight:sources-updated'));
+      window.dispatchEvent(new CustomEvent(SOURCES_UPDATED_EVENT));
     } catch (error) {
       setBanner({ kind: 'error', text: formatApiError(error, 'Failed to save source settings.') });
     } finally {

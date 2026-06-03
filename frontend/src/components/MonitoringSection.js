@@ -1,10 +1,21 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { BaseURL } from '../config';
 import { fetchJson, formatApiError } from '../utils/api';
 import { formatDateTime } from '../utils/time';
+import {
+  RUN_STARTED_EVENT,
+  SOURCES_UPDATED_EVENT,
+  applyOptimisticRunOverview,
+  dispatchRunStarted,
+} from '../utils/runLifecycle';
 import { subscribeToOperationsEvent } from '../utils/sharedEvents';
 import { subscribeToSharedPoll } from '../utils/sharedPolling';
 import '../styles/MonitoringPage.css';
+
+const EMBEDDED_OVERVIEW_POLL_MS = 3000;
+const STANDALONE_OVERVIEW_POLL_MS = 5000;
+const RUN_STATUS_BURST_POLL_MS = 1000;
+const RUN_STATUS_BURST_DURATION_MS = 60000;
 
 const formatPercent = (value) => (
   value === null || value === undefined ? 'n/a' : `${value.toFixed(1)}%`
@@ -72,6 +83,8 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   const [banner, setBanner] = useState(null);
   const [busySourceId, setBusySourceId] = useState(null);
   const [refreshTick, setRefreshTick] = useState(0);
+  const [burstDeadline, setBurstDeadline] = useState(0);
+  const loadOverviewRef = useRef(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -111,12 +124,40 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
   useEffect(() => {
     const refreshFromSettings = () => {
       setRefreshTick((value) => value + 1);
+      loadOverviewRef.current?.();
     };
-    window.addEventListener('hearthlight:sources-updated', refreshFromSettings);
+    const refreshFromRunStart = (event) => {
+      const runId = event?.detail?.run_id ?? null;
+      setBurstDeadline(Date.now() + RUN_STATUS_BURST_DURATION_MS);
+      setOverview((previous) => applyOptimisticRunOverview(previous, runId));
+      setRefreshTick((value) => value + 1);
+      loadOverviewRef.current?.();
+    };
+    window.addEventListener(SOURCES_UPDATED_EVENT, refreshFromSettings);
+    window.addEventListener(RUN_STARTED_EVENT, refreshFromRunStart);
     return () => {
-      window.removeEventListener('hearthlight:sources-updated', refreshFromSettings);
+      window.removeEventListener(SOURCES_UPDATED_EVENT, refreshFromSettings);
+      window.removeEventListener(RUN_STARTED_EVENT, refreshFromRunStart);
     };
   }, []);
+
+  useEffect(() => {
+    if (!pollingEnabled || burstDeadline <= Date.now()) {
+      return undefined;
+    }
+    const tick = () => {
+      loadOverviewRef.current?.();
+    };
+    tick();
+    const intervalId = window.setInterval(tick, RUN_STATUS_BURST_POLL_MS);
+    const timeoutId = window.setTimeout(() => {
+      setBurstDeadline(0);
+    }, burstDeadline - Date.now());
+    return () => {
+      window.clearInterval(intervalId);
+      window.clearTimeout(timeoutId);
+    };
+  }, [burstDeadline, pollingEnabled]);
 
   useEffect(() => {
     if (!pollingEnabled) {
@@ -126,7 +167,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     let isMounted = true;
     let inFlight = false;
     let abortController = null;
-    const overviewPollMs = embedded ? 15000 : 5000;
+    const overviewPollMs = embedded ? EMBEDDED_OVERVIEW_POLL_MS : STANDALONE_OVERVIEW_POLL_MS;
 
     const loadOverview = async () => {
       if (inFlight) {
@@ -168,6 +209,8 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       }
     };
 
+    loadOverviewRef.current = loadOverview;
+
     const unsubscribePoll = subscribeToSharedPoll(
       'monitoring-overview',
       overviewPollMs,
@@ -181,6 +224,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
 
     return () => {
       isMounted = false;
+      loadOverviewRef.current = null;
       if (abortController) {
         abortController.abort();
       }
@@ -190,7 +234,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       unsubscribeIncidents();
       unsubscribeAnomalies();
     };
-  }, [pollingEnabled, refreshTick, selectedRunIdentifier]);
+  }, [pollingEnabled, refreshTick, selectedRunIdentifier, embedded]);
 
   const runs = overview?.runs || [];
   const resources = overview?.resources;
@@ -250,12 +294,14 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         'Failed to update source state',
         60000,
       );
-      await fetchJson(
+      const startPayload = await fetchJson(
         `${BaseURL}/start`,
         { method: 'POST', headers: { 'Content-Type': 'application/json' } },
         'Failed to start run',
         120000,
       );
+      setOverview((previous) => applyOptimisticRunOverview(previous, startPayload?.run_id));
+      dispatchRunStarted(startPayload?.run_id);
       setBanner({ kind: 'success', text: `${source.label} run is starting.` });
       setRefreshTick((value) => value + 1);
     } catch (actionError) {
@@ -298,23 +344,27 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
           60000,
         );
         if (remainingEnabledCount > 0) {
-          await fetchJson(
+          const startPayload = await fetchJson(
             `${BaseURL}/start`,
             { method: 'POST', headers: { 'Content-Type': 'application/json' } },
             'Failed to restart run',
             120000,
           );
+          setOverview((previous) => applyOptimisticRunOverview(previous, startPayload?.run_id));
+          dispatchRunStarted(startPayload?.run_id);
           setBanner({ kind: 'success', text: `${source.label} updated. The run restarted with the new source set.` });
         } else {
           setBanner({ kind: 'success', text: `${source.label} stopped. No active sources remain, so the run was stopped.` });
         }
       } else if (enabled) {
-        await fetchJson(
+        const startPayload = await fetchJson(
           `${BaseURL}/start`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' } },
           'Failed to start run',
           120000,
         );
+        setOverview((previous) => applyOptimisticRunOverview(previous, startPayload?.run_id));
+        dispatchRunStarted(startPayload?.run_id);
         setBanner({ kind: 'success', text: `${source.label} is starting.` });
       } else if (!enabled) {
         setBanner({ kind: 'success', text: `${source.label} stopped.` });
@@ -601,7 +651,7 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
                             : handleSourceRunAction(source)
                         )}
                       >
-                        {busySourceId === source.id
+                        {busySourceId === source.id || source.state === 'initializing'
                           ? (showStop ? 'Stopping...' : 'Starting run...')
                           : (showStop ? 'Stop Source' : 'Start Run')}
                       </button>
