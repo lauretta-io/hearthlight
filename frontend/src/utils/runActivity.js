@@ -3,11 +3,31 @@ export const areOperatorModulesActive = (moduleStatus) => (
   || moduleStatus?.ANOMALY === 'running'
 );
 
-export const isRunActiveStatus = (systemStatus, runId, moduleStatus) => (
-  Boolean(runId)
-  || ['running', 'initializing'].includes(systemStatus || '')
-  || areOperatorModulesActive(moduleStatus)
-);
+export const resolveDisplaySystemStatus = (overviewOrStatus) => {
+  const systemStatus = overviewOrStatus?.system_status ?? overviewOrStatus?.status ?? 'idle';
+  const runId = overviewOrStatus?.current_run_id ?? overviewOrStatus?.run_id ?? null;
+  const moduleStatus = overviewOrStatus?.resources?.module_status
+    ?? overviewOrStatus?.module_status
+    ?? {};
+  if (runId && systemStatus === 'idle' && areOperatorModulesActive(moduleStatus)) {
+    return 'running';
+  }
+  if (areOperatorModulesActive(moduleStatus) && !runId) {
+    return 'running';
+  }
+  return systemStatus || 'idle';
+};
+
+export const isRunActiveStatus = (systemStatus, runId, moduleStatus) => {
+  const resolved = resolveDisplaySystemStatus({
+    system_status: systemStatus,
+    current_run_id: runId,
+    resources: { module_status: moduleStatus },
+  });
+  return ['running', 'initializing'].includes(resolved)
+    || Boolean(runId)
+    || areOperatorModulesActive(moduleStatus);
+};
 
 export const getFrameProgress = (statusData) => {
   if (!statusData) {
@@ -88,13 +108,15 @@ export const formatSourceFrameProgress = (source, { runActive = false } = {}) =>
 };
 
 export const getLiveRunHeadline = (systemStatus, runId, moduleStatus) => {
-  if (!runId && areOperatorModulesActive(moduleStatus)) {
-    return 'Pipeline is active. Refreshing run status from the server…';
-  }
+  const displayStatus = resolveDisplaySystemStatus({
+    system_status: systemStatus,
+    current_run_id: runId,
+    resources: { module_status: moduleStatus },
+  });
   if (!runId) {
     return null;
   }
-  if (systemStatus === 'running') {
+  if (displayStatus === 'running') {
     return `Run ${runId} is processing video.`;
   }
   if (systemStatus === 'initializing') {

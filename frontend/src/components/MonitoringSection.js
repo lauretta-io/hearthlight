@@ -6,6 +6,7 @@ import {
   formatSourceFrameProgress,
   getLiveRunHeadline,
   isRunActiveStatus as isRunLifecycleActive,
+  resolveDisplaySystemStatus,
 } from '../utils/runActivity';
 import {
   RUN_STARTED_EVENT,
@@ -420,8 +421,9 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     }
   };
 
+  const displaySystemStatus = resolveDisplaySystemStatus(overview);
   const runHeadline = getLiveRunHeadline(
-    overview?.system_status,
+    displaySystemStatus,
     overview?.current_run_id,
     overview?.resources?.module_status,
   );
@@ -468,11 +470,15 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
       <div className="monitor-summary-grid">
         <div className="monitor-summary-card">
           <span className="monitor-label">System Status</span>
-          <strong className={`monitor-status-value monitor-status-${overview?.system_status || 'loading'}`}>
-            {overview?.system_status || 'loading'}
+          <strong className={`monitor-status-value monitor-status-${displaySystemStatus || 'loading'}`}>
+            {displaySystemStatus || 'loading'}
           </strong>
           <span className="monitor-muted">
-            {overview?.current_run_id ? `Current run ${overview.current_run_id}` : 'No active run'}
+            {overview?.current_run_id
+              ? `Current run ${overview.current_run_id}`
+              : (displaySystemStatus === 'running'
+                ? 'Workers active — syncing run metadata'
+                : 'No active run')}
           </span>
         </div>
         <div className="monitor-summary-card">

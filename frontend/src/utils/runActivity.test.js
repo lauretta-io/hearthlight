@@ -3,6 +3,7 @@ import {
   getFrameProgress,
   getLiveRunHeadline,
   isRunActiveStatus,
+  resolveDisplaySystemStatus,
 } from './runActivity';
 
 describe('runActivity', () => {
@@ -14,6 +15,14 @@ describe('runActivity', () => {
 
   test('isRunActiveStatus treats running operator modules as active', () => {
     expect(isRunActiveStatus('idle', null, { INGESTOR: 'running', ANOMALY: 'idle' })).toBe(true);
+  });
+
+  test('resolveDisplaySystemStatus stays running when workers are active', () => {
+    expect(resolveDisplaySystemStatus({
+      system_status: 'idle',
+      current_run_id: null,
+      resources: { module_status: { INGESTOR: 'running' } },
+    })).toBe('running');
   });
 
   test('getFrameProgress falls back to per-source processed frames', () => {

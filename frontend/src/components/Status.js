@@ -1,6 +1,11 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { BaseURL } from '../config';
-import { getFrameProgress, getIngestorBackpressureHint, isRunActiveStatus } from '../utils/runActivity';
+import {
+  getFrameProgress,
+  getIngestorBackpressureHint,
+  isRunActiveStatus,
+  resolveDisplaySystemStatus,
+} from '../utils/runActivity';
 import { RUN_STARTED_EVENT } from '../utils/runLifecycle';
 import { subscribeToOperationsEvent } from '../utils/sharedEvents';
 import { subscribeToSharedPoll } from '../utils/sharedPolling';
@@ -119,6 +124,7 @@ const Status = () => {
     };
   }, []);
 
+  const displayStatus = useMemo(() => resolveDisplaySystemStatus(statusData), [statusData]);
   const frameProgress = useMemo(() => getFrameProgress(statusData), [statusData]);
   const progressValue = frameProgress?.total
     ? Math.min((frameProgress.current / frameProgress.total) * 100, 100)
@@ -145,7 +151,7 @@ const Status = () => {
     <div className="status-container">
       <div className="status-header">
         <div>
-          <span className="status-text">System: {statusData.status}</span>
+          <span className="status-text">System: {displayStatus}</span>
           <span className="status-detail">
             {statusData.run_id ? `Run ${statusData.run_id}` : 'No active run'}
           </span>

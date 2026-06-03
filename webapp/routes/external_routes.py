@@ -3349,10 +3349,17 @@ def refresh_runtime_status(db: Session | None = None):
         normalize_module_status(module_status.get(module_name, DataModels.Status.IDLE))
         for module_name in get_expected_module_names()
     ]
+    if operator_pipeline_is_running():
+        reconcile_active_run_from_workers(db)
     next_status, reset_frames = derive_system_status(status, relevant_statuses)
-    # Workers can be alive before /start assigns run_id. Recover run_id first; only
-    # downgrade to idle when orchestration truly has no active run.
-    if run_id is None and next_status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}:
+    if run_id is None and operator_pipeline_is_running():
+        next_status = SystemStatus.RUNNING
+        reset_frames = False
+    elif (
+        run_id is None
+        and next_status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}
+        and not operator_pipeline_is_running()
+    ):
         next_status = SystemStatus.IDLE
     with state_lock:
         status = next_status
@@ -5091,7 +5098,7 @@ def get_monitoring_overview(
     run_identifier: str | None = None,
     limit: int | None = None,
 ):
-    current_status = refresh_runtime_status()
+    current_status = refresh_runtime_status(db)
     selected_run = get_run_row(db, run_identifier)
     snapshot = get_current_resource_snapshot(db)
     source_rows = get_active_source_rows(db)

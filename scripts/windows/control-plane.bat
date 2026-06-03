@@ -16,6 +16,7 @@ findstr /B /C:"HEARTHLIGHT_SKIP_SOURCE_PROBE_ON_START=" .env >nul 2>&1 || echo H
 findstr /B /C:"HEARTHLIGHT_INGESTOR_BACKPRESSURE_MAX=" .env >nul 2>&1 || echo HEARTHLIGHT_INGESTOR_BACKPRESSURE_MAX=15>>.env
 findstr /B /C:"HEARTHLIGHT_DETECTOR_TIMEOUT_SECONDS=" .env >nul 2>&1 || echo HEARTHLIGHT_DETECTOR_TIMEOUT_SECONDS=120>>.env
 findstr /B /C:"HEARTHLIGHT_INGESTOR_RESIZE=" .env >nul 2>&1 || echo HEARTHLIGHT_INGESTOR_RESIZE=640>>.env
+findstr /B /C:"WEBAPP_WORKERS=" .env >nul 2>&1 || echo WEBAPP_WORKERS=1>>.env
 if not exist "shared\configs\config.yaml" if exist "shared\configs\example_config.yaml" copy /Y shared\configs\example_config.yaml shared\configs\config.yaml >nul
 
 echo [1/5] Start database (Postgres must be up before init)...

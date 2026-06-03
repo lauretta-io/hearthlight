@@ -894,6 +894,14 @@ class SystemStateTests(unittest.TestCase):
         self.assertEqual(status, SystemStatus.IDLE)
         self.assertTrue(reset)
 
+    def test_derive_system_status_promotes_idle_when_ingestor_is_running(self):
+        status, reset = derive_system_status(
+            SystemStatus.IDLE,
+            ["running", "idle"],
+        )
+        self.assertEqual(status, SystemStatus.RUNNING)
+        self.assertFalse(reset)
+
     def test_get_error_modules_returns_sorted_module_names(self):
         errors = get_error_modules(
             {
