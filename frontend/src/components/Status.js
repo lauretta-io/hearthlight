@@ -123,7 +123,11 @@ const Status = () => {
   const progressValue = frameProgress?.total
     ? Math.min((frameProgress.current / frameProgress.total) * 100, 100)
     : 0;
-  const runIsActive = isRunActiveStatus(statusData.status, statusData.run_id);
+  const runIsActive = isRunActiveStatus(
+    statusData.status,
+    statusData.run_id,
+    statusData.module_status,
+  );
   const showFrameSection = runIsActive || frameProgress !== null;
   const dependencyStatus = Object.entries(statusData.resources?.dependency_status || {});
   const moduleMetrics = Object.entries(statusData.resources?.module_metrics || {}).filter(

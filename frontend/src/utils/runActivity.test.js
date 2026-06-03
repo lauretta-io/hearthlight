@@ -12,6 +12,10 @@ describe('runActivity', () => {
     expect(isRunActiveStatus('idle', null)).toBe(false);
   });
 
+  test('isRunActiveStatus treats running operator modules as active', () => {
+    expect(isRunActiveStatus('idle', null, { INGESTOR: 'running', ANOMALY: 'idle' })).toBe(true);
+  });
+
   test('getFrameProgress falls back to per-source processed frames', () => {
     const progress = getFrameProgress({
       frame_id: null,
@@ -29,9 +33,9 @@ describe('runActivity', () => {
 
   test('formatSourceFrameProgress shows waiting copy while running without counts', () => {
     expect(formatSourceFrameProgress(
-      { enabled: true, state: 'running', frames_processed: null },
+      { enabled: true, state: 'running', frames_processed: 0, capture_fps: 0 },
       { runActive: true },
-    )).toMatch(/Waiting for frame data/i);
+    )).toMatch(/waiting for frames/i);
   });
 
   test('getLiveRunHeadline reflects steady running state', () => {

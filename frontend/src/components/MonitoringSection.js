@@ -49,7 +49,11 @@ const describeFrameProcessing = (source) => {
   return `Every ${source.effective_process_every_n_frames || source.process_every_n_frames || 1} frame(s)`;
 };
 const isSystemRunActive = (overview) => (
-  isRunLifecycleActive(overview?.system_status, overview?.current_run_id)
+  isRunLifecycleActive(
+    overview?.system_status,
+    overview?.current_run_id,
+    overview?.resources?.module_status,
+  )
 );
 
 const getPreviewUrl = (source) => (
@@ -416,7 +420,11 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
     }
   };
 
-  const runHeadline = getLiveRunHeadline(overview?.system_status, overview?.current_run_id);
+  const runHeadline = getLiveRunHeadline(
+    overview?.system_status,
+    overview?.current_run_id,
+    overview?.resources?.module_status,
+  );
   const runIsActive = isSystemRunActive(overview);
 
   const content = (

@@ -1488,6 +1488,49 @@ def get_run_recordings_by_source_id(db: Session):
     return result
 
 
+def get_latest_active_run_row(db: Session):
+    return (
+        db.query(SQLModels.Run)
+        .filter_by(is_deleted=False)
+        .order_by(SQLModels.Run.start_datetime.desc())
+        .first()
+    )
+
+
+def operator_pipeline_is_running() -> bool:
+    ingestor_state = normalize_module_status(
+        module_status.get(ModuleNames.INGESTOR, DataModels.Status.IDLE)
+    )
+    return ingestor_state == DataModels.Status.RUNNING
+
+
+def reconcile_active_run_from_workers(db: Session | None = None) -> bool:
+    """Re-attach run_id when workers are processing but webapp orchestration state was lost."""
+    global run_id
+    global status
+
+    if run_id is not None or not operator_pipeline_is_running():
+        return False
+
+    owns_session = db is None
+    session = db if db is not None else SessionLocal()
+    try:
+        run_row = get_latest_active_run_row(session)
+        if run_row is None:
+            return False
+        with state_lock:
+            run_id = run_row.run_identifier
+            status = SystemStatus.RUNNING
+        logger.info(
+            "Recovered active run_id %s from database while ingestor is running",
+            run_id,
+        )
+        return True
+    finally:
+        if owns_session:
+            session.close()
+
+
 def derive_source_state(
     source_row: SQLModels.InputSourceTemplate,
     recording: SQLModels.CameraRecording | None,
@@ -1504,6 +1547,15 @@ def derive_source_state(
         return "stopping"
     if status == SystemStatus.INITIALIZING:
         return "initializing"
+    snapshot_module_status = resource_snapshot.get("module_status") or {}
+    ingestor_is_running = (
+        normalize_module_status(
+            snapshot_module_status.get(ModuleNames.INGESTOR, DataModels.Status.IDLE)
+        )
+        == DataModels.Status.RUNNING
+    )
+    if ingestor_is_running and source_row.enabled:
+        return "running"
     if status == SystemStatus.RUNNING:
         known_total_frames = (
             recording.total_frames
@@ -3262,24 +3314,30 @@ def process_messages():
             logger.warning("Received status update for unknown module %s", message.module)
 
 
-def refresh_runtime_status():
+def refresh_runtime_status(db: Session | None = None):
     global status
     global run_id
+    global frame_id
+    global total_frames
 
     process_messages()
+    reconcile_active_run_from_workers(db)
     relevant_statuses = [
         normalize_module_status(module_status.get(module_name, DataModels.Status.IDLE))
         for module_name in get_expected_module_names()
     ]
     next_status, reset_frames = derive_system_status(status, relevant_statuses)
-    # In hybrid mode workers can be alive before a run is started. Avoid reporting
-    # system "running" until /start has assigned a run_id.
+    # Workers can be alive before /start assigns run_id. Recover run_id first; only
+    # downgrade to idle when orchestration truly has no active run.
     if run_id is None and next_status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}:
         next_status = SystemStatus.IDLE
     with state_lock:
         status = next_status
         if reset_frames:
             reset_runtime_state(clear_run=True)
+        elif run_id is None and next_status == SystemStatus.IDLE:
+            frame_id = None
+            total_frames = None
     return status
 
 
@@ -3773,7 +3831,7 @@ async def start(db: Session = Depends(get_db)):
     global status
     global run_id
 
-    current_status = refresh_runtime_status()
+    current_status = refresh_runtime_status(db)
     with state_lock:
         if current_status in {SystemStatus.INITIALIZING, SystemStatus.RUNNING}:
             raise HTTPException(
@@ -3900,7 +3958,7 @@ async def stop(db: Session = Depends(get_db)):
 @external_router.get("/status", response_model=Status)
 def get_status(db: Session = Depends(get_db)):
     global status
-    current_status = refresh_runtime_status()
+    current_status = refresh_runtime_status(db)
     snapshot = get_cached_resource_snapshot(db)
     snapshot_module_status = merge_hybrid_operator_status(
         snapshot.get("module_status"),

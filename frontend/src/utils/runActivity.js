@@ -1,6 +1,12 @@
-export const isRunActiveStatus = (systemStatus, runId) => (
+export const areOperatorModulesActive = (moduleStatus) => (
+  moduleStatus?.INGESTOR === 'running'
+  || moduleStatus?.ANOMALY === 'running'
+);
+
+export const isRunActiveStatus = (systemStatus, runId, moduleStatus) => (
   Boolean(runId)
   || ['running', 'initializing'].includes(systemStatus || '')
+  || areOperatorModulesActive(moduleStatus)
 );
 
 export const getFrameProgress = (statusData) => {
@@ -47,6 +53,14 @@ export const formatSourceFrameProgress = (source, { runActive = false } = {}) =>
     }
     return `${source.frames_processed} frames processed`;
   }
+  if (
+    runActive
+    && source.enabled
+    && (source.frames_processed === 0 || source.frames_processed === null)
+    && (source.capture_fps === 0 || source.capture_fps === null || source.capture_fps === undefined)
+  ) {
+    return 'Pipeline active — waiting for frames from the camera stream…';
+  }
   if (runActive && source.enabled && source.state === 'running') {
     return 'Waiting for frame data from ingestor…';
   }
@@ -56,7 +70,10 @@ export const formatSourceFrameProgress = (source, { runActive = false } = {}) =>
   return null;
 };
 
-export const getLiveRunHeadline = (systemStatus, runId) => {
+export const getLiveRunHeadline = (systemStatus, runId, moduleStatus) => {
+  if (!runId && areOperatorModulesActive(moduleStatus)) {
+    return 'Pipeline is active. Refreshing run status from the server…';
+  }
   if (!runId) {
     return null;
   }
