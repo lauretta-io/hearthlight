@@ -111,7 +111,7 @@ services:
       timeout: 5s
       retries: 12
       start_period: 20s
-    command: >
+    command: |
       bash -c '
       cd /app/src/frontend &&
       if [ ! -x node_modules/.bin/vite ]; then
@@ -164,21 +164,21 @@ services:
       - .env
     environment:
       PYTHONPATH: /app/src
-      DISPLAY: ${DISPLAY}
+      DISPLAY: ${DISPLAY:-}
       QT_X11_NO_MITSHIM: "1"
       RELOAD: ${RELOAD:-}
       <<: *nvidia-env
     restart: unless-stopped
-    command: >
+    command: |
       bash -c '
-      for attempt in $(seq 1 90); do
+      for attempt in $$(seq 1 90); do
         if getent hosts rabbitmq >/dev/null 2>&1 && nc -z rabbitmq 5672; then
           break
         fi
-        echo "Waiting for rabbitmq (attempt ${attempt})..."
+        echo "Waiting for rabbitmq (attempt $${attempt})..."
         sleep 1
       done
-      if [ ! -z "$RELOAD" ]; then
+      if [ ! -z "$$RELOAD" ]; then
         hupper -m src.ingestor.main
       else
         python -um src.ingestor.main
@@ -204,12 +204,12 @@ services:
       - PYTHONPATH=/app/src
       - RELOAD=${RELOAD:-}
     restart: unless-stopped
-    command: >
+    command: |
       bash -c '
       until nc -z rabbitmq 15672;
       do sleep 1; 
       done; 
-      if [ ! -z "$RELOAD" ]; then
+      if [ ! -z "$$RELOAD" ]; then
         hupper -m src.association.main
       else
         python -um src.association.main
@@ -234,12 +234,12 @@ services:
       RELOAD: ${RELOAD:-}
       <<: *nvidia-env
     restart: unless-stopped
-    command: >
+    command: |
       bash -c '
       until nc -z rabbitmq 15672; do
         sleep 1;
       done;
-      if [ ! -z "$RELOAD" ]; then
+      if [ ! -z "$$RELOAD" ]; then
         hupper -m src.anomaly.main
       else
         python -um src.anomaly.main
