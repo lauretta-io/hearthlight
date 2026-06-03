@@ -86,6 +86,7 @@ try:
         build_model_option_catalog,
         build_model_display_name,
         build_default_bindings,
+        normalize_persisted_default_bindings,
         collect_required_mounted_models,
         build_runtime_binding_block,
         collect_required_mounted_models,
@@ -965,6 +966,13 @@ class ModelRegistryTests(unittest.TestCase):
             bundle["models"]["anomaly_stage_1"]["heuristic_presence_stage_1"]["healthcheck"]["import_path"],
             "hearthlight_model_zoo.anomaly_detectors",
         )
+
+    def test_normalize_persisted_default_bindings_restores_workspace_cpu_defaults(self):
+        restored = normalize_persisted_default_bindings({})
+        self.assertEqual(restored[MODEL_STAGE_DETECTOR], "builtin_yolox_s_cpu")
+        self.assertEqual(restored[MODEL_STAGE_TRACKER], "builtin_bytetrack")
+        self.assertEqual(restored[MODEL_STAGE_ANOMALY_STAGE_1], "siglip_stage_1_cpu")
+        self.assertEqual(restored[MODEL_STAGE_ANOMALY_STAGE_2], "smolvlm_stage_2_cpu")
 
     @unittest.skipIf(load_registry_bundle is None, "omegaconf is not installed")
     def test_registry_bundle_falls_back_to_cpu_detector_when_gpu_is_unavailable(self):

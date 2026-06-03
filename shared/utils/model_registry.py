@@ -52,6 +52,12 @@ CONFIG_ROOT = SHARED_ROOT / "configs"
 REGISTRY_DIR = CONFIG_ROOT / "registries"
 MODEL_BINDINGS_PATH = CONFIG_ROOT / "model_bindings.yaml"
 MOUNTED_MODELS_PATH = CONFIG_ROOT / "mounted_models.yaml"
+WORKSPACE_CPU_DEFAULT_BINDINGS = {
+    MODEL_STAGE_DETECTOR: "builtin_yolox_s_cpu",
+    MODEL_STAGE_TRACKER: "builtin_bytetrack",
+    MODEL_STAGE_ANOMALY_STAGE_1: "siglip_stage_1_cpu",
+    MODEL_STAGE_ANOMALY_STAGE_2: "smolvlm_stage_2_cpu",
+}
 
 REGISTRY_FILE_MAP = {
     MODEL_STAGE_DETECTOR: "detectors.yaml",
@@ -222,9 +228,23 @@ def load_model_registries(registry_dir: Path | None = None) -> dict[str, dict[st
     return registries
 
 
+def normalize_persisted_default_bindings(defaults: dict[str, Any] | None) -> dict[str, str]:
+    """Restore workspace CPU defaults when bindings were cleared or never seeded."""
+    normalized = {
+        stage: str((defaults or {}).get(stage) or "").strip()
+        for stage in MODEL_BINDING_STAGES
+    }
+    if any(normalized[stage] for stage in OPERATOR_MODEL_STAGES):
+        return {stage: normalized[stage] or None for stage in MODEL_BINDING_STAGES}
+    restored = dict(normalized)
+    for stage, model_key in WORKSPACE_CPU_DEFAULT_BINDINGS.items():
+        restored[stage] = model_key
+    return {stage: restored.get(stage) or None for stage in MODEL_BINDING_STAGES}
+
+
 def load_model_bindings(bindings_path: Path | None = None) -> dict[str, Any]:
     bindings = _load_yaml(bindings_path or MODEL_BINDINGS_PATH)
-    defaults = dict(bindings.get("defaults") or {})
+    defaults = normalize_persisted_default_bindings(bindings.get("defaults"))
     return {"defaults": defaults}
 
 

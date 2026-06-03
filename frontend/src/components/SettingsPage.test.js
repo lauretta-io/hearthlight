@@ -1103,6 +1103,10 @@ test('shows workspace defaults when model-bindings is empty but model-options in
 
   expect(await screen.findByText(/Saved defaults:.*YOLOX Small \(CPU\)/)).toBeTruthy();
   expect(screen.getByText(/Use default \(YOLOX Small \(CPU\)\)/)).toBeTruthy();
+  const defaultBindingsCard = screen.getByText('Default Model Bindings').closest('.card');
+  expect(defaultBindingsCard).toBeTruthy();
+  const defaultBindingSelects = defaultBindingsCard.querySelectorAll('select');
+  expect(defaultBindingSelects[0]?.value).toBe('builtin_yolox_s_cpu');
 });
 
 test('derives defaults from mounted stage options when bindings and default_bindings are empty', async () => {

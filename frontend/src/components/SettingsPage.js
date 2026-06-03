@@ -157,6 +157,18 @@ const extractDefaultBindings = (bindingPayload, modelPayload) => {
   return nextDefaults;
 };
 
+const resolveEffectiveDefaultKey = (
+  stage,
+  defaultBindings,
+  modelOptionCatalog,
+  mountedModelsByStage,
+) => (
+  defaultBindings?.[stage]
+  || modelOptionCatalog?.default_bindings?.[stage]
+  || mountedModelsByStage?.[stage]?.[0]
+  || ''
+);
+
 const MODEL_OPTIONS_FETCH_TIMEOUT_MS = 60000;
 
 const normalizeListPayload = (payload) => {
@@ -1521,9 +1533,23 @@ const SettingsPage = ({
   const saveDefaultBindings = async () => {
     setIsSavingBindings(true);
     try {
+      const persistedMountedModelsByStage = modelOptionCatalog.mounted_models || {};
+      const mountedModelsByStageForSave = MODEL_STAGE_OPTIONS.reduce((result, option) => {
+        const draftKeys = mountedModels?.[option.stage];
+        const persistedKeys = persistedMountedModelsByStage?.[option.stage];
+        result[option.stage] = Array.isArray(draftKeys) && draftKeys.length > 0
+          ? draftKeys
+          : (Array.isArray(persistedKeys) ? persistedKeys : []);
+        return result;
+      }, {});
       const payload = MODEL_STAGE_OPTIONS.map((option) => ({
         stage: option.stage,
-        model_key: defaultBindings[option.stage] || null,
+        model_key: resolveEffectiveDefaultKey(
+          option.stage,
+          defaultBindings,
+          modelOptionCatalog,
+          mountedModelsByStageForSave,
+        ) || null,
         binding_scope: 'default',
       }));
       await fetchJson(
@@ -2255,11 +2281,11 @@ const SettingsPage = ({
     }, {});
     return result;
   }, {});
-  const getEffectiveDefaultKey = (stage) => (
-    defaultBindings[stage]
-    || modelOptionCatalog?.default_bindings?.[stage]
-    || mountedModelsByStage[stage]?.[0]
-    || ''
+  const getEffectiveDefaultKey = (stage) => resolveEffectiveDefaultKey(
+    stage,
+    defaultBindings,
+    modelOptionCatalog,
+    mountedModelsByStage,
   );
 
   const getDisplayNameForStage = (stage, modelKey, fallbackLabel) => {
@@ -2765,7 +2791,7 @@ const SettingsPage = ({
                         <label key={option.stage}>
                           <span>{option.label}</span>
                           <select
-                            value={defaultBindings[option.stage] || ''}
+                            value={getEffectiveDefaultKey(option.stage) || ''}
                             onChange={(event) => setDefaultBindings((previous) => ({
                               ...previous,
                               [option.stage]: event.target.value,
