@@ -84,5 +84,6 @@ Open **Sources** before **Monitor Run** — the overview poll is heavy on CPU an
 | Script fails immediately | Run from a cloned repo folder, not a lone downloaded `.bat` |
 | Workers keep restarting | `docker compose logs --tail=120 ingestor` |
 | Source **Idle** after Save; run does not start / **409** | **Save** on Sources should auto-call `/start` when at least one source is enabled. If it fails, read the red banner, add `HEARTHLIGHT_SKIP_SOURCE_PROBE_ON_START=true` to `.env`, then `docker compose up -d --force-recreate webapp ingestor`. Use **Stop Source** then **Save** again, or `curl -X POST http://localhost:3000/api/start`. For first test, use **Uploaded Video** (MP4). |
+| Ingestor logs `pop from an empty deque` / `Module is already running` | Ingestor is running but RabbitMQ status updates crashed (fixed by thread-safe publisher). Run `docker compose restart rabbitmq ingestor webapp` after `git pull`, then **Stop Source → Save** once. Ignore duplicate `Received command: start` if you saved twice — harmless after the fix. |
 
 More detail: [docs/containers.md](../../docs/containers.md)

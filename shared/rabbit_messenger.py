@@ -2,7 +2,7 @@ import os
 import queue
 from collections import defaultdict
 import time
-from threading import Thread
+from threading import RLock, Thread
 import logging
 from functools import partial
 from typing import TypeVar, Generic, Type, TypedDict, Iterable
@@ -423,6 +423,7 @@ class Publisher:
     def __init__(self, routing_key, task_name="", create_queue=True):
         self.name = f"Publisher for {routing_key}"
         self.task_name = task_name if task_name else self.name
+        self._io_lock = RLock()
         logger.debug(f"Initializing {self.name}", extra={"task": self.task_name})
         self.routing_key = routing_key
         self.queue_name = f"{routing_key}_queue"
@@ -433,33 +434,50 @@ class Publisher:
         logger.debug(f"Initialized {self.name}", extra={"task": self.task_name})
 
     def connect(self, create_queue=True):
+        with self._io_lock:
+            self.channel, self.connection = get_connection(
+                self.queue_name, self.routing_key, create_queue
+            )
+
+    @with_exponential_backoff(max_tries=RABBIT_MAX_TRIES, max_delay=1.0)
+    def publish(self, data):
+        with self._io_lock:
+            try:
+                assert self.channel is not None
+                _, _, exchange = get_rabbit_settings()
+                body = data.model_dump_json()
+                self.channel.basic_publish(
+                    exchange=exchange, routing_key=self.routing_key, body=body
+                )
+            except Exception:
+                self._close_unlocked()
+                self._connect_unlocked(create_queue=self.create_queue)
+                raise
+
+    def close(self, clear_queue=False):
+        with self._io_lock:
+            self._close_unlocked(clear_queue=clear_queue)
+
+    def _connect_unlocked(self, create_queue=True):
         self.channel, self.connection = get_connection(
             self.queue_name, self.routing_key, create_queue
         )
 
-    @with_exponential_backoff(max_tries=RABBIT_MAX_TRIES, max_delay=1.0)
-    def publish(self, data):
-        try:
-            assert self.channel is not None
-            _, _, exchange = get_rabbit_settings()
-            body = data.model_dump_json()
-            self.channel.basic_publish(
-                exchange=exchange, routing_key=self.routing_key, body=body
-            )
-        except Exception:
-            self.close()
-            self.connect(create_queue=self.create_queue)
-            raise
-
-    def close(self, clear_queue=False):
+    def _close_unlocked(self, clear_queue=False):
         logger.info(f"Closing {self.name}", extra={"task": self.task_name})
         if self.connection and self.connection.is_open:
             if clear_queue and self.create_queue:
-                self.clear_queue()
+                self._clear_queue_unlocked()
             self.connection.close()
+        self.connection = None
+        self.channel = None
 
     @with_exponential_backoff(max_tries=RABBIT_MAX_TRIES, max_delay=1.0)
     def clear_queue(self):
+        with self._io_lock:
+            self._clear_queue_unlocked()
+
+    def _clear_queue_unlocked(self):
         try:
             if self.channel is not None:
                 message_count = self.channel.queue_purge(
@@ -475,7 +493,7 @@ class Publisher:
                     extra={"task": self.task_name},
                 )
         except AMQPConnectionError:
-            self.connect(create_queue=self.create_queue)
+            self._connect_unlocked(create_queue=self.create_queue)
             raise
         except Exception:
             logger.exception(

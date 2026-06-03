@@ -95,7 +95,12 @@ def run_command_listener(module_name: str, Module: type[ModuleProtocol]):
                     publish_status(status)
                     orchestration_logger.info("Started %s", module_name)
                 else:
-                    orchestration_logger.warning("Module %s is already running", module_name)
+                    orchestration_logger.warning(
+                        "Module %s is already running; refreshing RUNNING status",
+                        module_name,
+                    )
+                    status = Status.RUNNING
+                    publish_status(status)
                     continue
             elif message.command in [SystemCommand.STOP, SystemCommand.EXIT]:
                 if module is not None:
