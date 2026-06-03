@@ -12,6 +12,7 @@ docker version >nul 2>&1 || (echo ERROR: Start Docker Desktop. & goto :fail)
 docker compose version >nul 2>&1 || (echo ERROR: Install Docker Desktop. & goto :fail)
 if not exist ".env" if exist "example.env" copy /Y example.env .env >nul
 findstr /B /C:"RESOURCE_DISK_THRESHOLD_PERCENT=" .env >nul 2>&1 || echo RESOURCE_DISK_THRESHOLD_PERCENT=100>>.env
+findstr /B /C:"HEARTHLIGHT_SKIP_SOURCE_PROBE_ON_START=" .env >nul 2>&1 || echo HEARTHLIGHT_SKIP_SOURCE_PROBE_ON_START=true>>.env
 if not exist "shared\configs\config.yaml" if exist "shared\configs\example_config.yaml" copy /Y shared\configs\example_config.yaml shared\configs\config.yaml >nul
 
 echo [1/6] Start database (Postgres must be up before init)...

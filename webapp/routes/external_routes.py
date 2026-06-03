@@ -274,6 +274,15 @@ MAX_UPLOAD_BYTES = int(os.environ.get("SOURCE_UPLOAD_MAX_BYTES", str(512 * 1024 
 SOURCE_PROBE_TIMEOUT_MS = max(
     250, int(os.environ.get("SOURCE_PROBE_TIMEOUT_MS", "5000"))
 )
+
+
+def should_skip_source_probe_on_start() -> bool:
+    """Allow /start when Docker cannot reach a remote URL during webapp-side OpenCV probe."""
+    return os.environ.get("HEARTHLIGHT_SKIP_SOURCE_PROBE_ON_START", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+    }
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS = float(
     os.environ.get("HEARTHLIGHT_LOCAL_WORKER_REQUEST_TIMEOUT_SECONDS", "5.0")
@@ -3117,7 +3126,7 @@ def build_runtime_cfg(db: Session, run_identifier: str):
                 upload_row.lifecycle_state if upload_row is not None else None
             ),
         )
-        if derived_error is None:
+        if derived_error is None and not should_skip_source_probe_on_start():
             if is_hybrid_local_cpu_runtime():
                 derived_error = probe_source_via_local_worker(
                     source_row.kind,
