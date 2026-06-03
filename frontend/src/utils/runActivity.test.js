@@ -33,9 +33,13 @@ describe('runActivity', () => {
 
   test('formatSourceFrameProgress shows waiting copy while running without counts', () => {
     expect(formatSourceFrameProgress(
-      { enabled: true, state: 'running', frames_processed: 0, capture_fps: 0 },
+      { enabled: true, state: 'running', frames_processed: null, capture_fps: 0 },
       { runActive: true },
     )).toMatch(/waiting for frames/i);
+    expect(formatSourceFrameProgress(
+      { enabled: true, state: 'running', frames_processed: 0, capture_fps: 0 },
+      { runActive: true },
+    )).toBe('0 frames processed');
   });
 
   test('getLiveRunHeadline reflects steady running state', () => {
