@@ -331,6 +331,7 @@ class FeatureExtractorThread(Thread):
         self.track_publisher = TrackPublisher()
         self.frame_info_publisher = FrameInfoPublisher()
         self.clear_queues_on_stop = False
+        self.last_track_summary_frame = -1
 
         self.pose = PoseDetector(cfg) if cfg.pose.enable else None
 
@@ -391,6 +392,16 @@ class FeatureExtractorThread(Thread):
             for frame, cam_tracks in zip(frame_list, tracks):
                 frame.tracks = cam_tracks
                 all_tracks.extend(cam_tracks)
+            if frame_id - self.last_track_summary_frame >= 30:
+                tracker_input_count = sum(len(cam_dets) for cam_dets in dets)
+                logger.info(
+                    "Tracker summary frame=%s tracker_inputs=%s tracks=%s",
+                    frame_id,
+                    tracker_input_count,
+                    len(all_tracks),
+                    extra={"task": self.name},
+                )
+                self.last_track_summary_frame = frame_id
 
             self.track_publisher.publish_frame(all_tracks, frame_id)
             self.frame_info_publisher.publish_frame(frames)

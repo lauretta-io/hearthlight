@@ -27,6 +27,13 @@ _YOLO_BAG_CLASS_IDS = {24, 26, 28}
 _YOLO_NMS_IOU_THRESHOLD = 0.45
 
 
+def _normalize_class_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
 def _model_zoo_detector_is_stub(model) -> bool:
     probe = np.zeros((480, 640, 3), dtype=np.uint8)
     try:
@@ -146,7 +153,9 @@ class RTDetrDetectorAdapter:
         tasks = get_tasks(cfg)
         classes = {i: clss for i, clss in cfg.rtdetr.names.items() if clss.upper() in tasks}
         self.conf_dict = {i: self.conf_thresh[classes[i]] for i in classes}
-        self.track_class_ids = set(cfg.tracking.classes.keys())
+        self.track_class_ids = {
+            _normalize_class_id(class_id) for class_id in cfg.tracking.classes.keys()
+        }
         self.model = OD(
             registration.get("artifact_ref") or cfg.rtdetr.model_name,
             runtime.get("backend", "trt"),
@@ -446,14 +455,16 @@ class Detector:
         clip_coords(output, frame.array.shape)
         allowed_tasks = self.camera_tasks.get(frame.cam_id, {Tasks.PERSON})
         track_classes = {
-            class_id: clss
+            normalized_class_id: clss
             for class_id, clss in self.cfg.rtdetr.names.items()
-            if clss.upper() in allowed_tasks and class_id in track_class_ids
+            if clss.upper() in allowed_tasks
+            and (normalized_class_id := _normalize_class_id(class_id)) in track_class_ids
         }
         detection_classes = {
-            class_id: clss
+            normalized_class_id: clss
             for class_id, clss in self.cfg.rtdetr.names.items()
-            if clss.upper() in allowed_tasks and class_id not in track_class_ids
+            if clss.upper() in allowed_tasks
+            and (normalized_class_id := _normalize_class_id(class_id)) not in track_class_ids
         }
         track_array = self.filter(output, track_classes)
         det_array = self.filter(output, detection_classes)
