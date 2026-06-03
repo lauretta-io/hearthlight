@@ -674,60 +674,59 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
               )
                 ? getPreviewUrl(source)
                 : null;
+              const showStop = runIsActive && source.enabled;
               return (
-              <div
-                key={source.id || source.label}
-                className={`monitor-source-row${previewUrl ? ' monitor-source-row--with-preview' : ''}`}
-              >
-                {previewUrl && (
-                  <div className="monitor-source-preview">
-                    <img
-                      className="monitor-source-preview__media"
-                      src={previewUrl}
-                      alt={`${source.label} preview`}
-                    />
-                  </div>
-                )}
-                <div>
-                  <strong>{source.label}</strong>
-                  <div className="monitor-muted">{normalizeSourceKindLabel(source.kind)} · {describeFrameProcessing(source)}</div>
-                  <div className="monitor-muted">
-                    {describeEffectiveBinding('detector', source.detector_model_key)} · {describeEffectiveBinding('tracker', source.tracker_model_key)} · {describeEffectiveBinding('anomaly_stage_1', source.anomaly_stage_1_model_key)} · {describeEffectiveBinding('anomaly_stage_2', source.anomaly_stage_2_model_key)}
-                  </div>
-                  {frameProgressText && (
-                    <div className="monitor-source-frames">{frameProgressText}</div>
-                  )}
-                  {(source.capture_fps || source.processed_fps) && (
-                    <div className="monitor-muted">
-                      Capture {source.capture_fps || 'n/a'} FPS · Processed {source.processed_fps || 'n/a'} FPS · Skipped {source.skipped_frames || 0}
+                <article key={source.id || source.label} className="monitor-source-card">
+                  {previewUrl && (
+                    <div className="monitor-source-card__preview">
+                      <img
+                        className="monitor-source-card__preview-media"
+                        src={previewUrl}
+                        alt={`${source.label} preview`}
+                      />
                     </div>
                   )}
-                </div>
-                <div className="monitor-source-meta">
-                  <span className={`monitor-pill monitor-pill-${source.state}`}>{source.state}</span>
-                  {(() => {
-                    const runIsActive = isSystemRunActive(overview);
-                    const showStop = runIsActive && source.enabled;
-                    return (
-                      <button
-                        type="button"
-                        className={showStop ? 'stop-button' : 'start-button'}
-                        disabled={busySourceId === source.id}
-                        onClick={() => (
-                          showStop
-                            ? updateSourceEnabledState(source.id, false)
-                            : handleSourceRunAction(source)
-                        )}
-                      >
-                        {busySourceId === source.id || source.state === 'initializing'
-                          ? (showStop ? 'Stopping...' : 'Starting run...')
-                          : (showStop ? 'Stop Source' : 'Start Run')}
-                      </button>
-                    );
-                  })()}
-                </div>
-              </div>
-            );
+                  <div className="monitor-source-card__header">
+                    <div className="monitor-source-card__title">
+                      <h4>{source.label}</h4>
+                      <p className="monitor-muted">
+                        {normalizeSourceKindLabel(source.kind)} · {describeFrameProcessing(source)}
+                      </p>
+                    </div>
+                    <span className={`monitor-pill monitor-pill-${source.state}`}>{source.state}</span>
+                  </div>
+                  <ul className="monitor-source-card__bindings">
+                    <li>{describeEffectiveBinding('detector', source.detector_model_key)}</li>
+                    <li>{describeEffectiveBinding('tracker', source.tracker_model_key)}</li>
+                    <li>{describeEffectiveBinding('anomaly_stage_1', source.anomaly_stage_1_model_key)}</li>
+                    <li>{describeEffectiveBinding('anomaly_stage_2', source.anomaly_stage_2_model_key)}</li>
+                  </ul>
+                  {frameProgressText && (
+                    <div className="monitor-source-card__frames">{frameProgressText}</div>
+                  )}
+                  {(source.capture_fps || source.processed_fps) && (
+                    <p className="monitor-muted monitor-source-card__metrics">
+                      Capture {source.capture_fps || 'n/a'} FPS · Processed {source.processed_fps || 'n/a'} FPS · Skipped {source.skipped_frames || 0}
+                    </p>
+                  )}
+                  <div className="monitor-source-card__actions">
+                    <button
+                      type="button"
+                      className={showStop ? 'stop-button' : 'start-button'}
+                      disabled={busySourceId === source.id}
+                      onClick={() => (
+                        showStop
+                          ? updateSourceEnabledState(source.id, false)
+                          : handleSourceRunAction(source)
+                      )}
+                    >
+                      {busySourceId === source.id || source.state === 'initializing'
+                        ? (showStop ? 'Stopping...' : 'Starting run...')
+                        : (showStop ? 'Stop Source' : 'Start Run')}
+                    </button>
+                  </div>
+                </article>
+              );
             })}
           </div>
         </div>

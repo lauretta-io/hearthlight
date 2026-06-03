@@ -1,6 +1,7 @@
 import {
   RUN_STARTED_EVENT,
   applyOptimisticRunOverview,
+  isStartBlockedMessage,
 } from './runLifecycle';
 
 describe('runLifecycle', () => {
@@ -28,5 +29,10 @@ describe('runLifecycle', () => {
     window.removeEventListener(RUN_STARTED_EVENT, handler);
     expect(handler).toHaveBeenCalledTimes(1);
     expect(handler.mock.calls[0][0].detail.run_id).toBe('run-abc');
+  });
+
+  test('isStartBlockedMessage detects active-run conflicts', () => {
+    expect(isStartBlockedMessage('system is already starting or running')).toBe(true);
+    expect(isStartBlockedMessage('disk admission failed')).toBe(false);
   });
 });

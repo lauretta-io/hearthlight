@@ -19,7 +19,6 @@
 
 .monitor-header,
 .monitor-panel-header,
-.monitor-source-row,
 .monitor-data-row,
 .monitor-event-row,
 .monitor-endpoint-row,
@@ -148,36 +147,78 @@
   color: var(--color-success-text);
 }
 
-.monitor-stack .monitor-source-row.monitor-source-row--with-preview {
-  display: grid;
-  grid-template-columns: minmax(180px, 240px) minmax(0, 1fr) auto;
-  gap: 16px;
-  align-items: start;
-  justify-content: stretch;
+.monitor-source-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  border: 1px solid var(--color-border);
+  border-radius: 10px;
+  padding: 16px;
+  background: var(--color-bg-elevated);
 }
 
-.monitor-source-preview {
+.monitor-source-card__preview {
   border-radius: 10px;
   overflow: hidden;
   background: #111;
-  min-height: 135px;
 }
 
-.monitor-source-preview__media {
+.monitor-source-card__preview-media {
   display: block;
   width: 100%;
-  height: 135px;
+  max-height: 220px;
   object-fit: cover;
   background: #111;
 }
 
-.monitor-source-frames {
-  margin-top: 6px;
+.monitor-source-card__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.monitor-source-card__title h4 {
+  margin: 0 0 6px;
+  font-size: 1.05rem;
+}
+
+.monitor-source-card__title p {
+  margin: 0;
+}
+
+.monitor-source-card__bindings {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--color-text-muted);
+  font-size: 0.92rem;
+}
+
+.monitor-source-card__frames {
   font-weight: 600;
   color: var(--color-text);
 }
 
-.monitor-source-row,
+.monitor-source-card__metrics {
+  margin: 0;
+}
+
+.monitor-source-card__actions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.monitor-source-card__actions .start-button,
+.monitor-source-card__actions .stop-button {
+  min-width: 148px;
+}
+
 .monitor-data-row,
 .monitor-event-row,
 .monitor-endpoint-row,
@@ -188,7 +229,6 @@
   background: var(--color-bg-elevated);
 }
 
-.monitor-source-meta,
 .monitor-data-meta {
   display: flex;
   align-items: center;

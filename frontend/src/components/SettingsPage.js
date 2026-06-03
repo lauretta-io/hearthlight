@@ -19,6 +19,7 @@ import { THEME_GROUP_LABELS, getThemeOption } from '../theme';
 import {
   SOURCES_UPDATED_EVENT,
   dispatchRunStarted,
+  isStartBlockedMessage,
 } from '../utils/runLifecycle';
 import '../styles/CameraConfig.css';
 
@@ -1678,25 +1679,35 @@ const SettingsPage = ({
       let bannerText = 'Source settings saved.';
       if (hasEnabledSource) {
         try {
-          const statusResponse = await fetchWithTimeout(`${BaseURL}/status`, {}, 15000);
-          const statusPayload = await parseApiJson(statusResponse, 'Failed to read system status');
-          if (statusPayload.status === 'idle' && !statusPayload.run_id) {
-            const startPayload = await fetchJson(
-              `${BaseURL}/start`,
-              { method: 'POST', headers: { 'Content-Type': 'application/json' } },
-              'Failed to start run after saving sources',
-              120000,
-            );
-            dispatchRunStarted(startPayload?.run_id);
-            bannerText = 'Source settings saved. Run is starting — open Monitor Run to watch progress.';
-          }
+          const startPayload = await fetchJson(
+            `${BaseURL}/start`,
+            { method: 'POST', headers: { 'Content-Type': 'application/json' } },
+            'Failed to start run after saving sources',
+            120000,
+          );
+          dispatchRunStarted(startPayload?.run_id);
+          bannerText = 'Source settings saved. Run is starting — open Monitor Run to watch progress.';
         } catch (startError) {
-          setBanner({
-            kind: 'error',
-            text: formatApiError(startError, 'Sources saved, but the run could not start.'),
-          });
-          window.dispatchEvent(new CustomEvent(SOURCES_UPDATED_EVENT));
-          return;
+          const startErrorText = formatApiError(startError, 'Failed to start run after saving sources');
+          if (isStartBlockedMessage(startErrorText)) {
+            try {
+              const statusResponse = await fetchWithTimeout(`${BaseURL}/status`, {}, 15000);
+              const statusPayload = await parseApiJson(statusResponse, 'Failed to read system status');
+              if (statusPayload.run_id) {
+                dispatchRunStarted(statusPayload.run_id);
+              }
+            } catch (_statusError) {
+              // Keep the generic already-running banner below.
+            }
+            bannerText = 'Source settings saved. A run is already active — open Monitor Run to check status.';
+          } else {
+            setBanner({
+              kind: 'error',
+              text: `Sources saved, but the run could not start. ${startErrorText}`,
+            });
+            window.dispatchEvent(new CustomEvent(SOURCES_UPDATED_EVENT));
+            return;
+          }
         }
       }
       setBanner({ kind: 'success', text: bannerText });
@@ -4290,7 +4301,7 @@ const SettingsPage = ({
                   <div className="muted-text">1. Fill `.env` and `shared/configs/config.yaml` if they do not exist.</div>
                   <div className="muted-text">2. Run `python3 scripts/container_preflight.py`.</div>
                   <div className="muted-text">3. Run the generated launcher command from the repository root.</div>
-                  <div className="muted-text">4. Save sources and model bindings here before pressing Start in the Run tab.</div>
+                  <div className="muted-text">4. Save sources here — an enabled source starts the run automatically. Use Monitor Run only if you need to stop or restart manually.</div>
                 </div>
               </div>
             </div>

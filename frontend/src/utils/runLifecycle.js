@@ -7,6 +7,10 @@ export const dispatchRunStarted = (runId) => {
   }));
 };
 
+export const isStartBlockedMessage = (message) => (
+  /already starting|already running|system is already/i.test(message || '')
+);
+
 export const applyOptimisticRunOverview = (overview, runId) => {
   if (!overview) {
     return {
