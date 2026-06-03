@@ -395,10 +395,7 @@ class FeatureExtractorThread(Thread):
             if frame_id - self.last_track_summary_frame >= 30:
                 tracker_input_count = sum(len(cam_dets) for cam_dets in dets)
                 logger.info(
-                    "Tracker summary frame=%s tracker_inputs=%s tracks=%s",
-                    frame_id,
-                    tracker_input_count,
-                    len(all_tracks),
+                    f"Tracker summary frame={frame_id} tracker_inputs={tracker_input_count} tracks={len(all_tracks)}",
                     extra={"task": self.name},
                 )
                 self.last_track_summary_frame = frame_id

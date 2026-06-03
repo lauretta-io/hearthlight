@@ -78,6 +78,20 @@ MODEL_RESULT_LOG_PRUNE_INTERVAL = int(
 )
 
 
+def _normalize_source_id(value):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return value
+
+
+def _row_source_ids(row) -> list:
+    source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
+    if not source_ids and row.source_template_id is not None:
+        source_ids = [row.source_template_id]
+    return [_normalize_source_id(source_id) for source_id in source_ids]
+
+
 class DatabaseWorker:
     run_id = None
 
@@ -468,11 +482,9 @@ class DatabaseWorker:
             .all()
         )
         matched_rows = []
+        normalized_source_id = _normalize_source_id(source_id)
         for row in rows:
-            source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
-            if not source_ids and row.source_template_id is not None:
-                source_ids = [row.source_template_id]
-            if source_id in source_ids:
+            if normalized_source_id in _row_source_ids(row):
                 matched_rows.append(row)
         return matched_rows
 
@@ -485,13 +497,11 @@ class DatabaseWorker:
             .all()
         )
         if source_id is None:
-            return [row for row in rows if not parse_serialized_json(getattr(row, "source_ids_json", None), [])]
+            return [row for row in rows if not _row_source_ids(row)]
         matched_rows = []
+        normalized_source_id = _normalize_source_id(source_id)
         for row in rows:
-            source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
-            if not source_ids and row.source_template_id is not None:
-                source_ids = [row.source_template_id]
-            if source_id in source_ids:
+            if normalized_source_id in _row_source_ids(row):
                 matched_rows.append(row)
         return matched_rows
 
@@ -528,11 +538,9 @@ class DatabaseWorker:
         )
         target_ids: list[int] = []
         seen: set[int] = set()
+        normalized_source_id = _normalize_source_id(source_id)
         for row in rows:
-            source_ids = parse_serialized_json(getattr(row, "source_ids_json", None), [])
-            if not source_ids and row.source_template_id is not None:
-                source_ids = [row.source_template_id]
-            if source_id not in source_ids:
+            if normalized_source_id not in _row_source_ids(row):
                 continue
             for target_id in parse_serialized_json(getattr(row, "delivery_target_ids_json", None), []):
                 target_id = int(target_id)
@@ -845,6 +853,9 @@ class DatabaseWorker:
     def maybe_create_detector_alerts(self, track: DataModels.TrackInstance):
         source_id = self.get_source_template_id_for_camera(track.cam_id)
         if source_id is None:
+            logger.warning(
+                f"Skipping detector alert evaluation for camera {track.cam_id} because no source mapping exists",
+            )
             return
         confidence = track.confidence
         if confidence is None:
@@ -860,6 +871,9 @@ class DatabaseWorker:
             signal_family=ALERT_SIGNAL_FAMILY_DETECTOR,
         )
         if not rules:
+            logger.info(
+                f"No enabled detector alert rules matched source_id={source_id} target={matched_target}",
+            )
             return
         model_keys = self.resolve_model_keys_for_source(source_id)
         for rule in rules:
