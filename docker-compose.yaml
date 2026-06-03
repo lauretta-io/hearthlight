@@ -196,6 +196,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      reid:
+        condition: service_started
       ingestor:
         condition: service_started
     env_file:
@@ -215,6 +217,38 @@ services:
         python -um src.association.main
       fi'
 
+  reid:
+    image: ${HEARTHLIGHT_REID_IMAGE:-hearthlight-reid:latest}
+    pull_policy: never
+    build: ./reid
+    networks:
+      - mynetwork
+    volumes:
+      - ./shared:/app/src/shared
+      - ./reid:/app/src/reid
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+      ingestor:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      PYTHONPATH: /app/src
+      RELOAD: ${RELOAD:-}
+      <<: *nvidia-env
+    restart: unless-stopped
+    command: |
+      bash -c '
+      until nc -z rabbitmq 15672; do
+        sleep 1;
+      done;
+      if [ ! -z "$$RELOAD" ]; then
+        hupper -m src.reid.main
+      else
+        python -um src.reid.main
+      fi'
+
   anomaly:
     image: ${HEARTHLIGHT_ANOMALY_IMAGE:-hearthlight-anomaly:latest}
     pull_policy: never
@@ -227,6 +261,8 @@ services:
     depends_on:
       rabbitmq:
         condition: service_healthy
+      reid:
+        condition: service_started
     env_file:
       - .env
     environment:

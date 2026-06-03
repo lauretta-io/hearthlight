@@ -1,4 +1,5 @@
 import unittest
+import queue
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -42,6 +43,34 @@ class RunReconciliationTests(unittest.TestCase):
         with patch.object(external_routes, "status", external_routes.SystemStatus.IDLE):
             state = external_routes.derive_source_state(source_row, None, snapshot)
         self.assertEqual(state, "running")
+
+    def test_info_heartbeat_updates_frames_without_replacing_module_lifecycle(self):
+        external_routes.module_status[external_routes.ModuleNames.INGESTOR] = (
+            external_routes.DataModels.Status.RUNNING
+        )
+        external_routes.frame_id = None
+        status_queue = queue.Queue()
+        status_queue.put(
+            external_routes.DataModels.StatusMessage(
+                status=external_routes.DataModels.Status.INFO,
+                module=external_routes.ModuleNames.INGESTOR,
+                extra={
+                    "frame_id": 429,
+                    "total_frames": 1000,
+                    "queue_depths": {"frames_thread": 9},
+                },
+            )
+        )
+        consumer = SimpleNamespace(queue=status_queue)
+
+        with patch.object(external_routes, "get_status_consumer", return_value=consumer):
+            external_routes.process_messages()
+
+        self.assertEqual(external_routes.frame_id, 429)
+        self.assertEqual(
+            external_routes.module_status[external_routes.ModuleNames.INGESTOR],
+            external_routes.DataModels.Status.RUNNING,
+        )
 
 
 if __name__ == "__main__":

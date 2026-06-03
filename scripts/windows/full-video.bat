@@ -20,13 +20,13 @@ docker compose up -d db || goto :fail
 call :wait_for_db || goto :fail
 
 echo [2/6] Build images...
-docker compose build rabbitmq webapp ingestor association anomaly || goto :fail
+docker compose build rabbitmq webapp ingestor reid association anomaly || goto :fail
 
 echo [3/6] Initialize database (run before webapp / workers)...
 docker compose run --rm reset_db || goto :fail
 
 echo [4/6] Start stack...
-docker compose up -d db rabbitmq webapp reverse_proxy ingestor association anomaly || goto :fail
+docker compose up -d db rabbitmq webapp reverse_proxy ingestor reid association anomaly || goto :fail
 
 echo [5/6] Status...
 docker compose ps

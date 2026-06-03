@@ -652,6 +652,15 @@ module_metrics = {}
 module_runtime_details = {}
 run_id = None
 
+MODULE_LIFECYCLE_STATUSES = {
+    DataModels.Status.IDLE,
+    DataModels.Status.INITIALIZED,
+    DataModels.Status.RUNNING,
+    DataModels.Status.ERROR,
+    DataModels.Status.STOPPED,
+    DataModels.Status.EXIT,
+}
+
 
 def get_default_module_status():
     return {
@@ -3366,7 +3375,8 @@ def process_messages():
                         dict(extra)
                     )
         if message.module in module_status:
-            module_status[message.module] = message.status
+            if message.status in MODULE_LIFECYCLE_STATUSES:
+                module_status[message.module] = message.status
         elif message.module not in get_auxiliary_status_module_names():
             logger.warning("Received status update for unknown module %s", message.module)
 
