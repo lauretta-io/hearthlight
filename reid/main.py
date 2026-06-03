@@ -145,6 +145,7 @@ class ReID(Thread):
             self.output_thread = OutputThread(cfg)
             self.status_publisher = status_publisher
             self.save_features = bool(cfg.output.features.save_features)
+            self.clear_queues_on_stop = False
         except Exception:
             logger.exception("Failed to initialize", extra={"task": self.name})
             raise
@@ -302,9 +303,9 @@ class ReID(Thread):
 
             timer.loop()
 
-        self.consumer.stop()
-        self.poi_manager.consumer.stop()
-        self.output_thread.stop()
+        self.consumer.stop(clear_queues=self.clear_queues_on_stop)
+        self.poi_manager.consumer.stop(clear_queues=self.clear_queues_on_stop)
+        self.output_thread.stop(clear_queues=self.clear_queues_on_stop)
         self.consumer.join()
         self.poi_manager.consumer.join()
         self.output_thread.join()
@@ -317,6 +318,7 @@ class ReID(Thread):
 
     def stop(self):
         logger.info("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = True
         self.process = False
 
 

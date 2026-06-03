@@ -35,6 +35,7 @@ class OutputThread(Thread):
             ]
         ]()
         self.database_thread = DatabaseThread()
+        self.clear_queues_on_stop = False
         self.rabbit_thread = RabbitThread()
         cameras = DatabaseWorker.get_cameras()
         self.zone_manager = ZoneManager(cameras, cfg.passenger_zones)
@@ -110,7 +111,7 @@ class OutputThread(Thread):
                 (tracks, id_updates, poi_results, new_nodes, finished_nodes, loitering_incidents)
             )
 
-        self.rabbit_thread.stop()
+        self.rabbit_thread.stop(clear_queues=self.clear_queues_on_stop)
         self.database_thread.stop()
         if self.save_features:
             self.feature_save_thread.stop()
@@ -121,8 +122,9 @@ class OutputThread(Thread):
 
         logger.info("Stopped", extra={"task": self.name})
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
         logger.info("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = clear_queues
         self.process = False
 
 
@@ -140,6 +142,7 @@ class RabbitThread(Thread):
         self.person_publisher = PersonPublisher()
         self.bag_publisher = BagPublisher()
         self.process = False
+        self.clear_queues_on_stop = False
 
     def run(self):
         logger.debug("Starting", extra={"task": self.name})
@@ -168,13 +171,14 @@ class RabbitThread(Thread):
                 bag_tracks, bag_id_updates, frame_info.frame_id
             )
 
-        self.person_publisher.close(clear_queue=True)
-        self.bag_publisher.close(clear_queue=True)
+        self.person_publisher.close(clear_queue=self.clear_queues_on_stop)
+        self.bag_publisher.close(clear_queue=self.clear_queues_on_stop)
 
         logger.debug("Stopped", extra={"task": self.name})
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
         logger.debug("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = clear_queues
         self.process = False
 
 

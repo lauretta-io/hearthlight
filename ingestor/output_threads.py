@@ -109,6 +109,7 @@ class OutputThread(Thread):
         }
 
         self.threads = {}
+        self.clear_queues_on_stop = False
 
         cfg_tasks = get_tasks(cfg)
         self.tasks = {Tasks.PERSON}
@@ -152,7 +153,10 @@ class OutputThread(Thread):
                     self.frames_dropped += 1
 
         for _, thread in self.threads.items():
-            thread.stop()
+            try:
+                thread.stop(clear_queues=self.clear_queues_on_stop)
+            except TypeError:
+                thread.stop()
         for _, thread in self.threads.items():
             thread.join()
         logger.debug("Stopped", extra={"task": self.name})
@@ -193,8 +197,9 @@ class OutputThread(Thread):
             metrics["annotated_worker_frames_dropped"] = writer.get_total_dropped_frames()
         return metrics
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
         logger.debug("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = clear_queues
         self.process = False
 
 
@@ -325,6 +330,7 @@ class FeatureExtractorThread(Thread):
         self.feature_extractor = FeatureExtractor(cfg.feature_extractor)
         self.track_publisher = TrackPublisher()
         self.frame_info_publisher = FrameInfoPublisher()
+        self.clear_queues_on_stop = False
 
         self.pose = PoseDetector(cfg) if cfg.pose.enable else None
 
@@ -392,12 +398,13 @@ class FeatureExtractorThread(Thread):
 
             timer.loop()
 
-        self.track_publisher.close(clear_queue=True)
-        self.frame_info_publisher.close(clear_queue=True)
+        self.track_publisher.close(clear_queue=self.clear_queues_on_stop)
+        self.frame_info_publisher.close(clear_queue=self.clear_queues_on_stop)
         logger.debug("Stopped", extra={"task": self.name})
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
         logger.debug("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = clear_queues
         self.process = False
 
 
@@ -412,6 +419,7 @@ class GunThread(Thread):
         self.task_cams = [
             camera.cam_id for camera in cameras if Tasks.GUN in camera.tasks
         ]
+        self.clear_queues_on_stop = False
         logger.debug("Initialized", extra={"task": self.name})
 
     def run(self):
@@ -439,11 +447,12 @@ class GunThread(Thread):
 
             timer.loop()
 
-        self.publisher.close(clear_queue=True)
+        self.publisher.close(clear_queue=self.clear_queues_on_stop)
         logger.debug("Stopped", extra={"task": self.name})
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
         logger.debug("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = clear_queues
         self.process = False
 
 
@@ -587,6 +596,7 @@ class AnnotationWriter(Thread):
         self.label_clss = cfg.output.visualize.labels.clss
 
         self.consumer = get_annotation_message_consumer()
+        self.clear_queues_on_stop = False
 
         self.write = cfg.output.video.save_annotated
         if self.write:
@@ -667,7 +677,7 @@ class AnnotationWriter(Thread):
 
             self.show_and_write(frames, reid_message)
 
-        self.consumer.stop(clear_queues=True)
+        self.consumer.stop(clear_queues=self.clear_queues_on_stop)
         self.consumer.join()
         if self.show:
             try:
@@ -822,6 +832,7 @@ class AnnotationWriter(Thread):
             return 0
         return sum(getattr(worker, "frames_dropped", 0) for worker in self.workers.values())
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
         logger.debug("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = clear_queues
         self.process = False

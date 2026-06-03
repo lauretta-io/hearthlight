@@ -49,6 +49,7 @@ class Anomaly(Thread):
             self.consumer = get_anomaly_message_consumer()
             self.output_thread = OutputThread()
             self.status_publisher = status_publisher
+            self.clear_queues_on_stop = False
             self.run_identifier = getattr(cfg, "run_id", None)
             if self.run_identifier:
                 DatabaseWorker.set_run_id(self.run_identifier)
@@ -292,13 +293,14 @@ class Anomaly(Thread):
                 last_metrics_update = current_time
             timer.loop()
 
-        self.consumer.stop()
-        self.output_thread.stop()
+        self.consumer.stop(clear_queues=self.clear_queues_on_stop)
+        self.output_thread.stop(clear_queues=self.clear_queues_on_stop)
         self.consumer.join()
         self.output_thread.join()
         logger.info("Stopped", extra={"task": self.name})
 
     def stop(self):
+        self.clear_queues_on_stop = True
         self.process = False
 
 

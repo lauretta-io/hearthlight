@@ -19,6 +19,7 @@ class OutputThread(Thread):
         self.queue = queue.Queue[tuple[int, list[AnomalyEvent]]]()
         self.rabbit_thread = RabbitThread()
         self.database_thread = DatabaseThread()
+        self.clear_queues_on_stop = False
 
     def run(self):
         self.process = True
@@ -32,12 +33,13 @@ class OutputThread(Thread):
             self.rabbit_thread.queue.put((frame_id, events))
             self.database_thread.queue.put(events)
 
-        self.rabbit_thread.stop()
+        self.rabbit_thread.stop(clear_queues=self.clear_queues_on_stop)
         self.database_thread.stop()
         self.rabbit_thread.join()
         self.database_thread.join()
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
+        self.clear_queues_on_stop = clear_queues
         self.process = False
 
 
@@ -47,6 +49,7 @@ class RabbitThread(Thread):
         self.process = False
         self.queue = queue.Queue[tuple[int, list[AnomalyEvent]]]()
         self.publisher = AnomalyPublisher()
+        self.clear_queues_on_stop = False
 
     def run(self):
         self.process = True
@@ -56,9 +59,10 @@ class RabbitThread(Thread):
             except queue.Empty:
                 continue
             self.publisher.publish_events(AnomalyEvents(frame_id=frame_id, events=events))
-        self.publisher.close(clear_queue=True)
+        self.publisher.close(clear_queue=self.clear_queues_on_stop)
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
+        self.clear_queues_on_stop = clear_queues
         self.process = False
 
 
@@ -80,4 +84,3 @@ class DatabaseThread(Thread):
 
     def stop(self):
         self.process = False
-

@@ -125,6 +125,7 @@ class Ingestor(Thread):
                 thread_name_prefix="IngestorDetector",
             )
             self.detector_disabled = False
+            self.clear_queues_on_stop = False
         except Exception:
             logger.exception("Failed to initialize", extra={"task": self.name})
             raise
@@ -478,7 +479,7 @@ class Ingestor(Thread):
 
         self.frames_thread.stop()
         self.capture.stop()
-        self.output_thread.stop()
+        self.output_thread.stop(clear_queues=self.clear_queues_on_stop)
         self.frames_thread.join()
         self.capture.join()
         self.output_thread.join()
@@ -494,6 +495,7 @@ class Ingestor(Thread):
 
     def stop(self):
         logger.debug("Stopping", extra={"task": self.name})
+        self.clear_queues_on_stop = True
         self.process = False
 
 
