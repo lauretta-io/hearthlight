@@ -613,7 +613,13 @@ class AnnotationWriter(Thread):
             }
             # self.zone_illustrator = ZoneAssigner(cfg.input, cfg.camera_reid_zones)
 
-        self.show = cfg.output.visualize.show_vid
+        self.show = bool(cfg.output.visualize.show_vid)
+        if self.show and not os.environ.get("DISPLAY"):
+            logger.warning(
+                "Local video display requested but DISPLAY is not set; disabling preview windows",
+                extra={"task": self.name},
+            )
+            self.show = False
         if self.show:
             self.mosaic = cfg.output.visualize.mosaic
             self.rows, self.cols, self.size, empty = self.get_grid(cfg)

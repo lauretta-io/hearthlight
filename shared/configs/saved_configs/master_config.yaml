@@ -100,7 +100,7 @@ output:
     annotated_path: ${output.output_dir}/annotated/
     anomaly_path: ${output.output_dir}/anomaly/
   visualize:
-    show_vid: true
+    show_vid: false
     mosaic: true
     max_height: 1000
     max_width: 1920
