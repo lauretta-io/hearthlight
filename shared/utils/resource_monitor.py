@@ -190,9 +190,12 @@ def evaluate_admission(
     ]
     for metric_name, current, limit in metric_checks:
         if current is not None and limit is not None and current >= limit:
+            reason = f"{metric_name} {current:.1f}% exceeds threshold {limit:.1f}%"
+            if metric_name == "disk_percent" and snapshot.get("disk_path"):
+                reason = f"{reason} (volume: {snapshot['disk_path']})"
             return {
                 "allowed": False,
-                "reason": f"{metric_name} exceeds threshold",
+                "reason": reason,
                 "thresholds": limits,
             }
 

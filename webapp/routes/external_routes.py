@@ -903,11 +903,13 @@ def build_live_resource_snapshot(db: Session) -> dict:
     source_rows = get_active_source_rows(db)
     enabled_source_rows = [row for row in source_rows if row.enabled]
     registry_bundle = load_registry_bundle()
+    upload_dir = get_upload_dir()
     snapshot = collect_resource_snapshot(
         module_status.copy(),
-        disk_path=get_upload_dir(),
+        disk_path=upload_dir,
         output_paths=get_runtime_output_paths(),
     )
+    snapshot["disk_path"] = str(upload_dir)
     snapshot["drift"] = build_resource_drift(
         snapshot,
         get_previous_resource_snapshot(db),
