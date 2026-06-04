@@ -5215,7 +5215,7 @@ def get_monitoring_overview(
     )
 
 
-@external_router.get("/feeds/incidents", response_model=list[AlgorithmIncidentFeedItem])
+@external_router.get("/feeds/incidents")
 def get_incident_feed(
     db: Session = Depends(get_db),
     run_identifier: str | None = None,
@@ -5223,10 +5223,11 @@ def get_incident_feed(
 ):
     refresh_runtime_status()
     selected_run = get_run_row(db, run_identifier)
-    return build_incident_feed_items(db, selected_run, limit=limit)
+    items = build_incident_feed_items(db, selected_run, limit=limit)
+    return {"value": items, "Count": len(items)}
 
 
-@external_router.get("/feeds/entities", response_model=list[AlgorithmEntityFeedItem])
+@external_router.get("/feeds/entities")
 def get_entity_feed(
     db: Session = Depends(get_db),
     run_identifier: str | None = None,
@@ -5234,7 +5235,8 @@ def get_entity_feed(
 ):
     refresh_runtime_status()
     selected_run = get_run_row(db, run_identifier)
-    return build_entity_feed_items(db, selected_run, limit=limit)
+    items = build_entity_feed_items(db, selected_run, limit=limit)
+    return {"value": items, "Count": len(items)}
 
 
 @external_router.get("/feeds/algorithm", response_model=AlgorithmFeed)
