@@ -69,6 +69,8 @@
 
 .incident-level {
   flex: 0 0 auto;
+  min-width: 52px;
+  text-align: center;
   padding: 4px 9px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--color-brand-secondary) 16%, transparent);
@@ -77,6 +79,10 @@
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-size: 11px;
+}
+
+.incident-level-empty {
+  visibility: hidden;
 }
 
 .card.resolved {

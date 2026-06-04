@@ -39,7 +39,7 @@ const IncidentCard = ({ incident, role }) => {
         )}
         <span className="incident-cell incident-time">{formatDateTime(incident.incident_time)}</span>
         <span className="incident-cell incident-camera">Camera {incident.location.camera_id}</span>
-        {incident.alert_level && <span className="incident-cell incident-level">{incident.alert_level}</span>}
+        <span className={`incident-cell incident-level${!incident.alert_level ? ' incident-level-empty' : ''}`}>{incident.alert_level}</span>
         {role && <span className="incident-cell incident-role">{role}</span>}
         <span className="incident-cell incident-id">{incident.incident_id}</span>
       </div>
