@@ -1701,42 +1701,10 @@ const SettingsPage = ({
       setSources(hydratedSources);
       await reloadModelRegistryState();
       await reloadAlertRuleState({ sourcesSnapshot: data });
-      const hasEnabledSource = hydratedSources.some((source) => source.enabled);
-      let bannerText = 'Source settings saved.';
-      if (hasEnabledSource) {
-        try {
-          const startPayload = await fetchJson(
-            `${BaseURL}/start`,
-            { method: 'POST', headers: { 'Content-Type': 'application/json' } },
-            'Failed to start run after saving sources',
-            120000,
-          );
-          dispatchRunStarted(startPayload?.run_id);
-          bannerText = 'Source settings saved. Run is starting — open Monitor Run to watch progress.';
-        } catch (startError) {
-          const startErrorText = formatApiError(startError, 'Failed to start run after saving sources');
-          if (isStartBlockedMessage(startErrorText)) {
-            try {
-              const statusResponse = await fetchWithTimeout(`${BaseURL}/status`, {}, 15000);
-              const statusPayload = await parseApiJson(statusResponse, 'Failed to read system status');
-              if (statusPayload.run_id) {
-                dispatchRunStarted(statusPayload.run_id);
-              }
-            } catch (_statusError) {
-              // Keep the generic already-running banner below.
-            }
-            bannerText = 'Source settings saved. A run is already active — open Monitor Run to check status.';
-          } else {
-            setBanner({
-              kind: 'error',
-              text: `Sources saved, but the run could not start. ${startErrorText}`,
-            });
-            window.dispatchEvent(new CustomEvent(SOURCES_UPDATED_EVENT));
-            return;
-          }
-        }
-      }
-      setBanner({ kind: 'success', text: bannerText });
+      setBanner({
+        kind: 'success',
+        text: 'Source settings saved. Next: configure Rules (alert + anomaly triggers), then start a run from Run / Monitor Run.',
+      });
       window.dispatchEvent(new CustomEvent(SOURCES_UPDATED_EVENT));
     } catch (error) {
       setBanner({ kind: 'error', text: formatApiError(error, 'Failed to save source settings.') });

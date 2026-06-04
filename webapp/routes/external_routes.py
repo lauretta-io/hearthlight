@@ -287,7 +287,9 @@ def should_skip_source_probe_on_start() -> bool:
 
 def should_auto_start_on_source_save() -> bool:
     """Start (or resume) the pipeline after Sources are saved when at least one source is enabled."""
-    return os.environ.get("HEARTHLIGHT_AUTO_START_ON_SOURCE_SAVE", "true").strip().lower() not in {
+    # Default to *not* auto-starting so operators can configure rules/prompts/models
+    # before launching a run. Auto-start remains available for kiosk/demo flows.
+    return os.environ.get("HEARTHLIGHT_AUTO_START_ON_SOURCE_SAVE", "false").strip().lower() not in {
         "0",
         "false",
         "no",
