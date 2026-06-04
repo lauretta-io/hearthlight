@@ -202,8 +202,10 @@ class Consumer(Thread, Generic[M]):
         finally:
             self.connection = None
 
-    def stop(self):
+    def stop(self, clear_queues: bool = False):
         self.logger.info(f"Stopping {self.name}", extra={"task": self.task_name})
+        if clear_queues:
+            self.clear_queue()
         self.process = False
 
     @with_exponential_backoff(max_tries=RABBIT_MAX_TRIES, max_delay=1.0)
