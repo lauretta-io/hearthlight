@@ -231,7 +231,7 @@ class FeatureSaveThread(Thread):
         self.queue = queue.Queue[list[np.ndarray]]()
         self.directory = cfg.output.features.feature_dir
         self.save_count = 1
-        os.makedirs(self.directory)
+        os.makedirs(self.directory, exist_ok=True)
 
     def run(self):
         logger.debug("Starting", extra={"task": self.name})

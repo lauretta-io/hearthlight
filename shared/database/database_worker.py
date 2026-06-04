@@ -1027,6 +1027,8 @@ class DatabaseWorker:
         self._maybe_reset_for_run()
 
     def create_bag(self, id: int):
+        if self.get(SQLModels.Bag, id):
+            return
         bag = SQLModels.Bag(id=id, run_id=DatabaseWorker.run_id)
         self.create(bag)
 
@@ -1050,6 +1052,8 @@ class DatabaseWorker:
         self.create(bag_instance)
 
     def create_person(self, id: int):
+        if self.get(SQLModels.Person, id):
+            return
         person = SQLModels.Person(
             id=id,
             run_id=DatabaseWorker.run_id,

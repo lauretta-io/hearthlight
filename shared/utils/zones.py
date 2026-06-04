@@ -50,6 +50,8 @@ class ZoneAssigner:
                 )
 
     def get_zone(self, bbox, cam_id):
+        if cam_id not in self.cam_zones:
+            return 0
         bbox_bottom_center = ((bbox[0] + bbox[2]) / 2, bbox[3])
         for zone in self.cam_zones[cam_id]:
             if zone.contains(bbox_bottom_center):

@@ -2,9 +2,9 @@ from sqlalchemy import func
 import logging
 
 from .object_classes import Person, Bag
-from shared.database.database import SessionLocal
-from shared.models.SQLModels import Incident as SQLIncident
-from shared.constants import Role, IncidentType, IncidentStatus, IncidentTypeStr
+from ..shared.database.database import SessionLocal
+from ..shared.models.SQLModels import Incident as SQLIncident
+from ..shared.constants import Role, IncidentType, IncidentStatus, IncidentTypeStr
 
 logger = logging.getLogger(__name__)
 
