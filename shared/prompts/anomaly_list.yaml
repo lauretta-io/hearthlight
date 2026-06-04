@@ -1,87 +1,87 @@
 anomaly_object_list:
-  - weapon
-  - knife
-  - gun
-  - firearm
-  - rifle
-  - handgun
-  - machete
+  - banner
   - baseball bat
-  - crowbar
-  - club
-  - fire
-  - flames
-  - smoke
-  - explosion
-  - debris
-  - burning object
+  - bike
   - blood
   - body on ground
-  - broken glass
-  - shattered window
-  - overturned furniture
   - broken door
+  - broken glass
+  - burning object
+  - bus
+  - car
+  - club
+  - crowbar
+  - debris
+  - explosion
+  - fire
+  - firearm
+  - flag being waved
+  - flames
+  - gun
+  - handgun
+  - knife
+  - machete
+  - motorcycle
+  - overturned furniture
   - protest banner
   - protest sign
-  - flag being waved
-  - banner
-  - car
-  - truck
-  - bus
-  - van
-  - vehicle
-  - motorcycle
+  - rifle
   - scooter
-  - bike
+  - shattered window
+  - smoke
   - tram
   - trolley
+  - truck
+  - van
+  - vehicle
+  - weapon
 
 anomaly_activity_list:
-  - fighting
+  - aggressive confrontation
+  - arson
   - assault
   - attacking
-  - punching
-  - kicking
-  - grabbing
-  - choking
-  - group brawl
+  - bag snatching
   - brandishing weapon
-  - pointing gun
-  - threatening with knife
-  - running away
-  - sprinting from threat
-  - panicking
-  - crowd stampede
+  - breaking into building
+  - breaking window
+  - bus driving
+  - car driving
+  - chasing person
+  - choking
+  - climbing fence
   - crowd scattering
-  - people dropping to ground
-  - mass evacuation
-  - arson
-  - setting fire
+  - crowd stampede
+  - fighting
   - fire spreading
   - explosion occurring
-  - smoke filling area
-  - theft
-  - bag snatching
-  - vandalism
-  - breaking window
-  - trespassing
-  - climbing fence
-  - breaking into building
-  - suspicious loitering
-  - stalking
+  - grabbing
+  - group brawl
+  - holding protest sign
+  - intimidating group behaviour
+  - kicking
+  - mass evacuation
+  - panicking
+  - people dropping to ground
   - person collapsing
   - person lying motionless
-  - aggressive confrontation
-  - intimidating group behaviour
-  - chasing person
+  - pointing gun
+  - punching
+  - riding bike
+  - riding motorcycle
+  - riding scooter
+  - running away
+  - setting fire
+  - smoke filling area
+  - sprinting from threat
+  - stalking
+  - suspicious loitering
+  - theft
+  - threatening with knife
+  - trespassing
+  - truck driving
+  - van driving
+  - vandalism
   - vehicle driving
   - waving banner
   - waving flag
-  - holding protest sign
-  - riding scooter
-  - riding bike
-  - riding motorcycle
-  - truck driving
-  - car driving
-  - bus driving
-  - van driving
