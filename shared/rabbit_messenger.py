@@ -322,9 +322,13 @@ class ReIDMessage(TypedDict, total=False):
 
 
 class AnomalyMessage(TypedDict, total=False):
-    REID_PERSON: IdentifiedTrackInstances | None
-    REID_BAG: IdentifiedTrackInstances | None
-    INGESTOR_FRAME_INFO: Frames | None
+    # NOTE: The anomaly module consumes the *normalized* routing keys defined in
+    # `get_anomaly_message_consumer()` (PERSON/BAG/FRAME_INFO). The underlying
+    # `Consumer` binds to the concrete queue names (e.g. INGESTOR_FRAME_INFO),
+    # but the MessageOrganizer stores them under the RoutingKey constants.
+    PERSON: IdentifiedTrackInstances | None
+    BAG: IdentifiedTrackInstances | None
+    FRAME_INFO: Frames | None
 
 
 Batch = TypeVar(
