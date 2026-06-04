@@ -281,6 +281,7 @@ class AnomalyDetectorThread(Thread):
                                 score=score,
                                 title=anomaly_category,
                                 reasoning=scene_summary,
+                                visible_activities=[anomaly_category],
                             )
                             self.anomaly_publisher.publish_events(
                                 AnomalyEvents(frame_id=frames.frame_id, events=[event])
