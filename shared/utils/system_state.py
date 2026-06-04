@@ -45,6 +45,9 @@ def derive_system_status(current_status: str, module_statuses: list[str]) -> tup
     elif current_status == SystemStatus.STOPPING:
         if all(status == MODULE_STATUS_IDLE for status in normalized_statuses):
             return SystemStatus.IDLE, True
+    elif current_status == SystemStatus.RUNNING:
+        if all(status == MODULE_STATUS_IDLE for status in normalized_statuses):
+            return SystemStatus.IDLE, True
     if (
         current_status in {SystemStatus.IDLE, SystemStatus.INITIALIZING}
         and any(status == MODULE_STATUS_RUNNING for status in normalized_statuses)

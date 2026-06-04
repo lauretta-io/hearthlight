@@ -903,6 +903,14 @@ class SystemStateTests(unittest.TestCase):
         self.assertEqual(status, SystemStatus.RUNNING)
         self.assertFalse(reset)
 
+    def test_derive_system_status_becomes_idle_when_running_modules_stop(self):
+        status, reset = derive_system_status(
+            SystemStatus.RUNNING,
+            ["stopped"],
+        )
+        self.assertEqual(status, SystemStatus.IDLE)
+        self.assertTrue(reset)
+
     def test_get_error_modules_returns_sorted_module_names(self):
         errors = get_error_modules(
             {
