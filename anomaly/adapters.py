@@ -15,16 +15,16 @@ from urllib.parse import urlparse
 
 from omegaconf import OmegaConf
 
-from shared.database.database import SessionLocal
-from shared.models.DataModels import AnomalyEvent, AssetReference
-from shared.utils.claude_anomaly_model import (
+from ..shared.database.database import SessionLocal
+from ..shared.models.DataModels import AnomalyEvent, AssetReference
+from ..shared.utils.claude_anomaly_model import (
     SETTING_KEY_CLAUDE_ANOMALY_MODEL,
     build_claude_anomaly_request,
     default_claude_anomaly_model_config,
     send_claude_anomaly_request,
     validate_claude_anomaly_model_config,
 )
-from shared.utils.workspace_settings import get_workspace_setting_value
+from ..shared.utils.workspace_settings import get_workspace_setting_value
 
 logger = logging.getLogger(__name__)
 
