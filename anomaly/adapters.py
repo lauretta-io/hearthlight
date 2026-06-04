@@ -506,6 +506,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
         self.base_url_env = str(self.runtime.get("base_url_env") or "").strip()
         self.default_base_url = str(self.runtime.get("base_url") or "https://api.openai.com/v1").strip()
         self.auth_optional = bool(self.runtime.get("auth_optional", False))
+        self.json_mode = bool(self.runtime.get("json_mode", True))
         self.system_prompt = str(
             self.runtime.get("system_prompt")
             or "You are an anomaly detection analyst. Return strict JSON with keys title, category, score, reasoning, visible_items, visible_activities."
@@ -598,12 +599,13 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
             model_name = self.model_name
         request_body = {
             "model": model_name,
-            "response_format": {"type": "json_object"},
             "messages": [
                 {"role": "system", "content": self.system_prompt},
                 {"role": "user", "content": json.dumps(payload)},
             ],
         }
+        if self.json_mode:
+            request_body["response_format"] = {"type": "json_object"}
         headers = {"Content-Type": "application/json"}
         if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
@@ -620,7 +622,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
             parsed = json.loads(content) if isinstance(content, str) else dict(content or {})
             return self._normalize_event(candidate=candidate, prompts=prompts, payload=parsed)
         except (error.URLError, TimeoutError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
-            logger.warning("OpenAI-compatible anomaly adapter failed: %s", exc)
+            logger.warning("OpenAI-compatible anomaly adapter failed: %s", exc, exc_info=True)
             return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
 
 

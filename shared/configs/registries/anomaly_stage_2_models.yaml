@@ -225,6 +225,7 @@ lm_studio_stage_2:
     auth_optional: true
     timeout_seconds: 30
     prompt_mode: api
+    json_mode: false
   capabilities:
     prompt_support: true
     runtime_targets:
