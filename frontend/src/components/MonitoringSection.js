@@ -57,6 +57,11 @@ const isSystemRunActive = (overview) => (
   )
 );
 
+const canStopRun = (overview) => (
+  ['running', 'initializing', 'stopping'].includes(overview?.system_status)
+  && Boolean(overview?.current_run_id)
+);
+
 const getPreviewUrl = (source) => (
   source?.id ? `${BaseURL}/sources/${source.id}/preview.mjpeg` : null
 );
@@ -377,8 +382,8 @@ const MonitoringSection = ({ embedded = false, pollingEnabled = true }) => {
         60000,
       );
 
-      const remainingEnabledCount = nextSources.filter((item) => item.enabled).length;
-      if (overview?.current_run_id) {
+  const remainingEnabledCount = nextSources.filter((item) => item.enabled).length;
+  if (canStopRun(overview)) {
         await fetchJson(
           `${BaseURL}/stop`,
           { method: 'POST', headers: { 'Content-Type': 'application/json' } },

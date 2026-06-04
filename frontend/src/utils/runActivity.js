@@ -2,14 +2,24 @@ export const isIngestorProcessing = (moduleStatus) => (
   moduleStatus?.INGESTOR === 'running'
 );
 
+export const isAnyPipelineModuleRunning = (moduleStatus) => (
+  moduleStatus?.INGESTOR === 'running'
+  || moduleStatus?.ANOMALY === 'running'
+  || moduleStatus?.REID === 'running'
+  || moduleStatus?.ASSOCIATION === 'running'
+);
+
 export const resolveDisplaySystemStatus = (overviewOrStatus) => {
   const systemStatus = overviewOrStatus?.system_status ?? overviewOrStatus?.status ?? 'idle';
   const runId = overviewOrStatus?.current_run_id ?? overviewOrStatus?.run_id ?? null;
   const moduleStatus = overviewOrStatus?.resources?.module_status
     ?? overviewOrStatus?.module_status
     ?? {};
+  // If API reports no current run, treat the system as idle even if some module
+  // status value is stale (e.g. a worker didn't publish a final STOPPED message
+  // yet). The UI should key off `current_run_id` as the source-of-truth.
   if (!runId) {
-    return systemStatus || 'idle';
+    return 'idle';
   }
   if (systemStatus === 'idle' && isIngestorProcessing(moduleStatus)) {
     return 'running';
@@ -18,13 +28,23 @@ export const resolveDisplaySystemStatus = (overviewOrStatus) => {
 };
 
 export const isRunActiveStatus = (systemStatus, runId, moduleStatus) => {
+  // If we have a run id, treat it as authoritative that some run context exists.
+  // The backend can temporarily report `system_status: idle` between transitions,
+  // but the run id should still keep the UI in an "active" state.
+  if (runId) {
+    return true;
+  }
   const resolved = resolveDisplaySystemStatus({
     system_status: systemStatus,
     current_run_id: runId,
     resources: { module_status: moduleStatus },
   });
-  return ['running', 'initializing', 'stopping'].includes(resolved)
-    || Boolean(runId);
+  // Treat explicit initialization as active even before the backend has
+  // reported a run id, but do not treat 'idle' + stale module status as active.
+  if (systemStatus === 'initializing' || resolved === 'initializing') {
+    return true;
+  }
+  return ['running', 'stopping'].includes(resolved);
 };
 
 export const getFrameProgress = (statusData) => {
