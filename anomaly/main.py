@@ -131,8 +131,8 @@ class Anomaly(Thread):
                     self.stage_two_adapters[stage_2_model_key] = build_adapter(stage_2_registration)
                     runtime = stage_2_registration.get("runtime") or {}
                     self.prompt_catalog_by_stage_two_key[stage_2_model_key] = PromptCatalog(
-                        runtime.get("prompt_yaml_path", "shared/prompts/prompt_v2.yaml"),
-                        runtime.get("anomaly_list_yaml_path", "shared/prompts/anomaly_list.yaml"),
+                        runtime.get("prompt_yaml_path", "/app/src/shared/prompts/prompt_v2.yaml"),
+                        runtime.get("anomaly_list_yaml_path", "/app/src/shared/prompts/anomaly_list.yaml"),
                     )
         except Exception:
             logger.exception("Failed to initialize", extra={"task": self.name})
