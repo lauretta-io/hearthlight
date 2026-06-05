@@ -8,6 +8,7 @@ from importlib.util import find_spec
 import json
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 from urllib import error, request
@@ -206,6 +207,29 @@ class SigLIPStageOneAdapter(HeuristicPresenceStageOneAdapter):
             if not candidate.category.startswith("siglip_"):
                 candidate.category = f"siglip_{candidate.category}"
         return candidates
+
+
+def _parse_json_response(content: str) -> dict:
+    """Parse JSON from a model response that may include surrounding text or markdown."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    # Strip markdown code fences
+    stripped = re.sub(r"```(?:json)?\s*", "", content).strip().rstrip("`").strip()
+    try:
+        return json.loads(stripped)
+    except json.JSONDecodeError:
+        pass
+    # Extract first {...} block
+    match = re.search(r"\{.*\}", stripped, re.DOTALL)
+    if match:
+        try:
+            return json.loads(match.group())
+        except json.JSONDecodeError:
+            pass
+    # Fall back to using the raw text as reasoning
+    return {"reasoning": content.strip()} if content.strip() else {}
 
 
 def _select_best_prompt_match(
@@ -619,7 +643,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
             with request.urlopen(req, timeout=self.timeout_seconds) as response:
                 raw = json.loads(response.read().decode("utf-8"))
             content = raw.get("choices", [{}])[0].get("message", {}).get("content", "{}")
-            parsed = json.loads(content) if isinstance(content, str) else dict(content or {})
+            parsed = _parse_json_response(content) if isinstance(content, str) else dict(content or {})
             return self._normalize_event(candidate=candidate, prompts=prompts, payload=parsed)
         except (error.URLError, TimeoutError, ValueError, KeyError, IndexError, json.JSONDecodeError) as exc:
             logger.warning("OpenAI-compatible anomaly adapter failed: %s", exc, exc_info=True)
