@@ -215,8 +215,10 @@ def _parse_json_response(content: str) -> dict:
         return json.loads(content)
     except json.JSONDecodeError:
         pass
+    # Strip Qwen3/thinking-model <think>...</think> blocks
+    stripped = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
     # Strip markdown code fences
-    stripped = re.sub(r"```(?:json)?\s*", "", content).strip().rstrip("`").strip()
+    stripped = re.sub(r"```(?:json)?\s*", "", stripped).strip().rstrip("`").strip()
     try:
         return json.loads(stripped)
     except json.JSONDecodeError:
