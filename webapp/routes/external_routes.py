@@ -5,6 +5,7 @@ import time
 import logging
 import asyncio
 import json
+import re
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
@@ -85,6 +86,8 @@ from ...shared.models.APIModels import (
     SOURCE_KIND_CAMERA_URL,
     SOURCE_KIND_VIDEO_UPLOAD,
     SOURCE_KIND_WEBCAM,
+    Stage2ProviderSettings,
+    Stage2ProviderSettingsTestResponse,
     Status,
     TriggerRule,
     TriggerZooEntry,
@@ -158,6 +161,20 @@ from ...shared.utils.govee_connector import (
     send_test_govee_trigger_action,
     test_govee_api_key,
 )
+from ...shared.utils.stage2_provider_settings import (
+    PROVIDER_KEY_CLAUDE_COMPATIBLE,
+    PROVIDER_KEY_LAURETTA,
+    PROVIDER_KEY_LM_STUDIO,
+    PROVIDER_KEY_OPENAI,
+    Stage2ProviderSettingsDecryptError,
+    Stage2ProviderSettingsKeyUnavailable,
+    build_runtime_stage2_provider_settings,
+    get_effective_stage2_provider_settings,
+    list_stage2_provider_settings,
+    merge_stage2_provider_settings_draft,
+    record_stage2_provider_test_status,
+    write_stage2_provider_settings,
+)
 from ...shared.utils.telegram_notifications import (
     ensure_telegram_subscription_tables,
     send_test_telegram_trigger_message,
@@ -181,7 +198,8 @@ from ...shared.utils.input_sources import (
 )
 from ...shared.utils.local_worker_runtime import (
     build_local_worker_url,
-    is_hybrid_local_cpu_runtime,
+    get_worker_runtime_mode,
+    is_hybrid_local_runtime,
     map_container_path_to_host,
 )
 from ...shared.utils.model_registry import (
@@ -409,6 +427,20 @@ def read_claude_anomaly_model_settings(db: Session) -> ClaudeAnomalyModelSetting
     if not isinstance(payload, dict):
         payload = default_claude_anomaly_model_config()
     try:
+        provider_payload = get_effective_stage2_provider_settings(db, PROVIDER_KEY_CLAUDE_COMPATIBLE)
+        payload = {
+            **payload,
+            "enabled": bool(provider_payload.get("enabled", payload.get("enabled"))),
+            "base_url": str(provider_payload.get("base_url") or payload.get("base_url") or "").strip(),
+            "model_name": str(provider_payload.get("model_name") or payload.get("model_name") or "").strip(),
+            "timeout_seconds": int(provider_payload.get("timeout_seconds") or payload.get("timeout_seconds") or 10),
+            "auth_token": str(provider_payload.get("auth_token") or payload.get("auth_token") or "").strip(),
+        }
+    except (Stage2ProviderSettingsKeyUnavailable, Stage2ProviderSettingsDecryptError):
+        raise
+    except Exception:
+        logger.exception("Failed to load Stage 2 Claude-compatible provider settings")
+    try:
         redacted = redact_claude_anomaly_model_config(payload)
     except Exception:
         redacted = redact_claude_anomaly_model_config(default_claude_anomaly_model_config())
@@ -433,8 +465,212 @@ def write_claude_anomaly_model_settings(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     set_workspace_setting_value(db, SETTING_KEY_CLAUDE_ANOMALY_MODEL, normalized)
+    write_stage2_provider_settings(
+        db,
+        [
+            {
+                "provider_key": PROVIDER_KEY_CLAUDE_COMPATIBLE,
+                "enabled": normalized["enabled"],
+                "base_url": normalized["base_url"],
+                "model_name": normalized["model_name"],
+                "timeout_seconds": normalized["timeout_seconds"],
+                "auth_optional": False,
+                "auth_token": normalized["auth_token"],
+            }
+        ],
+    )
     db.commit()
     return read_claude_anomaly_model_settings(db)
+
+
+def _get_stage2_provider_response(db: Session) -> list[Stage2ProviderSettings]:
+    try:
+        payloads = list_stage2_provider_settings(db)
+    except Stage2ProviderSettingsKeyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Stage2ProviderSettingsDecryptError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return [Stage2ProviderSettings.model_validate(item) for item in payloads]
+
+
+def _save_stage2_provider_settings(
+    db: Session,
+    payloads: list[Stage2ProviderSettings],
+) -> list[Stage2ProviderSettings]:
+    try:
+        write_stage2_provider_settings(db, [item.model_dump() for item in payloads])
+    except Stage2ProviderSettingsKeyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Stage2ProviderSettingsDecryptError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return _get_stage2_provider_response(db)
+
+
+def _build_stage2_provider_test_result(
+    db: Session,
+    payload: Stage2ProviderSettings,
+) -> Stage2ProviderSettingsTestResponse:
+    provider_key = payload.provider_key
+    try:
+        existing_payload = get_effective_stage2_provider_settings(db, provider_key)
+    except Stage2ProviderSettingsKeyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Stage2ProviderSettingsDecryptError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    try:
+        normalized_payload = merge_stage2_provider_settings_draft(
+            provider_key,
+            payload.model_dump(),
+            existing_payload=existing_payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    normalized = Stage2ProviderSettings.model_validate(normalized_payload)
+    secret_values = [
+        str(normalized.api_key or "").strip(),
+        str(normalized.auth_token or "").strip(),
+    ]
+
+    def _sanitize_detail(raw_message: str | None) -> str:
+        message = str(raw_message or "").strip()
+        for secret_value in secret_values:
+            if secret_value:
+                message = message.replace(secret_value, "********")
+        if "Authorization" in message:
+            message = re.sub(
+                r"Authorization\s*:\s*Bearer\s+[^\s,;]+",
+                "Authorization: Bearer ********",
+                message,
+                flags=re.IGNORECASE,
+            )
+        if "x-api-key" in message:
+            message = re.sub(
+                r"x-api-key\s*[:=]\s*[^\s,;]+",
+                "x-api-key: ********",
+                message,
+                flags=re.IGNORECASE,
+            )
+        return message
+
+    detail = ""
+    ok = False
+    last_tested_at = None
+    try:
+        if provider_key == PROVIDER_KEY_CLAUDE_COMPATIBLE:
+            request_payload = build_claude_anomaly_request(
+                config={
+                    "enabled": normalized.enabled,
+                    "base_url": normalized.base_url,
+                    "auth_token": normalized.auth_token,
+                    "model_name": normalized.model_name,
+                    "timeout_seconds": normalized.timeout_seconds,
+                    "retry_count": 0,
+                    "prompt_template": "Return Hearthlight anomaly JSON.",
+                },
+                event_id="TEST-ANOMALY-CANDIDATE",
+                run_id=None,
+                source_id=1,
+                camera_id=1,
+                frame_id=1,
+                stage_1_model_key="heuristic_presence_stage_1",
+                stage_2_model_key="claude_compatible_stage_2",
+                candidate_category="presence_resume",
+                candidate_score=0.72,
+                candidate_reasoning="Observed a person and bag after a quiet period.",
+                visible_items=["person", "bag"],
+                visible_activities=["presence resume"],
+                anomaly_object_list=["person", "bag"],
+                anomaly_activity_list=["presence resume"],
+                asset_references=[],
+            )
+            send_claude_anomaly_request(
+                {
+                    "enabled": normalized.enabled,
+                    "base_url": normalized.base_url,
+                    "auth_token": normalized.auth_token,
+                    "model_name": normalized.model_name,
+                    "timeout_seconds": normalized.timeout_seconds,
+                    "retry_count": 0,
+                    "prompt_template": "Return Hearthlight anomaly JSON.",
+                },
+                request_payload,
+            )
+        elif provider_key == PROVIDER_KEY_LAURETTA:
+            body = {
+                "camera_id": 1,
+                "user_id": "settings-test-user",
+                "prompt_template": "Return a JSON anomaly result.",
+                "expected_results_text": "Return title, category, score, and reasoning.",
+                "image_attachments": [],
+                "metadata": {"source": "settings-test"},
+            }
+            req = urllib_request.Request(
+                f"{normalized.base_url.rstrip('/')}/v1/hearthlight/anomaly-submissions",
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {normalized.api_key}",
+                },
+                method="POST",
+            )
+            with urllib_request.urlopen(req, timeout=normalized.timeout_seconds) as response:
+                json.loads(response.read().decode("utf-8") or "{}")
+        else:
+            request_body = {
+                "model": normalized.model_name,
+                "messages": [{"role": "user", "content": "Return JSON with keys title, category, score, reasoning."}],
+                "response_format": {"type": "json_object"},
+                "max_tokens": 64,
+            }
+            headers = {"Content-Type": "application/json"}
+            if normalized.api_key:
+                headers["Authorization"] = f"Bearer {normalized.api_key}"
+            req = urllib_request.Request(
+                f"{normalized.base_url.rstrip('/')}/chat/completions",
+                data=json.dumps(request_body).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib_request.urlopen(req, timeout=normalized.timeout_seconds) as response:
+                json.loads(response.read().decode("utf-8") or "{}")
+        ok = True
+        detail = "Connection test succeeded."
+        record_stage2_provider_test_status(db, provider_key, status="ok", message=detail)
+        db.commit()
+        refreshed = get_effective_stage2_provider_settings(db, provider_key)
+        last_tested_at = refreshed.get("last_tested_at")
+    except urllib_error.HTTPError as exc:
+        response_body = exc.read(4096).decode("utf-8", errors="replace")
+        detail = _sanitize_detail(f"HTTP {exc.code} {response_body}".strip())
+        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        db.commit()
+    except urllib_error.URLError as exc:
+        detail = _sanitize_detail(str(getattr(exc, "reason", exc)))
+        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        db.commit()
+    except Exception as exc:
+        detail = _sanitize_detail(str(exc))
+        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        db.commit()
+    if last_tested_at is None:
+        try:
+            refreshed = get_effective_stage2_provider_settings(db, provider_key)
+            last_tested_at = refreshed.get("last_tested_at")
+        except Exception:
+            last_tested_at = None
+    return Stage2ProviderSettingsTestResponse(
+        provider_key=provider_key,
+        ok=ok,
+        detail=detail,
+        effective_base_url=normalized.base_url,
+        effective_model_name=normalized.model_name,
+        secret_present=normalized.secret_present,
+        last_test_status="ok" if ok else "error",
+        last_tested_at=last_tested_at,
+    )
 
 
 def read_connector_zoo_repo_settings(db: Session) -> ConnectorZooRepoSettings:
@@ -534,7 +770,7 @@ def build_host_upload_path(upload_path: str | None) -> str | None:
 
 
 def get_local_worker_health() -> dict:
-    if not is_hybrid_local_cpu_runtime():
+    if not is_hybrid_local_runtime():
         return {
             "status": "not-applicable",
             "runtime": "docker",
@@ -550,12 +786,12 @@ def get_local_worker_health() -> dict:
         logger.warning("Failed to query local worker health", exc_info=True)
         return {
             "status": "unavailable",
-            "runtime": "hybrid-local-cpu",
+            "runtime": get_worker_runtime_mode(),
             "workers": {
                 module_name: {
                     "running": False,
                     "pid": None,
-                    "reason": "local CPU workers not started",
+                    "reason": "local host workers not started",
                 }
                 for module_name in get_expected_module_names()
             },
@@ -572,7 +808,7 @@ def require_local_worker_ready() -> dict:
         for details in workers.values()
         if isinstance(details, dict) and str(details.get("reason") or "").strip()
     ]
-    reason = reasons[0] if reasons else "local CPU workers not started"
+    reason = reasons[0] if reasons else "local host workers not started"
     raise HTTPException(status_code=409, detail=reason)
 
 
@@ -642,6 +878,12 @@ system_publisher = None
 status_consumer = None
 resource_monitor = None
 state_lock = Lock()
+source_template_columns_lock = Lock()
+plugin_tables_lock = Lock()
+registry_bundle_sync_lock = Lock()
+source_template_columns_ready = False
+plugin_tables_ready = False
+last_registry_bundle_sync_signature = None
 
 status = SystemStatus.IDLE
 frame_id = None
@@ -754,7 +996,7 @@ def merge_hybrid_operator_status(
 ) -> dict[str, str]:
     """Keep top-level operator status aligned with local worker health in hybrid mode."""
     merged = dict(module_state or {})
-    if not is_hybrid_local_cpu_runtime():
+    if not is_hybrid_local_runtime():
         return merged
     workers = (local_worker_health or {}).get("workers") or {}
     for module_name in (ModuleNames.INGESTOR, ModuleNames.ANOMALY):
@@ -969,7 +1211,7 @@ def build_live_resource_snapshot(db: Session) -> dict:
         get_previous_resource_snapshot(db),
         thresholds=get_resource_drift_thresholds(),
     )
-    local_worker_health = get_local_worker_health() if is_hybrid_local_cpu_runtime() else None
+    local_worker_health = get_local_worker_health() if is_hybrid_local_runtime() else None
     snapshot["dependency_status"] = collect_dependency_status()
     snapshot["module_status"] = merge_hybrid_operator_status({
         ModuleNames.WEBAPP: DataModels.Status.RUNNING,
@@ -993,7 +1235,7 @@ def build_live_resource_snapshot(db: Session) -> dict:
         thresholds=get_resource_thresholds(),
     )
     source_errors = build_enabled_source_errors(source_rows, db)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         if local_worker_health.get("status") != "ready":
             workers = local_worker_health.get("workers") or {}
             reasons = [
@@ -1001,7 +1243,7 @@ def build_live_resource_snapshot(db: Session) -> dict:
                 for details in workers.values()
                 if isinstance(details, dict) and str(details.get("reason") or "").strip()
             ]
-            reason = reasons[0] if reasons else "local CPU workers not started"
+            reason = reasons[0] if reasons else "local host workers not started"
             if admission.get("allowed", True):
                 admission["allowed"] = False
                 admission["reason"] = reason
@@ -1085,7 +1327,7 @@ def get_current_resource_snapshot(db: Session) -> dict:
             thresholds=get_resource_thresholds(),
         )
         source_errors = build_enabled_source_errors(source_rows, db)
-        if is_hybrid_local_cpu_runtime():
+        if is_hybrid_local_runtime():
             if local_worker_health.get("status") != "ready":
                 workers = local_worker_health.get("workers") or {}
                 reasons = [
@@ -1093,7 +1335,7 @@ def get_current_resource_snapshot(db: Session) -> dict:
                     for details in workers.values()
                     if isinstance(details, dict) and str(details.get("reason") or "").strip()
                 ]
-                reason = reasons[0] if reasons else "local CPU workers not started"
+                reason = reasons[0] if reasons else "local host workers not started"
                 if snapshot["admission"].get("allowed", True):
                     snapshot["admission"]["allowed"] = False
                     snapshot["admission"]["reason"] = reason
@@ -1266,14 +1508,21 @@ def get_registry_bundle(
 
 
 def ensure_plugin_tables() -> None:
-    SQLModels.Base.metadata.create_all(
-        bind=get_engine(),
-        tables=[
-            SQLModels.PluginBundle.__table__,
-            SQLModels.PluginComponent.__table__,
-        ],
-        checkfirst=True,
-    )
+    global plugin_tables_ready
+    if plugin_tables_ready:
+        return
+    with plugin_tables_lock:
+        if plugin_tables_ready:
+            return
+        SQLModels.Base.metadata.create_all(
+            bind=get_engine(),
+            tables=[
+                SQLModels.PluginBundle.__table__,
+                SQLModels.PluginComponent.__table__,
+            ],
+            checkfirst=True,
+        )
+        plugin_tables_ready = True
 
 
 def _build_plugin_component_lookup_from_bundle(bundle: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
@@ -3263,7 +3512,7 @@ def build_runtime_cfg(db: Session, run_identifier: str):
         if source_row.upload_id is not None and upload_path is not None:
             upload_paths[source_row.upload_id] = (
                 build_host_upload_path(upload_path)
-                if is_hybrid_local_cpu_runtime()
+                if is_hybrid_local_runtime()
                 else upload_path
             )
     model_health = build_model_health(registry_bundle, has_gpu=has_gpu)
@@ -3291,7 +3540,7 @@ def build_runtime_cfg(db: Session, run_identifier: str):
             if len(parts) == 2:
                 runtime_cfg.input.resize = [int(parts[0]), int(parts[1])]
     runtime_cfg.input.cameras = build_runtime_camera_map(source_rows, upload_paths)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         # Local hybrid workers run headless; disable GUI preview paths and persist
         # periodic frames so status APIs can surface concrete frame progress.
         runtime_cfg.output.visualize.show_vid = False
@@ -3935,7 +4184,7 @@ def execute_system_start(db: Session) -> dict:
             )
         )
         raise HTTPException(status_code=409, detail=reason)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         require_local_worker_ready()
 
     next_run_id = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -4067,7 +4316,7 @@ def get_status(db: Session = Depends(get_db)):
     snapshot_module_status = merge_hybrid_operator_status(
         snapshot.get("module_status"),
         snapshot.get("dependency_status"),
-        get_local_worker_health() if is_hybrid_local_cpu_runtime() else None,
+        get_local_worker_health() if is_hybrid_local_runtime() else None,
     )
     orchestration_statuses = [
         normalize_module_status(
@@ -4089,7 +4338,7 @@ def get_status(db: Session = Depends(get_db)):
             status = reconciled_status
         current_status = reconciled_status
     effective_frame_id = frame_id
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         db_frame_id = get_latest_run_frame_id(db)
         if db_frame_id is not None:
             effective_frame_id = db_frame_id
@@ -4385,6 +4634,36 @@ def test_settings_claude_anomaly_model(
         detail="Claude-compatible anomaly model test request sent.",
         result=result,
     )
+
+
+@external_router.get(
+    "/settings/stage2-provider-settings",
+    response_model=list[Stage2ProviderSettings],
+)
+def get_settings_stage2_provider_settings(db: Session = Depends(get_db)):
+    return _get_stage2_provider_response(db)
+
+
+@external_router.put(
+    "/settings/stage2-provider-settings",
+    response_model=list[Stage2ProviderSettings],
+)
+def update_settings_stage2_provider_settings(
+    payload: list[Stage2ProviderSettings],
+    db: Session = Depends(get_db),
+):
+    return _save_stage2_provider_settings(db, payload)
+
+
+@external_router.post(
+    "/settings/stage2-provider-settings/test",
+    response_model=Stage2ProviderSettingsTestResponse,
+)
+def test_settings_stage2_provider_settings(
+    payload: Stage2ProviderSettings,
+    db: Session = Depends(get_db),
+):
+    return _build_stage2_provider_test_result(db, payload)
 
 
 @external_router.get("/settings/connector-zoo-repo", response_model=ConnectorZooRepoSettings)
@@ -4784,7 +5063,7 @@ def fire_demo_trigger(
 @external_router.get("/sources/{source_id}/preview.mjpeg")
 async def get_source_preview(source_id: int, request: Request, db: Session = Depends(get_db)):
     source_row = get_source_row_by_id(source_id, db)
-    if is_hybrid_local_cpu_runtime():
+    if is_hybrid_local_runtime():
         upload_path = None
         if source_row.upload_id is not None:
             upload_row = get_upload_rows_by_id(db, [source_row.upload_id]).get(source_row.upload_id)
@@ -5211,6 +5490,7 @@ def get_monitoring_overview(
                 + [event.model_dump() for event in build_resource_event_records(db, limit)]
             )[: (limit or 20)]
         ],
+        stage2_provider_settings=_get_stage2_provider_response(db),
         feed_endpoints=[
             FeedEndpoint.model_validate(item) for item in build_feed_endpoint_catalog()
         ],

@@ -14,6 +14,8 @@ if str(ROOT_DIR) not in sys.path:
 from run.launcher import (  # noqa: E402
     build_interactive_selection,
     build_selection_from_args,
+    detect_worker_runtime,
+    prepare_local_images,
     print_model_inventory,
     start_stack,
     stop_stack,
@@ -30,6 +32,7 @@ from hearthlight.workspace import (  # noqa: E402
     resolve_workspace,
     workspace_python_path,
 )
+from shared.utils.image_variants import IMAGE_VARIANTS  # noqa: E402
 
 ASCII_LOGO = r"""
       /\        
@@ -64,7 +67,7 @@ def _add_common_start_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--profile", choices=["cpu", "cuda"], default=defaults["profile"])
     parser.add_argument(
         "--worker-runtime",
-        choices=["docker", "hybrid-local-cpu"],
+        choices=["docker", "hybrid-local-cpu", "hybrid-local-mlx"],
         help="Worker runtime selection. Defaults to host-aware auto-detection.",
     )
     parser.add_argument("--detector", help="Detector model name")
@@ -149,6 +152,41 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["cpu", "cuda"],
         default="cpu",
         help="Use the matching compose file set for status checks",
+    )
+
+    prepare_images_parser = subparsers.add_parser(
+        "prepare-images",
+        help="Build the system-appropriate local Docker image lane and optionally persist the variant",
+    )
+    _add_workspace_arg(prepare_images_parser)
+    prepare_images_parser.add_argument(
+        "--profile",
+        choices=["cpu", "cuda"],
+        help="Execution profile to prepare for. Defaults to the detected host-appropriate profile.",
+    )
+    prepare_images_parser.add_argument(
+        "--worker-runtime",
+        choices=["docker", "hybrid-local-cpu", "hybrid-local-mlx"],
+        help="Worker runtime to prepare for. Defaults to the detected runtime for the selected profile.",
+    )
+    prepare_images_parser.add_argument(
+        "--variant",
+        choices=list(IMAGE_VARIANTS),
+        help="Override the derived image variant directly.",
+    )
+    prepare_images_parser.add_argument(
+        "--service",
+        action="append",
+        choices=["rabbitmq", "webapp", "ingestor", "association", "anomaly"],
+        default=[],
+        help="Build only the selected service image. Repeat as needed.",
+    )
+    prepare_images_parser.add_argument("--dry-run", action="store_true", help="Print the build plan without executing it")
+    prepare_images_parser.add_argument(
+        "--write-env",
+        metavar="PATH",
+        default=".env",
+        help="Persist the selected HEARTHLIGHT_IMAGE_VARIANT into the env file. Defaults to .env",
     )
 
     onboard_parser = subparsers.add_parser("onboard", help="Run step-by-step local onboarding")
@@ -258,6 +296,30 @@ def _proxy_to_workspace(workspace: Path, argv: list[str]) -> int:
     return subprocess.call([str(python_path), "-m", "hearthlight", *argv], cwd=workspace, env=env)
 
 
+def _prepare_images_from_args(args) -> int:
+    defaults = resolve_start_defaults(ROOT_DIR)
+    profile = args.profile or defaults["profile"]
+    detected_worker_runtime, _ = detect_worker_runtime(profile)
+    worker_runtime = args.worker_runtime or detected_worker_runtime
+    if args.variant:
+        if args.variant == "cuda":
+            profile = "cuda"
+            worker_runtime = "docker"
+        elif args.variant == "mlx":
+            profile = "cpu"
+            worker_runtime = "hybrid-local-mlx"
+        else:
+            profile = "cpu"
+    return prepare_local_images(
+        profile=profile,
+        worker_runtime=worker_runtime,
+        services=args.service,
+        variant_override=args.variant,
+        dry_run=args.dry_run,
+        write_env=args.write_env,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     _legacy_wrapper_notice()
     argv = list(argv) if argv is not None else sys.argv[1:]
@@ -287,6 +349,8 @@ def main(argv: list[str] | None = None) -> int:
         return stop_stack(use_cuda=getattr(args, "profile", "cpu") == "cuda")
     if command == "status":
         return compose_status(ROOT_DIR, use_cuda=getattr(args, "profile", "cpu") == "cuda")
+    if command == "prepare-images":
+        return _prepare_images_from_args(args)
     if command == "reset-db":
         return _reset_db_from_args(args)
     if command == "dashboard":

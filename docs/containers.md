@@ -51,7 +51,6 @@ The default local control stack is:
 The optional `pipeline` profile adds:
 
 - `ingestor`
-- `reid`
 - `anomaly`
 - `association`
 
@@ -64,25 +63,37 @@ hearthlight reset-db
 docker compose up webapp
 ```
 
-To use published `0.8.1` images instead of local builds, set the service image overrides in `.env`
+To use published variant-tagged images instead of local builds, set the service image overrides in `.env`
 before running the CLI or compose directly:
 
 ```bash
-HEARTHLIGHT_RABBITMQ_IMAGE=your-namespace/hearthlight-rabbitmq:0.8.1
-HEARTHLIGHT_WEBAPP_IMAGE=your-namespace/hearthlight-webapp:0.8.1
-HEARTHLIGHT_INGESTOR_IMAGE=your-namespace/hearthlight-ingestor:0.8.1
-HEARTHLIGHT_ASSOCIATION_IMAGE=your-namespace/hearthlight-association:0.8.1
-HEARTHLIGHT_ANOMALY_IMAGE=your-namespace/hearthlight-anomaly:0.8.1
+HEARTHLIGHT_RABBITMQ_IMAGE=your-namespace/hearthlight-rabbitmq:<tag>-cpu
+HEARTHLIGHT_WEBAPP_IMAGE=your-namespace/hearthlight-webapp:<tag>-cpu
+HEARTHLIGHT_INGESTOR_IMAGE=your-namespace/hearthlight-ingestor:<tag>-cpu
+HEARTHLIGHT_ASSOCIATION_IMAGE=your-namespace/hearthlight-association:<tag>-cpu
+HEARTHLIGHT_ANOMALY_IMAGE=your-namespace/hearthlight-anomaly:<tag>-cpu
 ```
 
 When those values are set, `hearthlight start` pulls the published images first and then starts
 the same compose stack.
 
+To prepare the correct local image lane for the current machine, use:
+
+```bash
+hearthlight prepare-images
+```
+
+That auto-detects the host and chooses:
+
+- `cpu`: local CPU image lane
+- `cuda`: full Docker worker lane with `run/docker-compose.cuda.yaml`
+- `mlx`: Apple Silicon hybrid lane that only builds the Dockerized control-plane images
+
 Enable the full AI pipeline explicitly:
 
 ```bash
-docker compose build ingestor reid anomaly association
-docker compose up ingestor reid anomaly association
+docker compose build ingestor anomaly association
+docker compose up ingestor anomaly association
 ```
 
 The compose file also now uses health checks for Postgres and RabbitMQ, and core services wait on
@@ -91,6 +102,22 @@ those dependencies instead of relying on bare container start order.
 The `pipeline` profile is the right path for Linux/NVIDIA hosts. On macOS Docker Desktop, the
 default local startup should usually remain `db + rabbitmq + webapp` unless you explicitly want to
 attempt the heavier worker image builds.
+
+## Apple Silicon MLX Hybrid Mode
+
+MLX is a host-side Apple Silicon runtime, not a Linux Docker worker runtime. In this repository,
+the Docker integration path for MLX is:
+
+- Docker hosts `db`, `rabbitmq`, `webapp`, and `reverse_proxy`
+- host-local workers run `ingestor`, `association`, and `anomaly`
+- the worker runtime is `hybrid-local-mlx`
+
+That means MLX is integrated with the Dockerized control plane, but not embedded inside the Linux
+worker images.
+
+On Apple Silicon onboarding/install paths, `requirements-mlx.txt` is now installed alongside the
+normal service requirements so the host worker environment can provide `mlx`, `mlx-lm`, and
+`mlx-vlm`.
 
 ## Runtime Expectations
 
@@ -124,8 +151,8 @@ Review logs if a service exits:
 ```bash
 docker compose logs --tail=200 webapp
 docker compose logs --tail=200 ingestor
-docker compose logs --tail=200 reid
 docker compose logs --tail=200 association
+docker compose logs --tail=200 anomaly
 ```
 
 ### 2. API health
@@ -405,5 +432,5 @@ enable pipeline workers explicitly when the host supports them:
 
 ```bash
 docker compose up -d db rabbitmq webapp
-docker compose up ingestor reid anomaly association
+docker compose up ingestor anomaly association
 ```

@@ -34,6 +34,68 @@ beforeEach(() => {
   let connectorZooRepoSettings = {
     catalog_url: 'https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml',
   };
+  let stage2ProviderSettings = [
+    {
+      provider_key: 'openai',
+      display_name: 'OpenAI',
+      enabled: true,
+      base_url: 'https://api.openai.com/v1',
+      model_name: 'gpt-5.4-mini',
+      timeout_seconds: 30,
+      auth_optional: false,
+      api_key: '********',
+      auth_token: '',
+      secret_present: true,
+      last_test_status: 'ok',
+      last_test_message: 'Connection test succeeded.',
+      last_tested_at: '2026-06-05T12:00:00Z',
+    },
+    {
+      provider_key: 'lm_studio',
+      display_name: 'LM Studio',
+      enabled: false,
+      base_url: 'http://localhost:1234/v1',
+      model_name: 'qwen-local',
+      timeout_seconds: 30,
+      auth_optional: true,
+      api_key: '',
+      auth_token: '',
+      secret_present: false,
+      last_test_status: null,
+      last_test_message: null,
+      last_tested_at: null,
+    },
+    {
+      provider_key: 'lauretta',
+      display_name: 'Lauretta',
+      enabled: false,
+      base_url: 'https://lauretta.example/v1',
+      model_name: 'lauretta-anomaly-stage-2',
+      timeout_seconds: 30,
+      auth_optional: false,
+      api_key: '',
+      auth_token: '',
+      secret_present: false,
+      last_test_status: null,
+      last_test_message: null,
+      last_tested_at: null,
+    },
+    {
+      provider_key: 'claude_compatible',
+      display_name: 'Claude-Compatible',
+      enabled: false,
+      base_url: 'https://claude.example/v1',
+      model_name: 'claude-compatible-anomaly',
+      timeout_seconds: 30,
+      auth_optional: false,
+      api_key: '',
+      auth_token: '',
+      secret_present: false,
+      last_test_status: null,
+      last_test_message: null,
+      last_tested_at: null,
+    },
+  ];
   let repoConnectorZooCatalog = {
     catalog_url: connectorZooRepoSettings.catalog_url,
     source_url: connectorZooRepoSettings.catalog_url,
@@ -49,7 +111,7 @@ beforeEach(() => {
         category: 'integrations',
         enabled: true,
         plugin_key: 'govee_light_connection',
-        plugin_version: '0.8.1',
+        plugin_version: '0.8.2',
         source_url: 'file:///workspace/shared/plugins/govee_light_connection/',
         installed: false,
       },
@@ -142,7 +204,9 @@ beforeEach(() => {
           {
             stage: 'anomaly_stage_2',
             options: [
-              { model_key: 'prompt_rules_stage_2', display_name: 'Prompt Rules Stage 2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2', is_mounted: true },
+              { model_key: 'prompt_rules_stage_2', display_name: 'Prompt Rules Stage 2', stage: 'anomaly_stage_2', adapter: 'prompt_rules_stage_2', is_mounted: true, runtime: { provider: 'local' } },
+              { model_key: 'chatgpt_api_stage_2', display_name: 'OpenAI Stage 2', stage: 'anomaly_stage_2', adapter: 'openai_compatible_stage_2', is_mounted: true, runtime: { provider: 'openai' } },
+              { model_key: 'lm_studio_stage_2', display_name: 'LM Studio Stage 2', stage: 'anomaly_stage_2', adapter: 'openai_compatible_stage_2', is_mounted: true, runtime: { provider: 'lm_studio' } },
             ],
           },
         ],
@@ -163,6 +227,9 @@ beforeEach(() => {
         ],
         anomaly_behaviors: ['running'],
       });
+    }
+    if (url.endsWith('/settings/stage2-provider-settings') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse(stage2ProviderSettings);
     }
     if (url.endsWith('/settings/trigger-rules') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
@@ -430,6 +497,36 @@ beforeEach(() => {
         anomaly_behaviors: ['running'],
       });
     }
+    if (url.endsWith('/settings/stage2-provider-settings') && options.method === 'PUT') {
+      const payload = JSON.parse(options.body);
+      stage2ProviderSettings = payload.map((item) => ({
+        ...item,
+        api_key: item.api_key ? '********' : '',
+        auth_token: item.auth_token ? '********' : '',
+        secret_present: Boolean(item.api_key || item.auth_token || item.provider_key === 'openai'),
+        last_test_status: item.last_test_status ?? null,
+        last_test_message: item.last_test_message ?? null,
+        last_tested_at: item.last_tested_at ?? null,
+      }));
+      return buildJsonResponse(stage2ProviderSettings);
+    }
+    if (url.endsWith('/settings/stage2-provider-settings/test') && options.method === 'POST') {
+      const payload = JSON.parse(options.body);
+      if (payload.provider_key === 'lm_studio' && payload.base_url === 'http://offline.local/v1') {
+        return buildErrorResponse(502, {
+          detail: 'Connection timed out while contacting the provider.',
+        });
+      }
+      return buildJsonResponse({
+        provider_key: payload.provider_key,
+        ok: true,
+        detail: 'Connection test succeeded.',
+        effective_base_url: payload.base_url,
+        effective_model_name: payload.model_name,
+        secret_present: Boolean(payload.api_key || payload.auth_token || payload.provider_key === 'openai'),
+        last_test_status: 'ok',
+      });
+    }
     if (url.endsWith('/settings/appearance') && options.method === 'PUT') {
       return buildJsonResponse({
         theme_key: 'fidelity-dark',
@@ -617,6 +714,101 @@ test('renders stage 2 anomaly config and saves structured anomaly settings', asy
       expect.objectContaining({ method: 'PUT' }),
     );
   });
+});
+
+test('renders secure Stage 2 provider settings with masked secret state', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
+  expect(screen.getByText('Current Stage 2 Binding')).toBeTruthy();
+  expect(screen.getByDisplayValue('https://api.openai.com/v1')).toBeTruthy();
+  expect(screen.getByDisplayValue('gpt-5.4-mini')).toBeTruthy();
+  expect(screen.getAllByDisplayValue('********').length).toBeGreaterThan(0);
+  expect(screen.getByText('Stored securely')).toBeTruthy();
+});
+
+test('preserves masked Stage 2 provider secrets when saving non-secret edits', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
+  fireEvent.change(screen.getByDisplayValue('https://api.openai.com/v1'), {
+    target: { value: 'https://api.openai.com/v2' },
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save Stage 2 Provider Settings' }));
+  });
+
+  const saveCall = global.fetch.mock.calls.find(
+    ([url, options]) => url.endsWith('/settings/stage2-provider-settings') && options?.method === 'PUT',
+  );
+  expect(saveCall).toBeTruthy();
+  const requestBody = JSON.parse(saveCall[1].body);
+  const openaiPayload = requestBody.find((item) => item.provider_key === 'openai');
+  expect(openaiPayload.base_url).toBe('https://api.openai.com/v2');
+  expect(openaiPayload.api_key).toBe('********');
+});
+
+test('validates required Stage 2 provider secrets before saving', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
+  fireEvent.change(screen.getAllByDisplayValue('********')[0], {
+    target: { value: '' },
+  });
+
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'Save Stage 2 Provider Settings' }));
+  });
+
+  expect(await screen.findByText('API Key is required when the provider is enabled.')).toBeTruthy();
+  expect(
+    global.fetch.mock.calls.find(
+      ([url, options]) => url.endsWith('/settings/stage2-provider-settings') && options?.method === 'PUT',
+    ),
+  ).toBeUndefined();
+});
+
+test('tests Stage 2 provider connectivity from the settings UI', async () => {
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Test Connection' })[0]);
+  });
+
+  await waitFor(() => {
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringMatching(/\/settings\/stage2-provider-settings\/test$/),
+      expect.objectContaining({ method: 'POST' }),
+    );
+  });
+  expect((await screen.findAllByText('Connection test succeeded.')).length).toBeGreaterThan(0);
 });
 
 test('renders split rules and saves through the trigger rules endpoint', async () => {

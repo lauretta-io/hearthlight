@@ -85,7 +85,8 @@ flowchart LR
 
 - `webapp` is both the operator-facing control plane and the API surface for external systems.
 - Source definitions, uploaded media, resource telemetry, model registrations, model bindings,
-  anomaly prompt settings, and alert rules all persist under the Postgres `control` schema.
+  anomaly prompt settings, Stage 2 provider settings, and alert rules all persist under the
+  Postgres `control` schema.
 - Runtime entities such as runs, incidents, entities, journey nodes, recordings, frames, and
   anomaly events persist under `runtime`.
 - Model registration is config-backed, then mirrored into Postgres for API/UI visibility.
@@ -218,6 +219,34 @@ Notable route groups:
 - `/start`, `/stop`, `/status`
 - `/sources`, `/sources/uploads`, `/system/resources`
 - `/model-options`, `/model-bindings`
+- `/settings/stage2-provider-settings`
+
+## Stage 2 Provider Settings
+
+External Stage 2 anomaly adapters now resolve their connection details through a
+workspace-level secure settings layer.
+
+Control-plane persistence:
+
+- `control.stage2_provider_setting`
+
+Stored fields:
+
+- `provider_key`
+- `config_json` for non-secret values such as `enabled`, `base_url`,
+  `model_name`, `timeout_seconds`
+- `secret_json_encrypted` for encrypted credential payloads
+
+Runtime resolution order:
+
+1. saved secure provider settings
+2. env-based bootstrap overrides
+3. model-registry runtime defaults
+
+This keeps `/model-bindings` responsible for model-key selection while secure
+provider settings handle the mutable endpoint and credential surface needed for
+operators to rotate keys or move endpoints without editing YAML or `.env`
+files.
 - `/settings/appearance`
 - `/settings/anomaly-prompts`
 - `/settings/alert-rules`, `/settings/alert-rule-options`

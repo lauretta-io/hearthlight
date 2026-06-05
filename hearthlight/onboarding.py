@@ -29,6 +29,7 @@ REQUIREMENT_PATHS = (
     Path("anomaly/requirements.txt"),
     Path("association/requirements.txt"),
 )
+MLX_REQUIREMENTS_PATH = Path("requirements-mlx.txt")
 
 MOUNTABLE_MODEL_STAGES = (
     "detector",
@@ -467,6 +468,10 @@ def detect_runtime_profile_recommendation() -> RuntimeProfileRecommendation:
     )
 
 
+def should_install_mlx_requirements() -> bool:
+    return platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
+
+
 def ensure_workspace_clone(
     target_dir: Path,
     *,
@@ -748,6 +753,13 @@ def install_python_requirements(root_dir: Path, *, python_executable: str) -> No
             [python_executable, "-m", "pip", "install", "-r", str(requirement_path)],
             cwd=root_dir,
         )
+    if should_install_mlx_requirements():
+        requirement_path = root_dir / MLX_REQUIREMENTS_PATH
+        if requirement_path.exists():
+            _run(
+                [python_executable, "-m", "pip", "install", "-r", str(requirement_path)],
+                cwd=root_dir,
+            )
     _run([python_executable, "-m", "pip", "install", "-e", str(root_dir)], cwd=root_dir)
 
 
@@ -843,6 +855,8 @@ def run_onboarding(args, root_dir: Path) -> int:
     if not args.skip_python_requirements:
         print("6. Python requirements")
         print("   Installing service requirements from webapp, ingestor, reid, anomaly, and association")
+        if should_install_mlx_requirements():
+            print("   Apple Silicon host detected; MLX extras will also be installed for hybrid-local-mlx.")
         if _prompt_yes_no("   Install Python requirements now?", default=True, assume_yes=args.yes):
             install_python_requirements(workspace, python_executable=str(python_path))
             print("   Python requirements installed.")

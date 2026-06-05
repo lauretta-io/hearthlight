@@ -26,6 +26,10 @@ from ..shared.utils.claude_anomaly_model import (
     validate_claude_anomaly_model_config,
 )
 from ..shared.utils.workspace_settings import get_workspace_setting_value
+from ..shared.utils.stage2_provider_settings import (
+    PROVIDER_KEY_CLAUDE_COMPATIBLE,
+    build_runtime_stage2_provider_settings,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -455,9 +459,25 @@ class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
                 SETTING_KEY_CLAUDE_ANOMALY_MODEL,
                 default=default_claude_anomaly_model_config(),
             )
+            provider_settings = build_runtime_stage2_provider_settings(
+                db,
+                PROVIDER_KEY_CLAUDE_COMPATIBLE,
+                runtime_defaults={
+                    "model_name": default_claude_anomaly_model_config()["model_name"],
+                    "timeout_seconds": default_claude_anomaly_model_config()["timeout_seconds"],
+                },
+            )
         if not isinstance(loaded, dict):
             loaded = default_claude_anomaly_model_config()
-        return validate_claude_anomaly_model_config(loaded, require_base_url=False)
+        merged = {
+            **loaded,
+            "enabled": bool(provider_settings.get("enabled", loaded.get("enabled"))),
+            "base_url": str(provider_settings.get("base_url") or loaded.get("base_url") or "").strip(),
+            "model_name": str(provider_settings.get("model_name") or loaded.get("model_name") or "").strip(),
+            "timeout_seconds": int(provider_settings.get("timeout_seconds") or loaded.get("timeout_seconds") or 10),
+            "auth_token": str(provider_settings.get("auth_token") or loaded.get("auth_token") or "").strip(),
+        }
+        return validate_claude_anomaly_model_config(merged, require_base_url=False)
 
     def build_event(
         self,
@@ -567,16 +587,38 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
             )
         return attachments
 
+    def _load_runtime_provider_config(self) -> dict[str, Any]:
+        with SessionLocal() as db:
+            return build_runtime_stage2_provider_settings(
+                db,
+                self.provider,
+                runtime_defaults={
+                    "model_name": self.model_name,
+                    "model_name_env": self.model_name_env,
+                    "api_key_env": self.api_key_env,
+                    "base_url": self.default_base_url,
+                    "base_url_env": self.base_url_env,
+                    "auth_optional": self.auth_optional,
+                    "timeout_seconds": self.timeout_seconds,
+                },
+            )
+
     def build_event(
         self,
         *,
         candidate: StageOneCandidate,
         prompts: PromptBundle,
     ) -> AnomalyEvent:
-        api_key = os.environ.get(self.api_key_env, "").strip()
-        if not api_key and not self.auth_optional:
-            return self._fallback_event(candidate=candidate, prompts=prompts, detail=f"missing {self.api_key_env}")
-        base_url = os.environ.get(self.base_url_env, "").strip() or self.default_base_url
+        try:
+            provider_config = self._load_runtime_provider_config()
+        except Exception as exc:
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
+        api_key = str(provider_config.get("api_key") or "").strip()
+        base_url = str(provider_config.get("base_url") or "").strip() or self.default_base_url
+        model_name = str(provider_config.get("model_name") or "").strip() or self.model_name
+        timeout_seconds = float(provider_config.get("timeout_seconds") or self.timeout_seconds)
+        if not api_key and not bool(provider_config.get("auth_optional", self.auth_optional)):
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail="missing provider credentials")
         if self.provider == "lauretta":
             endpoint = f"{base_url.rstrip('/')}/v1/hearthlight/anomaly-submissions"
             request_body = {
@@ -586,7 +628,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
                 "camera_id": candidate.camera_id,
                 "frame_id": candidate.frame_id,
                 "user_id": os.environ.get("LAURETTA_USER_ID", "").strip() or None,
-                "model": os.environ.get(self.model_name_env, "").strip() if self.model_name_env else self.model_name,
+                "model": model_name,
                 "stage_1_score": candidate.score,
                 "stage_1_category": candidate.category,
                 "visible_items": list(candidate.visible_items),
@@ -611,7 +653,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
                 method="POST",
             )
             try:
-                with request.urlopen(req, timeout=self.timeout_seconds) as response:
+                with request.urlopen(req, timeout=timeout_seconds) as response:
                     raw = json.loads(response.read().decode("utf-8"))
                 parsed = dict(raw.get("result") or raw)
                 return self._normalize_event(candidate=candidate, prompts=prompts, payload=parsed)
@@ -620,9 +662,6 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
                 return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
         endpoint = f"{base_url.rstrip('/')}/chat/completions"
         payload = self._build_request_payload(candidate=candidate, prompts=prompts)
-        model_name = os.environ.get(self.model_name_env, "").strip() if self.model_name_env else ""
-        if not model_name:
-            model_name = self.model_name
         request_body = {
             "model": model_name,
             "messages": [
@@ -642,7 +681,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+            with request.urlopen(req, timeout=timeout_seconds) as response:
                 raw = json.loads(response.read().decode("utf-8"))
             content = raw.get("choices", [{}])[0].get("message", {}).get("content", "{}")
             parsed = _parse_json_response(content) if isinstance(content, str) else dict(content or {})
@@ -666,21 +705,40 @@ class ClaudeStageTwoAdapter(RemoteAPIMixin):
         ).strip()
         self.api_version = str(self.runtime.get("api_version") or "2023-06-01").strip()
 
+    def _load_runtime_provider_config(self) -> dict[str, Any]:
+        with SessionLocal() as db:
+            return build_runtime_stage2_provider_settings(
+                db,
+                PROVIDER_KEY_CLAUDE_COMPATIBLE,
+                runtime_defaults={
+                    "model_name": self.model_name,
+                    "model_name_env": self.model_name_env,
+                    "api_key_env": self.api_key_env,
+                    "base_url": self.default_base_url,
+                    "base_url_env": self.base_url_env,
+                    "auth_optional": False,
+                    "timeout_seconds": self.timeout_seconds,
+                },
+            )
+
     def build_event(
         self,
         *,
         candidate: StageOneCandidate,
         prompts: PromptBundle,
     ) -> AnomalyEvent:
-        api_key = os.environ.get(self.api_key_env, "").strip()
+        try:
+            provider_config = self._load_runtime_provider_config()
+        except Exception as exc:
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
+        api_key = str(provider_config.get("auth_token") or provider_config.get("api_key") or "").strip()
         if not api_key:
-            return self._fallback_event(candidate=candidate, prompts=prompts, detail=f"missing {self.api_key_env}")
-        base_url = os.environ.get(self.base_url_env, "").strip() or self.default_base_url
+            return self._fallback_event(candidate=candidate, prompts=prompts, detail="missing provider credentials")
+        base_url = str(provider_config.get("base_url") or "").strip() or self.default_base_url
         endpoint = f"{base_url.rstrip('/')}/messages"
         payload = self._build_request_payload(candidate=candidate, prompts=prompts)
-        model_name = os.environ.get(self.model_name_env, "").strip() if self.model_name_env else ""
-        if not model_name:
-            model_name = self.model_name
+        model_name = str(provider_config.get("model_name") or "").strip() or self.model_name
+        timeout_seconds = float(provider_config.get("timeout_seconds") or self.timeout_seconds)
         request_body = {
             "model": model_name,
             "max_tokens": 700,
@@ -698,7 +756,7 @@ class ClaudeStageTwoAdapter(RemoteAPIMixin):
             method="POST",
         )
         try:
-            with request.urlopen(req, timeout=self.timeout_seconds) as response:
+            with request.urlopen(req, timeout=timeout_seconds) as response:
                 raw = json.loads(response.read().decode("utf-8"))
             content_blocks = list(raw.get("content") or [])
             text_block = next(

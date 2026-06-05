@@ -108,6 +108,33 @@ webhook bearer tokens instead of echoing them back to the browser. Updates prese
 secret when the masked placeholder is submitted unchanged, so operators can edit labels or toggles
 without retyping credentials.
 
+### Stage 2 provider secret storage
+
+External anomaly-detection provider settings now use a dedicated control-plane
+table instead of storing provider credentials inside plaintext workspace
+settings JSON.
+
+Current supported provider profiles:
+
+- `openai`
+- `lm_studio`
+- `lauretta`
+- `claude_compatible`
+
+Security properties:
+
+- provider secrets are encrypted before they are written to Postgres
+- the encryption master key is supplied through `WEBAPP_SECRET_ENCRYPTION_KEY`
+- GET responses redact saved secrets as `********`
+- masked placeholder submits preserve the previously stored secret
+- raw secrets are not written to browser local storage by the Settings UI
+- provider test failures sanitize secrets from returned error text before the
+  message is persisted or returned
+
+If `WEBAPP_SECRET_ENCRYPTION_KEY` is missing, API writes that include Stage 2
+provider secrets fail clearly. Reads of already saved encrypted secrets also
+fail clearly instead of silently returning partial plaintext data.
+
 ### Request size ceiling
 
 The API now rejects requests whose declared `Content-Length` exceeds

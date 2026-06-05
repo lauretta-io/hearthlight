@@ -164,6 +164,7 @@ chatgpt_api_stage_2:
     model_name: gpt-5.4-mini
     model_name_env: OPENAI_MODEL_NAME
     base_url: https://api.openai.com/v1
+    base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
     timeout_seconds: 30
     prompt_mode: api
@@ -192,6 +193,7 @@ claude_api_stage_2:
     model_name: claude-sonnet-4-6
     model_name_env: ANTHROPIC_MODEL_NAME
     base_url: https://api.anthropic.com/v1
+    base_url_env: ANTHROPIC_BASE_URL
     api_key_env: ANTHROPIC_API_KEY
     timeout_seconds: 30
     prompt_mode: api

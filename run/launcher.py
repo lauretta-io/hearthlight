@@ -21,9 +21,16 @@ if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
+from shared.utils.image_variants import (
+    IMAGE_VARIANTS,
+    default_image_services_for_variant,
+    normalize_selected_services,
+    resolve_image_variant,
+)
 from shared.utils.local_worker_runtime import (
     WORKER_RUNTIME_DOCKER,
     WORKER_RUNTIME_HYBRID_LOCAL_CPU,
+    WORKER_RUNTIME_HYBRID_LOCAL_MLX,
     detect_default_worker_runtime,
 )
 try:
@@ -84,6 +91,8 @@ class LaunchSelection:
 
 def detect_worker_runtime(profile: str) -> tuple[str, str]:
     runtime = detect_default_worker_runtime(profile=profile)
+    if runtime == WORKER_RUNTIME_HYBRID_LOCAL_MLX:
+        return runtime, "defaulting to hybrid-local-mlx on Apple Silicon CPU runs"
     if runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU:
         return runtime, "defaulting to hybrid-local-cpu on macOS CPU full-stack runs"
     return runtime, "defaulting to docker worker runtime"
@@ -504,7 +513,7 @@ def build_effective_config(selection: LaunchSelection, activate: bool = True) ->
     )
     effective_show_video = (
         False
-        if selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU
+        if selection.worker_runtime in {WORKER_RUNTIME_HYBRID_LOCAL_CPU, WORKER_RUNTIME_HYBRID_LOCAL_MLX}
         else selection.show_video
     )
     config_text = set_nested_scalar(config_text, ["output", "visualize"], "show_vid", effective_show_video)
@@ -554,6 +563,10 @@ def compose_environment(selection: LaunchSelection) -> dict[str, str]:
     env["CUDA_VISIBLE_DEVICES"] = selection.cuda_visible_devices if selection.use_cuda else ""
     env["HEARTHLIGHT_WORKER_RUNTIME"] = selection.worker_runtime
     env["HEARTHLIGHT_HOST_PROJECT_ROOT"] = str(ROOT_DIR)
+    env["HEARTHLIGHT_IMAGE_VARIANT"] = resolve_image_variant(
+        use_cuda=selection.use_cuda,
+        worker_runtime=selection.worker_runtime,
+    )
     return env
 
 
@@ -565,6 +578,73 @@ def configured_published_services(services: Iterable[str]) -> list[str]:
         if image_var and str(env_file_values.get(image_var, "")).strip():
             configured.append(service)
     return configured
+
+
+def update_env_file(path: Path, updates: dict[str, str]) -> None:
+    existing_lines = path.read_text().splitlines() if path.exists() else []
+    remaining = dict(updates)
+    rewritten: list[str] = []
+    for line in existing_lines:
+        if "=" not in line or line.lstrip().startswith("#"):
+            rewritten.append(line)
+            continue
+        key, _, _value = line.partition("=")
+        key = key.strip()
+        if key in remaining:
+            rewritten.append(f"{key}={remaining.pop(key)}")
+        else:
+            rewritten.append(line)
+    if rewritten and rewritten[-1] != "":
+        rewritten.append("")
+    for key, value in updates.items():
+        if key in remaining:
+            rewritten.append(f"{key}={value}")
+    path.write_text("\n".join(rewritten) + "\n")
+
+
+def prepare_local_images(
+    *,
+    profile: str,
+    worker_runtime: str,
+    services: Iterable[str] | None = None,
+    variant_override: str | None = None,
+    dry_run: bool = False,
+    write_env: str | None = None,
+) -> int:
+    docker_binary = find_docker_binary()
+    if docker_binary is None:
+        raise SystemExit("Docker CLI not found. Install Docker Desktop or add docker to PATH.")
+    use_cuda = profile == "cuda"
+    variant = variant_override or resolve_image_variant(use_cuda=use_cuda, worker_runtime=worker_runtime)
+    selected_services = normalize_selected_services(services, variant=variant)
+    env = build_docker_env(docker_binary)
+    env.setdefault("RELOAD", "")
+    env["HEARTHLIGHT_WORKER_RUNTIME"] = worker_runtime
+    env["HEARTHLIGHT_HOST_PROJECT_ROOT"] = str(ROOT_DIR)
+    env["HEARTHLIGHT_IMAGE_VARIANT"] = variant
+    command = compose_command(docker_binary, use_cuda) + ["build", *selected_services]
+
+    print(f"Detected profile: {profile}")
+    print(f"Worker runtime: {worker_runtime}")
+    print(f"Image variant: {variant}")
+    print(f"Services: {', '.join(selected_services)}")
+    print(f"Compose files: {', '.join(str(path) for path in compose_files(use_cuda))}")
+
+    if dry_run:
+        print("DRY RUN:", " ".join(command))
+        if write_env:
+            print(f"DRY RUN: would update {write_env} with HEARTHLIGHT_IMAGE_VARIANT={variant}")
+        return 0
+
+    subprocess.run(command, cwd=ROOT_DIR, env=env, check=True)
+
+    if write_env:
+        env_path = (ROOT_DIR / write_env).resolve() if not Path(write_env).is_absolute() else Path(write_env)
+        update_env_file(env_path, {"HEARTHLIGHT_IMAGE_VARIANT": variant})
+        print(f"Wrote image variant to {env_path}")
+
+    print("Docker image preparation completed")
+    return 0
 
 
 def wait_for_dashboard(timeout_seconds: float = 30.0) -> bool:
@@ -591,6 +671,7 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
     docker_full_stack = selection.worker_runtime == WORKER_RUNTIME_DOCKER
     services = FULL_STACK_SERVICES if docker_full_stack else CORE_SERVICES
     published_services = configured_published_services(services)
+    image_variant = env["HEARTHLIGHT_IMAGE_VARIANT"]
 
     print(f"Template: {selection.template_path}")
     print(
@@ -612,12 +693,17 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
     )
     print(f"Compose files: {', '.join(str(path) for path in compose_files(selection.use_cuda))}")
     print(f"Services: {', '.join(services)}")
+    print(f"Image variant: {image_variant}")
     if selection.use_cuda:
         print(f"CUDA_VISIBLE_DEVICES={selection.cuda_visible_devices or 'all'}")
+    elif selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_MLX:
+        print("Running in CPU mode with host MLX-backed local workers")
     else:
         print("Running in CPU mode")
     if published_services:
         print(f"Published images: {', '.join(published_services)}")
+    else:
+        print(f"Prepared local image services: {', '.join(default_image_services_for_variant(image_variant))}")
 
     if dry_run:
         return 0
@@ -634,7 +720,7 @@ def start_stack(selection: LaunchSelection, dry_run: bool = False) -> int:
         dashboard_thread = threading.Thread(target=_wait_and_open_dashboard, daemon=True)
         dashboard_thread.start()
 
-    if selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU:
+    if selection.worker_runtime in {WORKER_RUNTIME_HYBRID_LOCAL_CPU, WORKER_RUNTIME_HYBRID_LOCAL_MLX}:
         subprocess.run(command + ["up", "-d", *CORE_SERVICES], cwd=ROOT_DIR, env=env, check=True)
         return subprocess.call(
             [sys.executable, "-m", "hearthlight.local_workers", "start"],
@@ -719,7 +805,7 @@ def build_interactive_selection() -> LaunchSelection:
     detected_worker_runtime, detected_worker_runtime_reason = detect_worker_runtime(profile)
     worker_runtime = prompt_choice(
         f"Worker runtime ({detected_worker_runtime_reason})",
-        [WORKER_RUNTIME_DOCKER, WORKER_RUNTIME_HYBRID_LOCAL_CPU],
+        [WORKER_RUNTIME_DOCKER, WORKER_RUNTIME_HYBRID_LOCAL_CPU, WORKER_RUNTIME_HYBRID_LOCAL_MLX],
         default=detected_worker_runtime,
     )
     use_cuda = profile == "cuda"

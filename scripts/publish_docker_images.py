@@ -12,24 +12,20 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
+from shared.utils.image_variants import (
+    IMAGE_VARIANTS,
+    build_local_image_name,
+    build_published_image_name,
+    default_image_services_for_variant,
+)
 
 
 SERVICE_IMAGE_VARS = {
     "rabbitmq": "HEARTHLIGHT_RABBITMQ_IMAGE",
     "webapp": "HEARTHLIGHT_WEBAPP_IMAGE",
     "ingestor": "HEARTHLIGHT_INGESTOR_IMAGE",
-    "reid": "HEARTHLIGHT_REID_IMAGE",
     "association": "HEARTHLIGHT_ASSOCIATION_IMAGE",
     "anomaly": "HEARTHLIGHT_ANOMALY_IMAGE",
-}
-
-LOCAL_IMAGE_NAMES = {
-    "rabbitmq": "hearthlight-rabbitmq:latest",
-    "webapp": "hearthlight-webapp:latest",
-    "ingestor": "hearthlight-ingestor:latest",
-    "reid": "hearthlight-reid:latest",
-    "association": "hearthlight-association:latest",
-    "anomaly": "hearthlight-anomaly:latest",
 }
 
 DEFAULT_SERVICES = list(SERVICE_IMAGE_VARS.keys())
@@ -40,7 +36,13 @@ def parse_args() -> argparse.Namespace:
         description="Build, tag, push Hearthlight service images, and optionally update .env to use them.",
     )
     parser.add_argument("--namespace", required=True, help="Docker Hub namespace/org, for example laurettaio")
-    parser.add_argument("--tag", default="0.8.1", help="Published image tag")
+    parser.add_argument("--tag", default="0.8.2", help="Published image tag")
+    parser.add_argument(
+        "--variant",
+        choices=IMAGE_VARIANTS,
+        default="cpu",
+        help="Image variant to publish.",
+    )
     parser.add_argument(
         "--service",
         action="append",
@@ -60,11 +62,7 @@ def parse_args() -> argparse.Namespace:
 
 
 def selected_services(args: argparse.Namespace) -> list[str]:
-    return args.service or DEFAULT_SERVICES
-
-
-def published_image(namespace: str, service: str, tag: str) -> str:
-    return f"{namespace}/hearthlight-{service}:{tag}"
+    return args.service or default_image_services_for_variant(args.variant)
 
 
 def run(command: list[str], *, env: dict[str, str]) -> None:
@@ -103,16 +101,22 @@ def main() -> int:
     services = selected_services(args)
     env = build_docker_env(docker_binary)
     env.setdefault("RELOAD", "")
+    env["HEARTHLIGHT_IMAGE_VARIANT"] = args.variant
 
     if args.dry_run:
         print(f"INFO: namespace={args.namespace}")
         print(f"INFO: tag={args.tag}")
+        print(f"INFO: variant={args.variant}")
         print(f"INFO: services={', '.join(services)}")
         if not args.skip_build:
-            print("DRY RUN:", " ".join([docker_binary, "compose", "build", *services]))
+            build_command = [docker_binary, "compose"]
+            if args.variant == "cuda":
+                build_command.extend(["-f", "docker-compose.yaml", "-f", "run/docker-compose.cuda.yaml"])
+            build_command.extend(["build", *services])
+            print("DRY RUN:", " ".join(build_command))
         for service in services:
-            local_image = LOCAL_IMAGE_NAMES[service]
-            remote_image = published_image(args.namespace, service, args.tag)
+            local_image = build_local_image_name(service, args.variant)
+            remote_image = build_published_image_name(args.namespace, service, args.tag, args.variant)
             print("DRY RUN:", " ".join([docker_binary, "tag", local_image, remote_image]))
             print("DRY RUN:", " ".join([docker_binary, "push", remote_image]))
         if args.write_env:
@@ -120,12 +124,16 @@ def main() -> int:
         return 0
 
     if not args.skip_build:
-        run([docker_binary, "compose", "build", *services], env=env)
+        build_command = [docker_binary, "compose"]
+        if args.variant == "cuda":
+            build_command.extend(["-f", str(REPO_ROOT / "docker-compose.yaml"), "-f", str(REPO_ROOT / "run" / "docker-compose.cuda.yaml")])
+        build_command.extend(["build", *services])
+        run(build_command, env=env)
 
     env_updates: dict[str, str] = {}
     for service in services:
-        local_image = LOCAL_IMAGE_NAMES[service]
-        remote_image = published_image(args.namespace, service, args.tag)
+        local_image = build_local_image_name(service, args.variant)
+        remote_image = build_published_image_name(args.namespace, service, args.tag, args.variant)
         print(f"INFO: tagging {local_image} -> {remote_image}")
         run([docker_binary, "tag", local_image, remote_image], env=env)
         print(f"INFO: pushing {remote_image}")

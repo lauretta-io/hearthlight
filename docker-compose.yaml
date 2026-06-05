@@ -28,8 +28,7 @@ services:
       start_period: 10s
 
   rabbitmq:
-    image: ${HEARTHLIGHT_RABBITMQ_IMAGE:-hearthlight-rabbitmq:latest}
-    pull_policy: never
+    image: ${HEARTHLIGHT_RABBITMQ_IMAGE:-hearthlight-rabbitmq:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     build: ./rabbitmq
     networks:
       - mynetwork
@@ -46,8 +45,7 @@ services:
       start_period: 10s
 
   reset_db:
-    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
-    pull_policy: never
+    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     build: ./webapp
     networks:
       - mynetwork
@@ -65,8 +63,7 @@ services:
       python -um src.shared.database.recreate_db'
 
   webapp:
-    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:latest}
-    pull_policy: never
+    image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./webapp
@@ -144,8 +141,7 @@ services:
       start_period: 10s
 
   ingestor:
-    image: ${HEARTHLIGHT_INGESTOR_IMAGE:-hearthlight-ingestor:latest}
-    pull_policy: never
+    image: ${HEARTHLIGHT_INGESTOR_IMAGE:-hearthlight-ingestor:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./ingestor
@@ -185,8 +181,7 @@ services:
       fi'
 
   association:
-    image: ${HEARTHLIGHT_ASSOCIATION_IMAGE:-hearthlight-association:latest}
-    pull_policy: never
+    image: ${HEARTHLIGHT_ASSOCIATION_IMAGE:-hearthlight-association:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     build: ./association
     networks:
       - mynetwork
@@ -250,8 +245,7 @@ services:
       fi'
 
   anomaly:
-    image: ${HEARTHLIGHT_ANOMALY_IMAGE:-hearthlight-anomaly:latest}
-    pull_policy: never
+    image: ${HEARTHLIGHT_ANOMALY_IMAGE:-hearthlight-anomaly:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     build: ./anomaly
