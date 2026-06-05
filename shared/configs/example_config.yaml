@@ -123,7 +123,7 @@ anomaly:
   cooldown_seconds: 10      # min gap between sustained-activity events
   min_track_count: 1        # tracks needed in-frame to consider an event
   frame_update_interval: 1  # min seconds between anomaly-state updates
-  device: cuda:0
+  device: cpu
   threshold: 0.5
 vllm:
   openai_host: host.docker.internal

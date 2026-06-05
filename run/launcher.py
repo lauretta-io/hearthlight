@@ -499,6 +499,9 @@ def build_effective_config(selection: LaunchSelection, activate: bool = True) ->
     config_text = set_nested_scalar(
         config_text, ["feature_extractor"], "device", selection.feature_extractor_device
     )
+    config_text = set_nested_scalar(
+        config_text, ["anomaly"], "device", "cuda:0" if selection.use_cuda else "cpu"
+    )
     effective_show_video = (
         False
         if selection.worker_runtime == WORKER_RUNTIME_HYBRID_LOCAL_CPU
