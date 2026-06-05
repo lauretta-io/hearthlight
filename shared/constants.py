@@ -106,11 +106,9 @@ class Role:
 ANOMALY_ADDITIONAL_CONFIG = {
     "extra_messages": [{"role": "assistant", "content": [{"type": "text", "text": "/no_think"}]},],
     "extra_body": {
-        "model": "OpenGVLab/InternVL_2_5_HiCo_R16", 
-        "temperature": 0, 
+        "temperature": 0,
         "max_tokens": 1024,
         "frequency_penalty": 1,
-        "stop": '}\n',              # Helps reduce ending newlines/whitespace
         "response_format": {
             "type": "json_schema",
             "json_schema": {
@@ -151,6 +149,6 @@ ANOMALY_ADDITIONAL_CONFIG = {
                     "additionalProperties": False,
                 }
             }
-        }
+        },
     }
 }
