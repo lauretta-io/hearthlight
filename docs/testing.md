@@ -131,7 +131,21 @@ cd frontend
 npm test -- --watchAll=false
 ```
 
-Use a modern Node/npm toolchain for this. The local machine used for this update has Node
-`22.21.0`, but the active `npm` command still resolves to an incompatible global install and fails
-before dependency installation. Frontend tests remain blocked until that npm installation/path
-issue is corrected.
+The secure Stage 2 provider settings workflow now also has browser-driven E2E
+coverage through Playwright:
+
+```bash
+cd frontend
+npm run test:e2e
+```
+
+The Playwright suite stubs the backend API so operators can verify:
+
+- masked-secret persistence
+- API-key rotation behavior
+- endpoint changes
+- provider test success/failure handling
+- no raw Stage 2 provider secrets retained in browser storage
+
+Use a modern Node/npm toolchain for this. The local machine used for this
+update has Node `22.21.0`.

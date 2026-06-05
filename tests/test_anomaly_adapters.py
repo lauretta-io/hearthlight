@@ -41,6 +41,14 @@ class _CaptureURLopener:
         return _FakeHTTPResponse(self.payload)
 
 
+class _NullSessionContext:
+    def __enter__(self):
+        return object()
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
     def setUp(self):
         self.candidate = StageOneCandidate(
@@ -101,6 +109,16 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             "os.environ",
             {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL_NAME": "gpt-5.5"},
             clear=False,
+        ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://api.openai.com/v1",
+                "model_name": "gpt-5.5",
+                "timeout_seconds": 30,
+                "auth_optional": False,
+                "api_key": "test-key",
+            },
         ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
             event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
         self.assertEqual(event.title, "Possible loitering near bag")
@@ -126,9 +144,18 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         )
         response_payload = {"choices": [{"message": {"content": "{not-json"}}]}
         with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
-            "anomaly.adapters.request.urlopen",
-            return_value=_FakeHTTPResponse(response_payload),
-        ):
+            "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
+        ), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://api.openai.com/v1",
+                "model_name": "gpt-5.4-mini",
+                "timeout_seconds": 30,
+                "auth_optional": False,
+                "api_key": "test-key",
+            },
+        ), patch("anomaly.adapters.request.urlopen", return_value=_FakeHTTPResponse(response_payload)):
             event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "chatgpt_api_stage_2")
         self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")
@@ -145,9 +172,18 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             }
         )
         with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
-            "anomaly.adapters.request.urlopen",
-            side_effect=error.URLError("network down"),
-        ):
+            "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
+        ), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://api.openai.com/v1",
+                "model_name": "gpt-5.4-mini",
+                "timeout_seconds": 30,
+                "auth_optional": False,
+                "api_key": "test-key",
+            },
+        ), patch("anomaly.adapters.request.urlopen", side_effect=error.URLError("network down")):
             event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
         self.assertEqual(event.category, "loitering")
         self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")
@@ -191,6 +227,16 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             "os.environ",
             {"LM_STUDIO_MODEL_NAME": "qwen3-local", "LM_STUDIO_API_BASE_URL": "http://localhost:1234/v1"},
             clear=False,
+        ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "http://localhost:1234/v1",
+                "model_name": "qwen3-local",
+                "timeout_seconds": 30,
+                "auth_optional": True,
+                "api_key": "",
+            },
         ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
             event = adapter.build_event(candidate=candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "lm_studio_stage_2")
@@ -199,6 +245,56 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         self.assertNotIn("authorization", header_map)
         payload = json.loads(opener.last_request.data.decode("utf-8"))
         self.assertEqual(payload["model"], "qwen3-local")
+
+    def test_openai_compatible_adapter_prefers_resolved_secure_provider_settings(self):
+        adapter = OpenAICompatibleStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "openai",
+                    "model_name": "registry-model",
+                    "api_key_env": "OPENAI_API_KEY",
+                    "base_url": "https://api.openai.com/v1",
+                }
+            }
+        )
+        opener = _CaptureURLopener(
+            {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "title": "Secure profile",
+                                    "category": "loitering",
+                                    "score": 0.8,
+                                    "reasoning": "Used secure settings.",
+                                    "visible_items": ["person", "backpack"],
+                                    "visible_activities": ["loitering"],
+                                }
+                            )
+                        }
+                    }
+                ]
+            }
+        )
+        with patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://saved.example/v1",
+                "model_name": "saved-model",
+                "timeout_seconds": 17,
+                "auth_optional": False,
+                "api_key": "saved-secret",
+            },
+        ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
+            event = adapter.build_event(candidate=self.candidate, prompts=self.prompts)
+        self.assertEqual(event.title, "Secure profile")
+        self.assertEqual(opener.last_request.full_url, "https://saved.example/v1/chat/completions")
+        self.assertEqual(opener.last_request.get_header("Authorization"), "Bearer saved-secret")
+        self.assertEqual(opener.last_timeout, 17)
+        payload = json.loads(opener.last_request.data.decode("utf-8"))
+        self.assertEqual(payload["model"], "saved-model")
 
     def test_lauretta_provider_posts_submission_payload_with_inline_images(self):
         with tempfile.NamedTemporaryFile(suffix=".jpg") as frame_file:
@@ -241,6 +337,16 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
                     "LAURETTA_USER_ID": "user-77",
                 },
                 clear=False,
+            ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
+                "anomaly.adapters.build_runtime_stage2_provider_settings",
+                return_value={
+                    "enabled": True,
+                    "base_url": "https://lauretta.example",
+                    "model_name": "lauretta-anomaly-stage-2",
+                    "timeout_seconds": 30,
+                    "auth_optional": False,
+                    "api_key": "test-key",
+                },
             ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
                 event = adapter.build_event(candidate=candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "lauretta_api_stage_2")
@@ -264,7 +370,18 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
                 }
             }
         )
-        with patch.dict("os.environ", {}, clear=True):
+        with patch.dict("os.environ", {}, clear=True), patch(
+            "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
+        ), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://api.anthropic.com/v1",
+                "model_name": "claude-sonnet-4-6",
+                "timeout_seconds": 30,
+                "auth_token": "",
+            },
+        ):
             event = adapter.build_event(candidate=candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "claude_api_stage_2")
         self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")
@@ -305,6 +422,15 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             "os.environ",
             {"ANTHROPIC_API_KEY": "anthropic-test", "ANTHROPIC_MODEL_NAME": "claude-opus-4-7"},
             clear=False,
+        ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://api.anthropic.com/v1",
+                "model_name": "claude-opus-4-7",
+                "timeout_seconds": 30,
+                "auth_token": "anthropic-test",
+            },
         ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
             event = adapter.build_event(candidate=candidate, prompts=self.prompts)
         self.assertEqual(event.title, "Bag abandoned near platform edge")
@@ -316,6 +442,56 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         self.assertEqual(header_map.get("anthropic-version"), "2023-06-01")
         payload = json.loads(opener.last_request.data.decode("utf-8"))
         self.assertEqual(payload["model"], "claude-opus-4-7")
+
+    def test_claude_adapter_uses_secure_provider_settings(self):
+        candidate = replace(self.candidate, stage_2_model_key="claude_api_stage_2")
+        adapter = ClaudeStageTwoAdapter(
+            {
+                "runtime": {
+                    "provider": "anthropic",
+                    "model_name": "claude-sonnet-4-6",
+                    "api_key_env": "ANTHROPIC_API_KEY",
+                    "base_url": "https://api.anthropic.com/v1",
+                }
+            }
+        )
+        opener = _CaptureURLopener(
+            {
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "title": "Claude secure profile",
+                                "category": "loitering",
+                                "score": 0.81,
+                                "reasoning": "Used secure settings.",
+                                "visible_items": ["person", "backpack"],
+                                "visible_activities": ["loitering"],
+                            }
+                        ),
+                    }
+                ]
+            }
+        )
+        with patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://claude-secure.example/v1",
+                "model_name": "claude-saved",
+                "timeout_seconds": 21,
+                "auth_token": "secure-token",
+            },
+        ), patch("anomaly.adapters.request.urlopen", side_effect=opener):
+            event = adapter.build_event(candidate=candidate, prompts=self.prompts)
+        self.assertEqual(event.title, "Claude secure profile")
+        self.assertEqual(opener.last_request.full_url, "https://claude-secure.example/v1/messages")
+        header_map = {key.lower(): value for key, value in opener.last_request.header_items()}
+        self.assertEqual(header_map.get("x-api-key"), "secure-token")
+        self.assertEqual(opener.last_timeout, 21)
+        payload = json.loads(opener.last_request.data.decode("utf-8"))
+        self.assertEqual(payload["model"], "claude-saved")
 
     def test_claude_adapter_falls_back_on_malformed_json(self):
         candidate = replace(self.candidate, stage_2_model_key="claude_api_stage_2")
@@ -331,9 +507,17 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         )
         response_payload = {"content": [{"type": "text", "text": "{bad-json"}]}
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "anthropic-test"}, clear=False), patch(
-            "anomaly.adapters.request.urlopen",
-            return_value=_FakeHTTPResponse(response_payload),
-        ):
+            "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
+        ), patch(
+            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            return_value={
+                "enabled": True,
+                "base_url": "https://api.anthropic.com/v1",
+                "model_name": "claude-sonnet-4-6",
+                "timeout_seconds": 30,
+                "auth_token": "anthropic-test",
+            },
+        ), patch("anomaly.adapters.request.urlopen", return_value=_FakeHTTPResponse(response_payload)):
             event = adapter.build_event(candidate=candidate, prompts=self.prompts)
         self.assertEqual(event.model_key, "claude_api_stage_2")
         self.assertIn("Stage-2 remote model was unavailable", event.reasoning or "")

@@ -606,6 +606,23 @@ class WorkspaceSetting(Base):
     deleted_at = mapped_column(DateTime)
 
 
+class Stage2ProviderSetting(Base):
+    __tablename__ = "stage2_provider_setting"
+    __table_args__ = (
+        UniqueConstraint("provider_key", name="uq_stage2_provider_setting_key"),
+        {"schema": "control"},
+    )
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider_key = mapped_column(String(64), nullable=False)
+    config_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
+    secret_json_encrypted = mapped_column(Text, nullable=False, server_default=text("''"))
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
 class AnomalyEvent(Base):
     __tablename__ = "anomaly_event"
     __table_args__ = {"schema": "runtime"}

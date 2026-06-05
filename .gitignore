@@ -45,6 +45,8 @@ htmlcov/
 .coverage
 .coverage.*
 .cache
+frontend/playwright-report/
+frontend/test-results/
 nosetests.xml
 coverage.xml
 *.cover

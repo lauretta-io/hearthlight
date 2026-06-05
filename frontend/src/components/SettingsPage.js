@@ -58,6 +58,40 @@ const EMPTY_PROMPT_SETTINGS = {
   anomaly_items: [],
   anomaly_behaviors: [],
 };
+const STAGE2_PROVIDER_OPTIONS = [
+  {
+    provider_key: 'openai',
+    label: 'OpenAI',
+    secretField: 'api_key',
+    secretLabel: 'API Key',
+    authOptional: false,
+    runtimeProviders: ['openai'],
+  },
+  {
+    provider_key: 'lm_studio',
+    label: 'LM Studio',
+    secretField: 'api_key',
+    secretLabel: 'API Key',
+    authOptional: true,
+    runtimeProviders: ['lm_studio'],
+  },
+  {
+    provider_key: 'lauretta',
+    label: 'Lauretta',
+    secretField: 'api_key',
+    secretLabel: 'API Key',
+    authOptional: false,
+    runtimeProviders: ['lauretta'],
+  },
+  {
+    provider_key: 'claude_compatible',
+    label: 'Claude-Compatible',
+    secretField: 'auth_token',
+    secretLabel: 'Auth Token',
+    authOptional: false,
+    runtimeProviders: ['claude_compatible', 'anthropic'],
+  },
+];
 const SETTINGS_TABS = [
   { key: 'monitoring', label: 'Monitor Run' },
   { key: 'sources', label: 'Sources' },
@@ -252,6 +286,49 @@ const createTelegramSubscriptionDraft = () => ({
   media_source: 'none',
 });
 const MASKED_SECRET_VALUE = '********';
+
+const createStage2ProviderDraft = (providerKey) => {
+  const option = STAGE2_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey);
+  return {
+    provider_key: providerKey,
+    display_name: option?.label || providerKey,
+    enabled: false,
+    base_url: '',
+    model_name: '',
+    timeout_seconds: 30,
+    auth_optional: Boolean(option?.authOptional),
+    api_key: '',
+    auth_token: '',
+    secret_present: false,
+    last_test_status: null,
+    last_test_message: null,
+    last_tested_at: null,
+  };
+};
+
+const hydrateStage2ProviderSettings = (payload) => {
+  const providerKey = payload?.provider_key || '';
+  return {
+    ...createStage2ProviderDraft(providerKey),
+    ...payload,
+    provider_key: providerKey,
+    display_name: payload?.display_name ?? (STAGE2_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey)?.label || providerKey),
+    enabled: Boolean(payload?.enabled),
+    base_url: payload?.base_url ?? '',
+    model_name: payload?.model_name ?? '',
+    timeout_seconds: Number.isFinite(payload?.timeout_seconds) ? payload.timeout_seconds : 30,
+    auth_optional: Boolean(payload?.auth_optional),
+    api_key: payload?.api_key ?? '',
+    auth_token: payload?.auth_token ?? '',
+    secret_present: Boolean(payload?.secret_present),
+    last_test_status: payload?.last_test_status ?? null,
+    last_test_message: payload?.last_test_message ?? null,
+    last_tested_at: payload?.last_tested_at ?? null,
+  };
+};
+
+const getStage2ProviderOption = (providerKey) =>
+  STAGE2_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey) || null;
 
 const hydrateTelegramSubscription = (subscription, fallbackIndex = 0) => ({
   clientKey: subscription.id
@@ -633,6 +710,7 @@ const SettingsPage = ({
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
   const [isSavingGoveeEndpoints, setIsSavingGoveeEndpoints] = useState(false);
+  const [isSavingStage2ProviderSettings, setIsSavingStage2ProviderSettings] = useState(false);
   const [isSavingConnectorZooRepoSettings, setIsSavingConnectorZooRepoSettings] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
@@ -641,12 +719,14 @@ const SettingsPage = ({
   const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
   const [appleMessageSubscriptionErrors, setAppleMessageSubscriptionErrors] = useState({});
   const [goveeEndpointErrors, setGoveeEndpointErrors] = useState({});
+  const [stage2ProviderErrors, setStage2ProviderErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
   const [busyGoveeTests, setBusyGoveeTests] = useState({});
   const [busyGoveeDiscovery, setBusyGoveeDiscovery] = useState({});
+  const [busyStage2ProviderTests, setBusyStage2ProviderTests] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
   const [alertRules, setAlertRules] = useState([]);
@@ -655,6 +735,9 @@ const SettingsPage = ({
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
   const [goveeEndpoints, setGoveeEndpoints] = useState([]);
   const [genericConnectorEndpoints, setGenericConnectorEndpoints] = useState([]);
+  const [stage2ProviderSettings, setStage2ProviderSettings] = useState(
+    STAGE2_PROVIDER_OPTIONS.map((option) => createStage2ProviderDraft(option.provider_key))
+  );
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
   const [connectorSubTab, setConnectorSubTab] = useState('connections');
@@ -836,6 +919,29 @@ const SettingsPage = ({
     );
   };
 
+  const reloadStage2ProviderSettings = async () => {
+    const response = await fetch(`${BaseURL}/settings/stage2-provider-settings`);
+    if (!response.ok) {
+      let detail = null;
+      try {
+        const payload = await response.json();
+        detail = payload?.detail || null;
+      } catch (error) {
+        detail = null;
+      }
+      throw new Error(detail || 'Failed to load Stage 2 provider settings');
+    }
+    const data = await response.json();
+    const nextByKey = new Map(
+      normalizeListPayload(data).map((item) => [item.provider_key, hydrateStage2ProviderSettings(item)]),
+    );
+    setStage2ProviderSettings(
+      STAGE2_PROVIDER_OPTIONS.map((option) =>
+        nextByKey.get(option.provider_key) || createStage2ProviderDraft(option.provider_key)
+      ),
+    );
+  };
+
   const reloadConnectorZooRepoSettings = async () => {
     const response = await fetch(`${BaseURL}/settings/connector-zoo-repo`);
     if (!response.ok) {
@@ -904,6 +1010,7 @@ const SettingsPage = ({
         await reloadAppleMessageSubscriptionState();
         await reloadGoveeEndpointState();
         await reloadGenericConnectorEndpointState();
+        await reloadStage2ProviderSettings();
         await reloadConnectorZooRepoSettings();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
@@ -1427,6 +1534,29 @@ const SettingsPage = ({
     return Object.keys(nextErrors).length === 0;
   };
 
+  const validateStage2ProviderSettings = () => {
+    const nextErrors = {};
+    stage2ProviderSettings.forEach((provider) => {
+      if (!provider.enabled) {
+        return;
+      }
+      const option = getStage2ProviderOption(provider.provider_key);
+      const secretField = option?.secretField || 'api_key';
+      const secretValue = String(provider[secretField] || '').trim();
+      if (!provider.base_url.trim()) {
+        nextErrors[provider.provider_key] = 'Base URL is required when the provider is enabled.';
+      } else if (!/^https?:\/\//i.test(provider.base_url.trim())) {
+        nextErrors[provider.provider_key] = 'Base URL must start with http:// or https://.';
+      } else if (!provider.model_name.trim()) {
+        nextErrors[provider.provider_key] = 'Model name is required when the provider is enabled.';
+      } else if (!provider.auth_optional && !secretValue) {
+        nextErrors[provider.provider_key] = `${option?.secretLabel || 'Credential'} is required when the provider is enabled.`;
+      }
+    });
+    setStage2ProviderErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
   const reloadModelRegistryState = async () => {
     const [modelResponse, bindingResponse] = await Promise.all([
       fetch(`${BaseURL}/model-options`),
@@ -1483,6 +1613,127 @@ const SettingsPage = ({
       setBanner({ kind: 'error', text: error.message });
     } finally {
       setIsSavingBindings(false);
+    }
+  };
+
+  const setStage2ProviderField = (providerKey, field, value) => {
+    setStage2ProviderSettings((previous) =>
+      previous.map((provider) =>
+        provider.provider_key === providerKey
+          ? {
+              ...provider,
+              [field]: value,
+            }
+          : provider
+      )
+    );
+    setStage2ProviderErrors((previous) => {
+      if (!previous[providerKey]) {
+        return previous;
+      }
+      const next = { ...previous };
+      delete next[providerKey];
+      return next;
+    });
+  };
+
+  const saveStage2Providers = async () => {
+    if (!validateStage2ProviderSettings()) {
+      return;
+    }
+    setIsSavingStage2ProviderSettings(true);
+    try {
+      const response = await fetch(`${BaseURL}/settings/stage2-provider-settings`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(
+          stage2ProviderSettings.map((provider) => ({
+            provider_key: provider.provider_key,
+            display_name: provider.display_name,
+            enabled: provider.enabled,
+            base_url: provider.base_url,
+            model_name: provider.model_name,
+            timeout_seconds: Number(provider.timeout_seconds) || 30,
+            auth_optional: provider.auth_optional,
+            api_key: provider.api_key,
+            auth_token: provider.auth_token,
+          })),
+        ),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(resolveApiErrorMessage(data, 'Failed to save Stage 2 provider settings'));
+      }
+      const nextByKey = new Map(
+        normalizeListPayload(data).map((item) => [item.provider_key, hydrateStage2ProviderSettings(item)]),
+      );
+      setStage2ProviderSettings(
+        STAGE2_PROVIDER_OPTIONS.map((option) =>
+          nextByKey.get(option.provider_key) || createStage2ProviderDraft(option.provider_key)
+        ),
+      );
+      setBanner({ kind: 'success', text: 'Stage 2 provider settings saved.' });
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setIsSavingStage2ProviderSettings(false);
+    }
+  };
+
+  const testStage2Provider = async (provider) => {
+    const option = getStage2ProviderOption(provider.provider_key);
+    const secretField = option?.secretField || 'api_key';
+    if (provider.enabled) {
+      if (!provider.base_url.trim() || !provider.model_name.trim() || (!provider.auth_optional && !String(provider[secretField] || '').trim())) {
+        setStage2ProviderErrors((previous) => ({
+          ...previous,
+          [provider.provider_key]: 'Complete the required fields before testing this provider.',
+        }));
+        return;
+      }
+    }
+    setBusyStage2ProviderTests((previous) => ({
+      ...previous,
+      [provider.provider_key]: true,
+    }));
+    try {
+      const response = await fetch(`${BaseURL}/settings/stage2-provider-settings/test`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(provider),
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(resolveApiErrorMessage(data, 'Failed to test Stage 2 provider settings'));
+      }
+      setStage2ProviderSettings((previous) =>
+        previous.map((item) =>
+          item.provider_key === provider.provider_key
+            ? {
+                ...item,
+                last_test_status: data?.last_test_status ?? (data?.ok ? 'ok' : 'error'),
+                last_test_message: data?.detail ?? '',
+                secret_present: Boolean(data?.secret_present),
+              }
+            : item
+        )
+      );
+      setBanner({
+        kind: data?.ok ? 'success' : 'error',
+        text: data?.detail || `${option?.label || provider.provider_key} provider test completed.`,
+      });
+      await reloadStage2ProviderSettings().catch(() => {});
+    } catch (error) {
+      setBanner({ kind: 'error', text: error.message });
+    } finally {
+      setBusyStage2ProviderTests((previous) => ({
+        ...previous,
+        [provider.provider_key]: false,
+      }));
     }
   };
 
@@ -2226,6 +2477,20 @@ const SettingsPage = ({
       defaultDisplayName: getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'No default selected'),
     };
   });
+  const stage2ModelOptions = modelOptionsByStage.anomaly_stage_2 || [];
+  const currentDefaultStage2ModelKey = defaultBindings.anomaly_stage_2 || '';
+  const currentDefaultStage2Model = stage2ModelOptions.find(
+    (option) => option.model_key === currentDefaultStage2ModelKey,
+  ) || null;
+  const currentDefaultStage2ProviderProfile = STAGE2_PROVIDER_OPTIONS.find((option) =>
+    option.runtimeProviders.includes(currentDefaultStage2Model?.runtime?.provider)
+  ) || null;
+  const stage2ProviderUsageByKey = STAGE2_PROVIDER_OPTIONS.reduce((result, option) => {
+    result[option.provider_key] = stage2ModelOptions.filter((modelOption) =>
+      option.runtimeProviders.includes(modelOption?.runtime?.provider)
+    );
+    return result;
+  }, {});
   const mountedModelChanges = MODEL_STAGE_OPTIONS.reduce(
     (result, option) => {
       const persistedSet = new Set(persistedMountedModelsByStage[option.stage] || []);
@@ -2629,6 +2894,166 @@ const SettingsPage = ({
                   <div className="card">
                     <div className="card-header">
                       <div>
+                        <h3>Stage 2 Provider Settings</h3>
+                        <p>Manage external anomaly detection provider endpoints, model overrides, timeouts, and encrypted credentials.</p>
+                        <p className="muted-text">
+                          The selected Stage 2 model still comes from Default Model Bindings. These provider profiles only control runtime connectivity for external Stage 2 adapters.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="source-list">
+                      <div className="source-row">
+                        <div className="source-row-header">
+                          <div>
+                            <strong>Current Stage 2 Binding</strong>
+                            <div className="muted-text">
+                              {currentDefaultStage2Model
+                                ? `${currentDefaultStage2Model.display_name || currentDefaultStage2Model.model_key} (${currentDefaultStage2Model.model_key})`
+                                : 'No default Stage 2 model is currently selected.'}
+                            </div>
+                          </div>
+                          <span className="model-library-badge">
+                            {currentDefaultStage2ProviderProfile
+                              ? `Uses ${currentDefaultStage2ProviderProfile.label}`
+                              : 'No managed provider profile'}
+                          </span>
+                        </div>
+                        <div className="muted-text">
+                          {currentDefaultStage2ProviderProfile
+                            ? 'Change provider credentials here without moving the Stage 2 binding away from its current model key.'
+                            : 'Prompt-only or local models do not require a secure external provider profile.'}
+                        </div>
+                      </div>
+
+                      {stage2ProviderSettings.map((provider) => {
+                        const option = getStage2ProviderOption(provider.provider_key);
+                        const secretField = option?.secretField || 'api_key';
+                        const providerModels = stage2ProviderUsageByKey[provider.provider_key] || [];
+                        const hasLastTest = Boolean(provider.last_test_status || provider.last_test_message || provider.last_tested_at);
+                        return (
+                          <div key={`stage2-provider-${provider.provider_key}`} className="source-row">
+                            <div className="source-row-header">
+                              <div>
+                                <strong>{option?.label || provider.display_name || provider.provider_key}</strong>
+                                <div className="muted-text">
+                                  {providerModels.length > 0
+                                    ? `Used by: ${formatListLabel(providerModels.map((item) => item.display_name || item.model_key))}`
+                                    : 'Supported secure provider profile for external Stage 2 routing.'}
+                                </div>
+                              </div>
+                              <div className="button-row">
+                                {currentDefaultStage2ProviderProfile?.provider_key === provider.provider_key && (
+                                  <span className="model-library-badge">Current default</span>
+                                )}
+                                <button
+                                  type="button"
+                                  className="secondary-button"
+                                  onClick={() => testStage2Provider(provider)}
+                                  disabled={Boolean(busyStage2ProviderTests[provider.provider_key])}
+                                >
+                                  {busyStage2ProviderTests[provider.provider_key] ? 'Testing...' : 'Test Connection'}
+                                </button>
+                              </div>
+                            </div>
+
+                            <div className="model-binding-grid">
+                              <label className="toggle-field">
+                                <span>Enabled</span>
+                                <input
+                                  type="checkbox"
+                                  checked={provider.enabled}
+                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'enabled', event.target.checked)}
+                                />
+                              </label>
+                              <label>
+                                <span>Base URL</span>
+                                <input
+                                  type="text"
+                                  value={provider.base_url}
+                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'base_url', event.target.value)}
+                                  placeholder={provider.provider_key === 'lm_studio' ? 'http://localhost:1234/v1' : 'https://provider.example/v1'}
+                                />
+                              </label>
+                              <label>
+                                <span>Model Name</span>
+                                <input
+                                  type="text"
+                                  value={provider.model_name}
+                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'model_name', event.target.value)}
+                                  placeholder="Model override"
+                                />
+                              </label>
+                              <label>
+                                <span>Timeout (seconds)</span>
+                                <input
+                                  type="number"
+                                  min="1"
+                                  max="300"
+                                  step="1"
+                                  value={provider.timeout_seconds}
+                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'timeout_seconds', event.target.value)}
+                                />
+                              </label>
+                              <label>
+                                <span>{option?.secretLabel || 'Credential'}</span>
+                                <input
+                                  type="password"
+                                  value={provider[secretField] ?? ''}
+                                  onChange={(event) => setStage2ProviderField(provider.provider_key, secretField, event.target.value)}
+                                  placeholder={provider.secret_present ? MASKED_SECRET_VALUE : `${option?.secretLabel || 'Credential'}${provider.auth_optional ? ' (optional)' : ''}`}
+                                />
+                                <small className="muted-text">
+                                  {provider.auth_optional
+                                    ? 'Leave blank to omit the auth header entirely.'
+                                    : 'Leave the masked value unchanged to preserve the saved secret.'}
+                                </small>
+                              </label>
+                              <div className="readonly-field">
+                                <span>Secret Status</span>
+                                <strong>{provider.secret_present ? 'Stored securely' : 'Not stored'}</strong>
+                                <small className="muted-text">
+                                  Saved secrets are encrypted before they are written to the control database.
+                                </small>
+                              </div>
+                              <div className="readonly-field">
+                                <span>Last Test</span>
+                                <strong>
+                                  {provider.last_test_status
+                                    ? provider.last_test_status === 'ok'
+                                      ? 'Passed'
+                                      : 'Failed'
+                                    : 'Not run'}
+                                </strong>
+                                <small className="muted-text">
+                                  {hasLastTest
+                                    ? `${provider.last_test_message || 'No detail'}${provider.last_tested_at ? ` · ${provider.last_tested_at}` : ''}`
+                                    : 'Run a connection test to verify endpoint, model, and credential wiring.'}
+                                </small>
+                              </div>
+                            </div>
+
+                            {stage2ProviderErrors[provider.provider_key] && (
+                              <div className="row-error">{stage2ProviderErrors[provider.provider_key]}</div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div className="control-actions">
+                      <button
+                        type="button"
+                        onClick={saveStage2Providers}
+                        className="secondary-button"
+                        disabled={isSavingStage2ProviderSettings}
+                      >
+                        {isSavingStage2ProviderSettings ? 'Saving...' : 'Save Stage 2 Provider Settings'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
                         <h3>Anomaly Prompt Settings</h3>
                         <p>Manage anomaly detection config as structured anomaly items and anomaly behaviors. The prompt template stays hidden in the prompt config file.</p>
                       </div>
@@ -2773,6 +3198,8 @@ const SettingsPage = ({
                       <div className="muted-text">GET {`${BaseURL}/models`}</div>
                       <div className="muted-text">GET {`${BaseURL}/model-options`}</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/model-bindings`}</div>
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/stage2-provider-settings`}</div>
+                      <div className="muted-text">POST {`${BaseURL}/settings/stage2-provider-settings/test`}</div>
                       <div className="muted-text">GET/PUT {`${BaseURL}/settings/anomaly-prompts`}</div>
                       <div className="muted-text">The anomaly detection prompt template is managed in `shared/prompts/stage2_prompt_config.yaml`.</div>
                     </div>

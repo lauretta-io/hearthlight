@@ -58,6 +58,12 @@ CONNECTOR_KEYS = {
     "slack",
     "govee",
 }
+STAGE2_PROVIDER_KEYS = {
+    "openai",
+    "lm_studio",
+    "lauretta",
+    "claude_compatible",
+}
 ACTION_CONNECTOR_KEYS = {
     "philips_hue",
     "music_api",
@@ -1032,6 +1038,46 @@ class ClaudeAnomalyModelTestResponse(BaseModel):
     result: dict | None = None
 
 
+class Stage2ProviderSettings(BaseModel):
+    provider_key: str
+    display_name: str | None = None
+    enabled: bool = False
+    base_url: str = ""
+    model_name: str = ""
+    timeout_seconds: int = Field(default=30, ge=1, le=300)
+    auth_optional: bool = False
+    api_key: str = ""
+    auth_token: str = ""
+    secret_present: bool = False
+    last_test_status: str | None = None
+    last_test_message: str | None = None
+    last_tested_at: str | None = None
+
+    @field_validator("provider_key")
+    def validate_provider_key(cls, value):
+        normalized = validate_non_empty_string(value, "provider_key").lower()
+        if normalized not in STAGE2_PROVIDER_KEYS:
+            raise ValueError("unsupported provider_key")
+        return normalized
+
+    @field_validator("display_name", "base_url", "model_name", "api_key", "auth_token", "last_test_status", "last_test_message")
+    def normalize_optional_text(cls, value):
+        if value is None:
+            return value
+        return str(value).strip()
+
+
+class Stage2ProviderSettingsTestResponse(BaseModel):
+    provider_key: str
+    ok: bool = False
+    detail: str | None = None
+    effective_base_url: str = ""
+    effective_model_name: str = ""
+    secret_present: bool = False
+    last_test_status: str | None = None
+    last_tested_at: str | None = None
+
+
 class ActionConnectorEndpoint(BaseModel):
     id: int | None = None
     enabled: bool = True
@@ -1181,6 +1227,7 @@ class MonitoringOverview(BaseModel):
     latest_entities: list[AlgorithmEntityFeedItem] = Field(default_factory=list)
     latest_anomalies: list[AnomalyEvent] = Field(default_factory=list)
     recent_events: list[ResourceEventRecord] = Field(default_factory=list)
+    stage2_provider_settings: list[Stage2ProviderSettings] = Field(default_factory=list)
     feed_endpoints: list[FeedEndpoint] = Field(default_factory=list)
 
 

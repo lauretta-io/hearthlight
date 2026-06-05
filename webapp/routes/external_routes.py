@@ -5,6 +5,7 @@ import time
 import logging
 import asyncio
 import json
+import re
 from datetime import datetime
 from importlib import import_module
 from pathlib import Path
@@ -85,6 +86,8 @@ from ...shared.models.APIModels import (
     SOURCE_KIND_CAMERA_URL,
     SOURCE_KIND_VIDEO_UPLOAD,
     SOURCE_KIND_WEBCAM,
+    Stage2ProviderSettings,
+    Stage2ProviderSettingsTestResponse,
     Status,
     TriggerRule,
     TriggerZooEntry,
@@ -157,6 +160,20 @@ from ...shared.utils.govee_connector import (
     get_govee_device_state,
     send_test_govee_trigger_action,
     test_govee_api_key,
+)
+from ...shared.utils.stage2_provider_settings import (
+    PROVIDER_KEY_CLAUDE_COMPATIBLE,
+    PROVIDER_KEY_LAURETTA,
+    PROVIDER_KEY_LM_STUDIO,
+    PROVIDER_KEY_OPENAI,
+    Stage2ProviderSettingsDecryptError,
+    Stage2ProviderSettingsKeyUnavailable,
+    build_runtime_stage2_provider_settings,
+    get_effective_stage2_provider_settings,
+    list_stage2_provider_settings,
+    merge_stage2_provider_settings_draft,
+    record_stage2_provider_test_status,
+    write_stage2_provider_settings,
 )
 from ...shared.utils.telegram_notifications import (
     ensure_telegram_subscription_tables,
@@ -364,6 +381,20 @@ def read_claude_anomaly_model_settings(db: Session) -> ClaudeAnomalyModelSetting
     if not isinstance(payload, dict):
         payload = default_claude_anomaly_model_config()
     try:
+        provider_payload = get_effective_stage2_provider_settings(db, PROVIDER_KEY_CLAUDE_COMPATIBLE)
+        payload = {
+            **payload,
+            "enabled": bool(provider_payload.get("enabled", payload.get("enabled"))),
+            "base_url": str(provider_payload.get("base_url") or payload.get("base_url") or "").strip(),
+            "model_name": str(provider_payload.get("model_name") or payload.get("model_name") or "").strip(),
+            "timeout_seconds": int(provider_payload.get("timeout_seconds") or payload.get("timeout_seconds") or 10),
+            "auth_token": str(provider_payload.get("auth_token") or payload.get("auth_token") or "").strip(),
+        }
+    except (Stage2ProviderSettingsKeyUnavailable, Stage2ProviderSettingsDecryptError):
+        raise
+    except Exception:
+        logger.exception("Failed to load Stage 2 Claude-compatible provider settings")
+    try:
         redacted = redact_claude_anomaly_model_config(payload)
     except Exception:
         redacted = redact_claude_anomaly_model_config(default_claude_anomaly_model_config())
@@ -388,8 +419,212 @@ def write_claude_anomaly_model_settings(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     set_workspace_setting_value(db, SETTING_KEY_CLAUDE_ANOMALY_MODEL, normalized)
+    write_stage2_provider_settings(
+        db,
+        [
+            {
+                "provider_key": PROVIDER_KEY_CLAUDE_COMPATIBLE,
+                "enabled": normalized["enabled"],
+                "base_url": normalized["base_url"],
+                "model_name": normalized["model_name"],
+                "timeout_seconds": normalized["timeout_seconds"],
+                "auth_optional": False,
+                "auth_token": normalized["auth_token"],
+            }
+        ],
+    )
     db.commit()
     return read_claude_anomaly_model_settings(db)
+
+
+def _get_stage2_provider_response(db: Session) -> list[Stage2ProviderSettings]:
+    try:
+        payloads = list_stage2_provider_settings(db)
+    except Stage2ProviderSettingsKeyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Stage2ProviderSettingsDecryptError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    return [Stage2ProviderSettings.model_validate(item) for item in payloads]
+
+
+def _save_stage2_provider_settings(
+    db: Session,
+    payloads: list[Stage2ProviderSettings],
+) -> list[Stage2ProviderSettings]:
+    try:
+        write_stage2_provider_settings(db, [item.model_dump() for item in payloads])
+    except Stage2ProviderSettingsKeyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Stage2ProviderSettingsDecryptError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    db.commit()
+    return _get_stage2_provider_response(db)
+
+
+def _build_stage2_provider_test_result(
+    db: Session,
+    payload: Stage2ProviderSettings,
+) -> Stage2ProviderSettingsTestResponse:
+    provider_key = payload.provider_key
+    try:
+        existing_payload = get_effective_stage2_provider_settings(db, provider_key)
+    except Stage2ProviderSettingsKeyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Stage2ProviderSettingsDecryptError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    try:
+        normalized_payload = merge_stage2_provider_settings_draft(
+            provider_key,
+            payload.model_dump(),
+            existing_payload=existing_payload,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    normalized = Stage2ProviderSettings.model_validate(normalized_payload)
+    secret_values = [
+        str(normalized.api_key or "").strip(),
+        str(normalized.auth_token or "").strip(),
+    ]
+
+    def _sanitize_detail(raw_message: str | None) -> str:
+        message = str(raw_message or "").strip()
+        for secret_value in secret_values:
+            if secret_value:
+                message = message.replace(secret_value, "********")
+        if "Authorization" in message:
+            message = re.sub(
+                r"Authorization\s*:\s*Bearer\s+[^\s,;]+",
+                "Authorization: Bearer ********",
+                message,
+                flags=re.IGNORECASE,
+            )
+        if "x-api-key" in message:
+            message = re.sub(
+                r"x-api-key\s*[:=]\s*[^\s,;]+",
+                "x-api-key: ********",
+                message,
+                flags=re.IGNORECASE,
+            )
+        return message
+
+    detail = ""
+    ok = False
+    last_tested_at = None
+    try:
+        if provider_key == PROVIDER_KEY_CLAUDE_COMPATIBLE:
+            request_payload = build_claude_anomaly_request(
+                config={
+                    "enabled": normalized.enabled,
+                    "base_url": normalized.base_url,
+                    "auth_token": normalized.auth_token,
+                    "model_name": normalized.model_name,
+                    "timeout_seconds": normalized.timeout_seconds,
+                    "retry_count": 0,
+                    "prompt_template": "Return Hearthlight anomaly JSON.",
+                },
+                event_id="TEST-ANOMALY-CANDIDATE",
+                run_id=None,
+                source_id=1,
+                camera_id=1,
+                frame_id=1,
+                stage_1_model_key="heuristic_presence_stage_1",
+                stage_2_model_key="claude_compatible_stage_2",
+                candidate_category="presence_resume",
+                candidate_score=0.72,
+                candidate_reasoning="Observed a person and bag after a quiet period.",
+                visible_items=["person", "bag"],
+                visible_activities=["presence resume"],
+                anomaly_object_list=["person", "bag"],
+                anomaly_activity_list=["presence resume"],
+                asset_references=[],
+            )
+            send_claude_anomaly_request(
+                {
+                    "enabled": normalized.enabled,
+                    "base_url": normalized.base_url,
+                    "auth_token": normalized.auth_token,
+                    "model_name": normalized.model_name,
+                    "timeout_seconds": normalized.timeout_seconds,
+                    "retry_count": 0,
+                    "prompt_template": "Return Hearthlight anomaly JSON.",
+                },
+                request_payload,
+            )
+        elif provider_key == PROVIDER_KEY_LAURETTA:
+            body = {
+                "camera_id": 1,
+                "user_id": "settings-test-user",
+                "prompt_template": "Return a JSON anomaly result.",
+                "expected_results_text": "Return title, category, score, and reasoning.",
+                "image_attachments": [],
+                "metadata": {"source": "settings-test"},
+            }
+            req = urllib_request.Request(
+                f"{normalized.base_url.rstrip('/')}/v1/hearthlight/anomaly-submissions",
+                data=json.dumps(body).encode("utf-8"),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {normalized.api_key}",
+                },
+                method="POST",
+            )
+            with urllib_request.urlopen(req, timeout=normalized.timeout_seconds) as response:
+                json.loads(response.read().decode("utf-8") or "{}")
+        else:
+            request_body = {
+                "model": normalized.model_name,
+                "messages": [{"role": "user", "content": "Return JSON with keys title, category, score, reasoning."}],
+                "response_format": {"type": "json_object"},
+                "max_tokens": 64,
+            }
+            headers = {"Content-Type": "application/json"}
+            if normalized.api_key:
+                headers["Authorization"] = f"Bearer {normalized.api_key}"
+            req = urllib_request.Request(
+                f"{normalized.base_url.rstrip('/')}/chat/completions",
+                data=json.dumps(request_body).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib_request.urlopen(req, timeout=normalized.timeout_seconds) as response:
+                json.loads(response.read().decode("utf-8") or "{}")
+        ok = True
+        detail = "Connection test succeeded."
+        record_stage2_provider_test_status(db, provider_key, status="ok", message=detail)
+        db.commit()
+        refreshed = get_effective_stage2_provider_settings(db, provider_key)
+        last_tested_at = refreshed.get("last_tested_at")
+    except urllib_error.HTTPError as exc:
+        response_body = exc.read(4096).decode("utf-8", errors="replace")
+        detail = _sanitize_detail(f"HTTP {exc.code} {response_body}".strip())
+        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        db.commit()
+    except urllib_error.URLError as exc:
+        detail = _sanitize_detail(str(getattr(exc, "reason", exc)))
+        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        db.commit()
+    except Exception as exc:
+        detail = _sanitize_detail(str(exc))
+        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        db.commit()
+    if last_tested_at is None:
+        try:
+            refreshed = get_effective_stage2_provider_settings(db, provider_key)
+            last_tested_at = refreshed.get("last_tested_at")
+        except Exception:
+            last_tested_at = None
+    return Stage2ProviderSettingsTestResponse(
+        provider_key=provider_key,
+        ok=ok,
+        detail=detail,
+        effective_base_url=normalized.base_url,
+        effective_model_name=normalized.model_name,
+        secret_present=normalized.secret_present,
+        last_test_status="ok" if ok else "error",
+        last_tested_at=last_tested_at,
+    )
 
 
 def read_connector_zoo_repo_settings(db: Session) -> ConnectorZooRepoSettings:
@@ -597,6 +832,12 @@ system_publisher = None
 status_consumer = None
 resource_monitor = None
 state_lock = Lock()
+source_template_columns_lock = Lock()
+plugin_tables_lock = Lock()
+registry_bundle_sync_lock = Lock()
+source_template_columns_ready = False
+plugin_tables_ready = False
+last_registry_bundle_sync_signature = None
 
 status = SystemStatus.IDLE
 frame_id = None
@@ -1107,49 +1348,120 @@ def get_active_source_rows(db: Session):
 
 
 def ensure_source_template_columns(db: Session) -> None:
-    existing = {
-        row[0]
-        for row in db.execute(
-            text(
-                """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_schema = 'control'
-                  AND table_name = 'input_source_template'
-                """
+    global source_template_columns_ready
+    if source_template_columns_ready:
+        return
+    with source_template_columns_lock:
+        if source_template_columns_ready:
+            return
+        existing = {
+            row[0]
+            for row in db.execute(
+                text(
+                    """
+                    SELECT column_name
+                    FROM information_schema.columns
+                    WHERE table_schema = 'control'
+                      AND table_name = 'input_source_template'
+                    """
+                )
+            ).all()
+        }
+        if "frame_processing_mode" not in existing:
+            db.execute(
+                text(
+                    """
+                    ALTER TABLE control.input_source_template
+                    ADD COLUMN frame_processing_mode VARCHAR(32) NOT NULL DEFAULT 'frame_skip'
+                    """
+                )
             )
-        ).all()
-    }
-    if "frame_processing_mode" not in existing:
-        db.execute(
-            text(
-                """
-                ALTER TABLE control.input_source_template
-                ADD COLUMN frame_processing_mode VARCHAR(32) NOT NULL DEFAULT 'frame_skip'
-                """
+            db.commit()
+        if "process_every_n_frames" not in existing:
+            db.execute(
+                text(
+                    """
+                    ALTER TABLE control.input_source_template
+                    ADD COLUMN process_every_n_frames INTEGER NOT NULL DEFAULT 1
+                    """
+                )
             )
+            db.commit()
+        if "target_frame_rate" not in existing:
+            db.execute(
+                text(
+                    """
+                    ALTER TABLE control.input_source_template
+                    ADD COLUMN target_frame_rate DOUBLE PRECISION
+                    """
+                )
+            )
+            db.commit()
+        source_template_columns_ready = True
+
+
+def _build_source_registry_sync_signature(source_rows: list | None) -> list[dict[str, Any]]:
+    signature_rows: list[dict[str, Any]] = []
+    for row in source_rows or []:
+        signature_rows.append(
+            {
+                "id": getattr(row, "id", None),
+                "updated_at": str(getattr(row, "updated_at", None) or ""),
+                "detector_model_key": getattr(row, "detector_model_key", None),
+                "tracker_model_key": getattr(row, "tracker_model_key", None),
+                "anomaly_stage_1_model_key": getattr(row, "anomaly_stage_1_model_key", None),
+                "anomaly_stage_2_model_key": getattr(row, "anomaly_stage_2_model_key", None),
+                "is_deleted": bool(getattr(row, "is_deleted", False)),
+            }
+        )
+    signature_rows.sort(key=lambda item: (item["id"] is None, item["id"]))
+    return signature_rows
+
+
+def _build_registry_bundle_sync_signature(bundle: dict[str, Any], source_rows: list | None) -> str:
+    return json.dumps(
+        {
+            "plugin_catalog": bundle.get("plugin_catalog") or {},
+            "models": bundle.get("models") or {},
+            "mounted_models": bundle.get("mounted_models") or {},
+            "bindings": bundle.get("bindings") or {},
+            "sources": _build_source_registry_sync_signature(source_rows),
+        },
+        sort_keys=True,
+        default=str,
+    )
+
+
+def _sync_registry_bundle_to_db_if_needed(
+    db: Session,
+    bundle: dict[str, Any],
+    *,
+    source_rows: list | None = None,
+) -> None:
+    global last_registry_bundle_sync_signature
+    signature = _build_registry_bundle_sync_signature(bundle, source_rows)
+    if last_registry_bundle_sync_signature == signature:
+        return
+    with registry_bundle_sync_lock:
+        if last_registry_bundle_sync_signature == signature:
+            return
+        synced_source_rows = source_rows if source_rows is not None else get_active_source_rows(db)
+        sync_plugin_catalog_to_db(
+            db,
+            bundle.get("plugin_catalog") or load_plugin_catalog(),
+            SQLModels,
+        )
+        sync_registry_bundle_to_db(
+            db,
+            bundle,
+            SQLModels,
+            source_rows=synced_source_rows,
         )
         db.commit()
-    if "process_every_n_frames" not in existing:
-        db.execute(
-            text(
-                """
-                ALTER TABLE control.input_source_template
-                ADD COLUMN process_every_n_frames INTEGER NOT NULL DEFAULT 1
-                """
-            )
-        )
-        db.commit()
-    if "target_frame_rate" not in existing:
-        db.execute(
-            text(
-                """
-                ALTER TABLE control.input_source_template
-                ADD COLUMN target_frame_rate DOUBLE PRECISION
-                """
-            )
-        )
-        db.commit()
+        for source_row in synced_source_rows:
+            if getattr(source_row, "id", None) is not None:
+                db.refresh(source_row)
+        last_registry_bundle_sync_signature = signature
 
 
 def get_registry_bundle(
@@ -1162,22 +1474,7 @@ def get_registry_bundle(
         return bundle
     try:
         ensure_plugin_tables()
-        sync_plugin_catalog_to_db(
-            db,
-            bundle.get("plugin_catalog") or load_plugin_catalog(),
-            SQLModels,
-        )
-        synced_source_rows = source_rows if source_rows is not None else get_active_source_rows(db)
-        sync_registry_bundle_to_db(
-            db,
-            bundle,
-            SQLModels,
-            source_rows=synced_source_rows,
-        )
-        db.commit()
-        for source_row in synced_source_rows:
-            if getattr(source_row, "id", None) is not None:
-                db.refresh(source_row)
+        _sync_registry_bundle_to_db_if_needed(db, bundle, source_rows=source_rows)
     except Exception:
         db.rollback()
         logger.exception("Failed to mirror model registry metadata into control schema")
@@ -1185,14 +1482,21 @@ def get_registry_bundle(
 
 
 def ensure_plugin_tables() -> None:
-    SQLModels.Base.metadata.create_all(
-        bind=get_engine(),
-        tables=[
-            SQLModels.PluginBundle.__table__,
-            SQLModels.PluginComponent.__table__,
-        ],
-        checkfirst=True,
-    )
+    global plugin_tables_ready
+    if plugin_tables_ready:
+        return
+    with plugin_tables_lock:
+        if plugin_tables_ready:
+            return
+        SQLModels.Base.metadata.create_all(
+            bind=get_engine(),
+            tables=[
+                SQLModels.PluginBundle.__table__,
+                SQLModels.PluginComponent.__table__,
+            ],
+            checkfirst=True,
+        )
+        plugin_tables_ready = True
 
 
 def _build_plugin_component_lookup_from_bundle(bundle: dict[str, Any]) -> dict[str, dict[str, dict[str, Any]]]:
@@ -4043,6 +4347,36 @@ def test_settings_claude_anomaly_model(
     )
 
 
+@external_router.get(
+    "/settings/stage2-provider-settings",
+    response_model=list[Stage2ProviderSettings],
+)
+def get_settings_stage2_provider_settings(db: Session = Depends(get_db)):
+    return _get_stage2_provider_response(db)
+
+
+@external_router.put(
+    "/settings/stage2-provider-settings",
+    response_model=list[Stage2ProviderSettings],
+)
+def update_settings_stage2_provider_settings(
+    payload: list[Stage2ProviderSettings],
+    db: Session = Depends(get_db),
+):
+    return _save_stage2_provider_settings(db, payload)
+
+
+@external_router.post(
+    "/settings/stage2-provider-settings/test",
+    response_model=Stage2ProviderSettingsTestResponse,
+)
+def test_settings_stage2_provider_settings(
+    payload: Stage2ProviderSettings,
+    db: Session = Depends(get_db),
+):
+    return _build_stage2_provider_test_result(db, payload)
+
+
 @external_router.get("/settings/connector-zoo-repo", response_model=ConnectorZooRepoSettings)
 def get_settings_connector_zoo_repo(db: Session = Depends(get_db)):
     return read_connector_zoo_repo_settings(db)
@@ -4833,6 +5167,7 @@ def get_monitoring_overview(
                 + [event.model_dump() for event in build_resource_event_records(db, limit)]
             )[: (limit or 20)]
         ],
+        stage2_provider_settings=_get_stage2_provider_response(db),
         feed_endpoints=[
             FeedEndpoint.model_validate(item) for item in build_feed_endpoint_catalog()
         ],
