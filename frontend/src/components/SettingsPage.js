@@ -3676,7 +3676,7 @@ const SettingsPage = ({
                             {detectionRules.map((rule, ruleIndex) => {
                               const selectedSourceId = rule.source_ids?.[0];
                               const selectedSignalOptions = selectedSourceId ? getSignalOptionsForSource(selectedSourceId, 'detector') : null;
-                              const targetOptions = selectedSignalOptions?.options || [];
+                              const targetOptions = (selectedSignalOptions?.options || []).slice().sort((a, b) => (a.label || '').localeCompare(b.label || ''));
                               const selectedTargetOption = targetOptions.find((option) => option.key === rule.target_key);
                               return (
                                 <div key={rule.clientKey} className="source-row">
@@ -3799,7 +3799,7 @@ const SettingsPage = ({
                               const signalFamily = rule.anomaly_target_kind === 'behavior' ? 'anomaly_activity' : 'anomaly_object';
                               const selectedSourceId = rule.source_ids?.[0];
                               const selectedSignalOptions = selectedSourceId ? getSignalOptionsForSource(selectedSourceId, signalFamily) : null;
-                              const targetOptions = selectedSignalOptions?.options || [];
+                              const targetOptions = (selectedSignalOptions?.options || []).slice().sort((a, b) => (a.label || '').localeCompare(b.label || ''));
                               return (
                                 <div key={rule.clientKey} className="source-row">
                                   <div className="source-row-header">
