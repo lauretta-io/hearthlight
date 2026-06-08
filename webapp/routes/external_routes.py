@@ -1433,6 +1433,30 @@ def ensure_source_template_columns(db: Session) -> None:
             ALTER TABLE control.input_source_template
             ADD COLUMN IF NOT EXISTS target_frame_rate DOUBLE PRECISION
             """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS last_error TEXT
+            """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS detector_model_key VARCHAR(128)
+            """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS tracker_model_key VARCHAR(128)
+            """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS reid_model_key VARCHAR(128)
+            """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS anomaly_stage_1_model_key VARCHAR(128)
+            """,
+            """
+            ALTER TABLE control.input_source_template
+            ADD COLUMN IF NOT EXISTS anomaly_stage_2_model_key VARCHAR(128)
+            """,
         )
         try:
             for statement in statements:
