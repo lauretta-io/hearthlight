@@ -213,6 +213,19 @@ class SigLIPStageOneAdapter(HeuristicPresenceStageOneAdapter):
         return candidates
 
 
+def _coerce_str_list(value: Any) -> list[str]:
+    """Convert a model output value to a clean list of strings.
+    Handles both comma-separated strings (the model schema uses string type for these
+    fields) and proper list values. Direct list() on a string yields individual characters."""
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [item.strip() for item in value.split(",") if item.strip()]
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
 def _parse_json_response(content: str) -> dict:
     """Parse JSON from a model response that may include surrounding text or markdown."""
     try:
@@ -417,16 +430,16 @@ class RemoteAPIMixin(PromptRulesStageTwoAdapter):
         title = str(payload.get("title") or fallback.title or candidate.category).strip() or candidate.category
         category = str(payload.get("category") or fallback.category or candidate.category).strip() or candidate.category
         reasoning = str(payload.get("reasoning") or fallback.reasoning or candidate.reasoning or "").strip() or None
-        visible_items = [
-            str(item).strip()
-            for item in list(payload.get("visible_items") or fallback.visible_items or candidate.visible_items)
-            if str(item).strip()
-        ]
-        visible_activities = [
-            str(item).strip()
-            for item in list(payload.get("visible_activities") or fallback.visible_activities or candidate.visible_activities)
-            if str(item).strip()
-        ]
+        visible_items = (
+            _coerce_str_list(payload.get("visible_items"))
+            or list(fallback.visible_items)
+            or list(candidate.visible_items)
+        )
+        visible_activities = (
+            _coerce_str_list(payload.get("visible_activities"))
+            or list(fallback.visible_activities)
+            or list(candidate.visible_activities)
+        )
         return AnomalyEvent(
             event_id=candidate.event_id,
             run_id=candidate.run_id,
