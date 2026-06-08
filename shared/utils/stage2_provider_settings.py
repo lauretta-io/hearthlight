@@ -470,9 +470,9 @@ def write_stage2_provider_settings(db, payloads: list[dict[str, Any]]) -> list[d
             existing_by_key[provider_key] = row
         row.provider_key = provider_key
         row.config_json = json.dumps(_config_payload_from_normalized(normalized), sort_keys=True)
-        row.secret_json_encrypted = encrypt_secret_payload(
-            _secret_payload_from_normalized(provider_key, normalized)
-        )
+        secret_payload = _secret_payload_from_normalized(provider_key, normalized)
+        has_secret = any(str(v or "").strip() for v in secret_payload.values())
+        row.secret_json_encrypted = encrypt_secret_payload(secret_payload) if has_secret else None
         row.is_deleted = False
         row.deleted_at = None
         saved_results.append(redact_stage2_provider_settings_payload(normalized))
