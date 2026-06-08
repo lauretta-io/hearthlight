@@ -2000,7 +2000,7 @@ def build_source_responses(db: Session, resource_snapshot: dict):
         )
         recordings = get_run_recordings_by_source_id(db)
         current_frame_override = (
-            get_latest_run_frame_id(db) if is_hybrid_local_cpu_runtime() else None
+            get_latest_run_frame_id(db) if is_hybrid_local_runtime() else None
         )
         responses: list[InputSource] = []
         for row in source_rows:
