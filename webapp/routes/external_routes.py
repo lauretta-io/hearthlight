@@ -622,7 +622,7 @@ def _build_stage2_provider_test_result(
             request_body = {
                 "model": normalized.model_name,
                 "messages": [{"role": "user", "content": "Return JSON with keys title, category, score, reasoning."}],
-                "response_format": {"type": "json_object"},
+                "response_format": {"type": "text"},
                 "max_tokens": 64,
             }
             headers = {"Content-Type": "application/json"}
