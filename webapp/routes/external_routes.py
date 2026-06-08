@@ -199,6 +199,7 @@ from ...shared.utils.input_sources import (
 from ...shared.utils.local_worker_runtime import (
     build_local_worker_url,
     get_worker_runtime_mode,
+    is_hybrid_local_cpu_runtime,
     is_hybrid_local_runtime,
     map_container_path_to_host,
 )
