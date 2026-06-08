@@ -376,7 +376,10 @@ def _merge_saved_row(
             }
         )
     secret_field = PROVIDER_METADATA[_normalize_provider_key(provider_key)]["secret_field"]
-    secret_payload = decrypt_secret_payload(getattr(row, "secret_json_encrypted", None))
+    try:
+        secret_payload = decrypt_secret_payload(getattr(row, "secret_json_encrypted", None))
+    except Stage2ProviderSettingsKeyUnavailable:
+        secret_payload = {}
     payload[secret_field] = str(secret_payload.get(secret_field) or "").strip()
     payload["secret_present"] = bool(payload[secret_field])
     return payload

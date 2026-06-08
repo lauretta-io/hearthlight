@@ -447,12 +447,20 @@ class RemoteAPIMixin(PromptRulesStageTwoAdapter):
 
 
 class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
+    _CONFIG_TTL_SECONDS = 30
+
     def __init__(self, registration: dict):
         runtime = registration.get("runtime") or {}
         self.prompt_template = str(runtime.get("prompt_template") or "").strip() or None
         self.fallback_on_failure = bool(runtime.get("fallback_on_failure", False))
+        self._cached_config: dict[str, Any] | None = None
+        self._config_loaded_at: float = 0.0
 
     def _load_config(self) -> dict[str, Any]:
+        import time
+        now = time.monotonic()
+        if self._cached_config is not None and now - self._config_loaded_at < self._CONFIG_TTL_SECONDS:
+            return self._cached_config
         with SessionLocal() as db:
             loaded = get_workspace_setting_value(
                 db,
@@ -477,7 +485,9 @@ class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
             "timeout_seconds": int(provider_settings.get("timeout_seconds") or loaded.get("timeout_seconds") or 10),
             "auth_token": str(provider_settings.get("auth_token") or loaded.get("auth_token") or "").strip(),
         }
-        return validate_claude_anomaly_model_config(merged, require_base_url=False)
+        self._cached_config = validate_claude_anomaly_model_config(merged, require_base_url=False)
+        self._config_loaded_at = now
+        return self._cached_config
 
     def build_event(
         self,

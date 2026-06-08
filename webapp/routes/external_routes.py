@@ -436,8 +436,6 @@ def read_claude_anomaly_model_settings(db: Session) -> ClaudeAnomalyModelSetting
             "timeout_seconds": int(provider_payload.get("timeout_seconds") or payload.get("timeout_seconds") or 10),
             "auth_token": str(provider_payload.get("auth_token") or payload.get("auth_token") or "").strip(),
         }
-    except (Stage2ProviderSettingsKeyUnavailable, Stage2ProviderSettingsDecryptError):
-        raise
     except Exception:
         logger.exception("Failed to load Stage 2 Claude-compatible provider settings")
     try:
@@ -638,29 +636,25 @@ def _build_stage2_provider_test_result(
                 json.loads(response.read().decode("utf-8") or "{}")
         ok = True
         detail = "Connection test succeeded."
+        last_tested_at = utc_now_iso()
         record_stage2_provider_test_status(db, provider_key, status="ok", message=detail)
         db.commit()
-        refreshed = get_effective_stage2_provider_settings(db, provider_key)
-        last_tested_at = refreshed.get("last_tested_at")
     except urllib_error.HTTPError as exc:
         response_body = exc.read(4096).decode("utf-8", errors="replace")
         detail = _sanitize_detail(f"HTTP {exc.code} {response_body}".strip())
+        last_tested_at = utc_now_iso()
         record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
         db.commit()
     except urllib_error.URLError as exc:
         detail = _sanitize_detail(str(getattr(exc, "reason", exc)))
+        last_tested_at = utc_now_iso()
         record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
         db.commit()
     except Exception as exc:
         detail = _sanitize_detail(str(exc))
+        last_tested_at = utc_now_iso()
         record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
         db.commit()
-    if last_tested_at is None:
-        try:
-            refreshed = get_effective_stage2_provider_settings(db, provider_key)
-            last_tested_at = refreshed.get("last_tested_at")
-        except Exception:
-            last_tested_at = None
     return Stage2ProviderSettingsTestResponse(
         provider_key=provider_key,
         ok=ok,
