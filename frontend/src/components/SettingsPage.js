@@ -367,7 +367,7 @@ const createStage2ProviderDraft = (providerKey) => {
     enabled: false,
     base_url: '',
     model_name: '',
-    timeout_seconds: 30,
+    timeout_seconds: 120,
     auth_optional: Boolean(option?.authOptional),
     api_key: '',
     auth_token: '',
@@ -388,7 +388,7 @@ const hydrateStage2ProviderSettings = (payload) => {
     enabled: Boolean(payload?.enabled),
     base_url: payload?.base_url ?? '',
     model_name: payload?.model_name ?? '',
-    timeout_seconds: Number.isFinite(payload?.timeout_seconds) ? payload.timeout_seconds : 30,
+    timeout_seconds: Number.isFinite(payload?.timeout_seconds) ? payload.timeout_seconds : 120,
     auth_optional: Boolean(payload?.auth_optional),
     api_key: payload?.api_key ?? '',
     auth_token: payload?.auth_token ?? '',
@@ -1746,7 +1746,7 @@ const SettingsPage = ({
             enabled: provider.enabled,
             base_url: provider.base_url,
             model_name: provider.model_name,
-            timeout_seconds: Number(provider.timeout_seconds) || 30,
+            timeout_seconds: Number(provider.timeout_seconds) || 120,
             auth_optional: provider.auth_optional,
             api_key: provider.api_key,
             auth_token: provider.auth_token,
@@ -1808,6 +1808,7 @@ const SettingsPage = ({
                 ...item,
                 last_test_status: data?.last_test_status ?? (data?.ok ? 'ok' : 'error'),
                 last_test_message: data?.detail ?? '',
+                last_tested_at: data?.last_tested_at ?? item.last_tested_at,
                 secret_present: Boolean(data?.secret_present),
               }
             : item
@@ -1817,7 +1818,6 @@ const SettingsPage = ({
         kind: data?.ok ? 'success' : 'error',
         text: data?.detail || `${option?.label || provider.provider_key} provider test completed.`,
       });
-      await reloadStage2ProviderSettings().catch(() => {});
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
