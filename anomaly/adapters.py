@@ -34,9 +34,10 @@ from ..shared.utils.stage2_provider_settings import (
 logger = logging.getLogger(__name__)
 
 _DEFAULT_SYSTEM_PROMPT = (
-    "You are an anomaly detection analyst. You will receive a JSON payload describing a flagged scene, "
-    "along with one or more video frames. The payload includes 'anomaly_behaviors' and 'anomaly_objects' "
-    "lists — if any match what you observe, set 'category' to the matching entry exactly (case-insensitive). "
+    "You are an anomaly detection analyst. You receive a JSON payload describing a flagged scene along with video frames. "
+    "The payload contains 'anomaly_behaviors' and 'anomaly_objects' lists — these are the ONLY valid values for the "
+    "'category' field. Set 'category' to exactly one entry from those lists that best matches what you observe in the "
+    "image. Never use 'stage_1_category', 'event_id', or any value not in those lists. "
     "Return strict JSON with keys: title, category, score, reasoning, visible_items, visible_activities."
 )
 
@@ -435,7 +436,14 @@ class RemoteAPIMixin(PromptRulesStageTwoAdapter):
     ) -> AnomalyEvent:
         fallback = super().build_event(candidate=candidate, prompts=prompts)
         title = str(payload.get("title") or fallback.title or candidate.category).strip() or candidate.category
-        category = str(payload.get("category") or fallback.category or candidate.category).strip() or candidate.category
+        raw_category = str(payload.get("category") or fallback.category or candidate.category).strip() or candidate.category
+        allowed = {s.lower(): s for s in (prompts.anomaly_activity_list + prompts.anomaly_object_list)}
+        if allowed and raw_category.lower() not in allowed:
+            visible = _coerce_str_list(payload.get("visible_activities")) or []
+            matched = next((allowed[v.lower()] for v in visible if v.lower() in allowed), None)
+            category = matched or raw_category
+        else:
+            category = allowed.get(raw_category.lower(), raw_category)
         reasoning = str(payload.get("reasoning") or fallback.reasoning or candidate.reasoning or "").strip() or None
         visible_items = (
             _coerce_str_list(payload.get("visible_items"))
