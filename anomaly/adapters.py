@@ -33,6 +33,13 @@ from ..shared.utils.stage2_provider_settings import (
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_SYSTEM_PROMPT = (
+    "You are an anomaly detection analyst. You will receive a JSON payload describing a flagged scene, "
+    "along with one or more video frames. The payload includes 'anomaly_behaviors' and 'anomaly_objects' "
+    "lists — if any match what you observe, set 'category' to the matching entry exactly (case-insensitive). "
+    "Return strict JSON with keys: title, category, score, reasoning, visible_items, visible_activities."
+)
+
 
 @dataclass
 class AdapterState:
@@ -578,7 +585,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
         self.json_mode = bool(self.runtime.get("json_mode", True))
         self.system_prompt = str(
             self.runtime.get("system_prompt")
-            or "You are an anomaly detection analyst. Return strict JSON with keys title, category, score, reasoning, visible_items, visible_activities."
+            or _DEFAULT_SYSTEM_PROMPT
         ).strip()
 
     @staticmethod
@@ -685,14 +692,24 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
                 return self._fallback_event(candidate=candidate, prompts=prompts, detail=str(exc))
         endpoint = f"{base_url.rstrip('/')}/chat/completions"
         payload = self._build_request_payload(candidate=candidate, prompts=prompts)
+        images = self._collect_inline_images(candidate)
+        user_content: Any = json.dumps(payload)
+        if images:
+            user_content = [
+                {"type": "text", "text": json.dumps(payload)},
+                *[
+                    {"type": "image_url", "image_url": {"url": f"data:{img['media_type']};base64,{img['data_base64']}"}}
+                    for img in images
+                ],
+            ]
         request_body = {
             "model": model_name,
             "messages": [
                 {"role": "system", "content": self.system_prompt},
-                {"role": "user", "content": json.dumps(payload)},
+                {"role": "user", "content": user_content},
             ],
         }
-        if self.json_mode:
+        if self.json_mode and not images:
             request_body["response_format"] = {"type": "json_object"}
         headers = {"Content-Type": "application/json"}
         if api_key:
@@ -724,7 +741,7 @@ class ClaudeStageTwoAdapter(RemoteAPIMixin):
         self.default_base_url = str(self.runtime.get("base_url") or "https://api.anthropic.com/v1").strip()
         self.system_prompt = str(
             self.runtime.get("system_prompt")
-            or "You are an anomaly detection analyst. Return strict JSON with keys title, category, score, reasoning, visible_items, visible_activities."
+            or _DEFAULT_SYSTEM_PROMPT
         ).strip()
         self.api_version = str(self.runtime.get("api_version") or "2023-06-01").strip()
 
