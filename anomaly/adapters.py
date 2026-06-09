@@ -608,10 +608,12 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
             if asset_path is None:
                 continue
             encoded = base64.b64encode(asset_path.read_bytes()).decode("ascii")
+            ext = asset_path.suffix.lower()
+            media_type = {"jpg": "image/jpeg", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp"}.get(ext) or asset.media_type or "application/octet-stream"
             attachments.append(
                 {
                     "filename": asset_path.name or f"frame-{index}.bin",
-                    "media_type": asset.media_type or "application/octet-stream",
+                    "media_type": media_type,
                     "data_base64": encoded,
                 }
             )

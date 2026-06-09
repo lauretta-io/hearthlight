@@ -334,7 +334,6 @@ class FeatureExtractorThread(Thread):
         self.clear_queues_on_stop = False
         self.last_track_summary_frame = -1
         self._frame_dir = cfg.output.frames.frame_dir
-        self._frame_ext = cfg.output.frames.image_ext
         os.makedirs(self._frame_dir, exist_ok=True)
 
         self.pose = PoseDetector(cfg) if cfg.pose.enable else None
@@ -408,8 +407,13 @@ class FeatureExtractorThread(Thread):
             if all_tracks:
                 for frame in frame_list:
                     if frame.save_path is None:
-                        path = os.path.join(self._frame_dir, f"{frame.cam_id}_{frame.timestamp}{self._frame_ext}")
-                        cv2.imwrite(path, frame.array)
+                        img = frame.array
+                        h, w = img.shape[:2]
+                        if max(h, w) > 640:
+                            scale = 640 / max(h, w)
+                            img = cv2.resize(img, (int(w * scale), int(h * scale)))
+                        path = os.path.join(self._frame_dir, f"{frame.cam_id}_{frame.timestamp}.jpg")
+                        cv2.imwrite(path, img, [cv2.IMWRITE_JPEG_QUALITY, 85])
                         frame.save_path = path
             self.frame_info_publisher.publish_frame(frames)
             timer.time("publish")
