@@ -41,7 +41,7 @@ PROVIDER_METADATA: dict[str, dict[str, Any]] = {
         "model_name": "gpt-5.4-mini",
         "model_name_env": "OPENAI_MODEL_NAME",
         "secret_env": "OPENAI_API_KEY",
-        "timeout_seconds": 30,
+        "timeout_seconds": 120,
     },
     PROVIDER_KEY_LM_STUDIO: {
         "display_name": "LM Studio",
@@ -52,7 +52,7 @@ PROVIDER_METADATA: dict[str, dict[str, Any]] = {
         "model_name": "local-model",
         "model_name_env": "LM_STUDIO_MODEL_NAME",
         "secret_env": "LM_STUDIO_API_KEY",
-        "timeout_seconds": 30,
+        "timeout_seconds": 120,
     },
     PROVIDER_KEY_LAURETTA: {
         "display_name": "Lauretta",
@@ -63,7 +63,7 @@ PROVIDER_METADATA: dict[str, dict[str, Any]] = {
         "model_name": "lauretta-anomaly-stage-2",
         "model_name_env": "LAURETTA_MODEL_NAME",
         "secret_env": "LAURETTA_API_KEY",
-        "timeout_seconds": 30,
+        "timeout_seconds": 120,
     },
     PROVIDER_KEY_CLAUDE_COMPATIBLE: {
         "display_name": "Claude-Compatible",
@@ -74,7 +74,7 @@ PROVIDER_METADATA: dict[str, dict[str, Any]] = {
         "model_name": "claude-compatible-anomaly",
         "model_name_env": "CLAUDE_COMPATIBLE_MODEL_NAME",
         "secret_env": "CLAUDE_COMPATIBLE_AUTH_TOKEN",
-        "timeout_seconds": 30,
+        "timeout_seconds": 120,
     },
 }
 
@@ -310,7 +310,7 @@ def _config_payload_from_normalized(payload: dict[str, Any]) -> dict[str, Any]:
         "enabled": bool(payload.get("enabled")),
         "base_url": str(payload.get("base_url") or "").strip(),
         "model_name": str(payload.get("model_name") or "").strip(),
-        "timeout_seconds": _positive_int(payload.get("timeout_seconds"), 30, minimum=1, maximum=300),
+        "timeout_seconds": _positive_int(payload.get("timeout_seconds"), 120, minimum=1, maximum=300),
         "auth_optional": bool(payload.get("auth_optional", False)),
         "last_test_status": payload.get("last_test_status"),
         "last_test_message": payload.get("last_test_message"),
