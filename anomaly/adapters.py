@@ -381,7 +381,7 @@ class RemoteAPIMixin(PromptRulesStageTwoAdapter):
         super().__init__(registration)
         self.registration = dict(registration or {})
         self.runtime = dict(self.registration.get("runtime") or {})
-        self.timeout_seconds = float(self.runtime.get("timeout_seconds", 30.0))
+        self.timeout_seconds = float(self.runtime.get("timeout_seconds", 120.0))
 
     def _fallback_event(self, *, candidate: StageOneCandidate, prompts: PromptBundle, detail: str) -> AnomalyEvent:
         event = super().build_event(candidate=candidate, prompts=prompts)
