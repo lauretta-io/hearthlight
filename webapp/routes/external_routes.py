@@ -5253,6 +5253,25 @@ def add_settings_input_source(source: InputSource, db: Session = Depends(get_db)
     return append_source(db, source)
 
 
+@external_router.post("/settings/input-sources/item", response_model=InputSource)
+def create_settings_input_source_item(source: InputSource, db: Session = Depends(get_db)):
+    return save_source_item(db, source)
+
+
+@external_router.put("/settings/input-sources/item/{source_id}", response_model=InputSource)
+def update_settings_input_source_item(
+    source_id: int,
+    source: InputSource,
+    db: Session = Depends(get_db),
+):
+    return save_source_item(db, source, source_id=source_id)
+
+
+@external_router.delete("/settings/input-sources/item/{source_id}")
+def delete_settings_input_source_item(source_id: int, db: Session = Depends(get_db)):
+    return delete_source_item(db, source_id)
+
+
 @external_router.get("/settings/anomaly-prompts", response_model=AnomalyPromptSettings)
 def get_anomaly_prompt_settings():
     return read_anomaly_prompt_settings()
@@ -5452,6 +5471,18 @@ def update_settings_anomaly_llm_model_settings(
     return _save_anomaly_llm_model_settings(db, payload)
 
 
+@external_router.put(
+    "/settings/anomaly-llm-model-settings/{provider_key}",
+    response_model=AnomalyLlmModelSettings,
+)
+def update_settings_anomaly_llm_model_provider(
+    provider_key: str,
+    payload: AnomalyLlmModelSettings,
+    db: Session = Depends(get_db),
+):
+    return save_anomaly_llm_model_provider_item(db, payload, provider_key=provider_key)
+
+
 @external_router.post(
     "/settings/anomaly-llm-model-settings/test",
     response_model=AnomalyLlmModelSettingsTestResponse,
@@ -5484,6 +5515,28 @@ def update_settings_trigger_rules(
     return replace_trigger_rules(db, rules)
 
 
+@external_router.post("/settings/trigger-rules/item", response_model=TriggerRule)
+def create_settings_trigger_rule_item(
+    rule: TriggerRule,
+    db: Session = Depends(get_db),
+):
+    return save_trigger_rule_item(db, rule)
+
+
+@external_router.put("/settings/trigger-rules/item/{rule_id}", response_model=TriggerRule)
+def update_settings_trigger_rule_item(
+    rule_id: int,
+    rule: TriggerRule,
+    db: Session = Depends(get_db),
+):
+    return save_trigger_rule_item(db, rule, rule_id=rule_id)
+
+
+@external_router.delete("/settings/trigger-rules/item/{rule_id}")
+def delete_settings_trigger_rule_item(rule_id: int, db: Session = Depends(get_db)):
+    return delete_trigger_rule_item(db, rule_id)
+
+
 @external_router.get("/settings/connector-endpoints", response_model=list[ConnectorEndpoint])
 def get_settings_connector_endpoints(db: Session = Depends(get_db)):
     return build_connector_endpoint_responses(db)
@@ -5508,6 +5561,47 @@ def update_settings_govee_connector_endpoints(
     db: Session = Depends(get_db),
 ):
     return replace_connector_endpoints(db, endpoints, connector_key=CONNECTOR_KEY_GOVEE)
+
+
+@external_router.post("/settings/govee-connector-endpoints/item", response_model=ConnectorEndpoint)
+def create_settings_govee_connector_endpoint_item(
+    endpoint: ConnectorEndpoint,
+    db: Session = Depends(get_db),
+):
+    return save_connector_endpoint_item(
+        db,
+        endpoint,
+        connector_key=CONNECTOR_KEY_GOVEE,
+    )
+
+
+@external_router.put(
+    "/settings/govee-connector-endpoints/item/{endpoint_id}",
+    response_model=ConnectorEndpoint,
+)
+def update_settings_govee_connector_endpoint_item(
+    endpoint_id: int,
+    endpoint: ConnectorEndpoint,
+    db: Session = Depends(get_db),
+):
+    return save_connector_endpoint_item(
+        db,
+        endpoint,
+        endpoint_id=endpoint_id,
+        connector_key=CONNECTOR_KEY_GOVEE,
+    )
+
+
+@external_router.delete("/settings/govee-connector-endpoints/item/{endpoint_id}")
+def delete_settings_govee_connector_endpoint_item(
+    endpoint_id: int,
+    db: Session = Depends(get_db),
+):
+    return delete_connector_endpoint_item(
+        db,
+        endpoint_id,
+        connector_key=CONNECTOR_KEY_GOVEE,
+    )
 
 
 @external_router.post("/settings/govee/test", response_model=GoveeApiKeyTestResponse)
@@ -5630,6 +5724,41 @@ def update_settings_telegram_trigger_subscriptions(
 
 
 @external_router.post(
+    "/settings/telegram-trigger-subscriptions/item",
+    response_model=TelegramTriggerSubscription,
+)
+def create_settings_telegram_trigger_subscription_item(
+    subscription: TelegramTriggerSubscription,
+    db: Session = Depends(get_db),
+):
+    return save_telegram_trigger_subscription_item(db, subscription)
+
+
+@external_router.put(
+    "/settings/telegram-trigger-subscriptions/item/{subscription_id}",
+    response_model=TelegramTriggerSubscription,
+)
+def update_settings_telegram_trigger_subscription_item(
+    subscription_id: int,
+    subscription: TelegramTriggerSubscription,
+    db: Session = Depends(get_db),
+):
+    return save_telegram_trigger_subscription_item(
+        db,
+        subscription,
+        subscription_id=subscription_id,
+    )
+
+
+@external_router.delete("/settings/telegram-trigger-subscriptions/item/{subscription_id}")
+def delete_settings_telegram_trigger_subscription_item(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+):
+    return delete_telegram_trigger_subscription_item(db, subscription_id)
+
+
+@external_router.post(
     "/settings/telegram-trigger-subscriptions/test",
     response_model=TelegramTriggerTestResponse,
 )
@@ -5663,6 +5792,41 @@ def update_settings_apple_message_trigger_subscriptions(
     db: Session = Depends(get_db),
 ):
     return replace_apple_message_trigger_subscriptions(db, subscriptions)
+
+
+@external_router.post(
+    "/settings/apple-message-trigger-subscriptions/item",
+    response_model=AppleMessageTriggerSubscription,
+)
+def create_settings_apple_message_trigger_subscription_item(
+    subscription: AppleMessageTriggerSubscription,
+    db: Session = Depends(get_db),
+):
+    return save_apple_message_trigger_subscription_item(db, subscription)
+
+
+@external_router.put(
+    "/settings/apple-message-trigger-subscriptions/item/{subscription_id}",
+    response_model=AppleMessageTriggerSubscription,
+)
+def update_settings_apple_message_trigger_subscription_item(
+    subscription_id: int,
+    subscription: AppleMessageTriggerSubscription,
+    db: Session = Depends(get_db),
+):
+    return save_apple_message_trigger_subscription_item(
+        db,
+        subscription,
+        subscription_id=subscription_id,
+    )
+
+
+@external_router.delete("/settings/apple-message-trigger-subscriptions/item/{subscription_id}")
+def delete_settings_apple_message_trigger_subscription_item(
+    subscription_id: int,
+    db: Session = Depends(get_db),
+):
+    return delete_apple_message_trigger_subscription_item(db, subscription_id)
 
 
 @external_router.post(
