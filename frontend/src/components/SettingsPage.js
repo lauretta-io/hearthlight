@@ -787,6 +787,11 @@ const SettingsPage = ({
   const [goveeEndpointErrors, setGoveeEndpointErrors] = useState({});
   const [anomalyLlmModelProviderErrors, setAnomalyLlmModelProviderErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
+  const [busySourceSaves, setBusySourceSaves] = useState({});
+  const [busyRuleSaves, setBusyRuleSaves] = useState({});
+  const [busyTelegramSaves, setBusyTelegramSaves] = useState({});
+  const [busyAppleMessageSaves, setBusyAppleMessageSaves] = useState({});
+  const [busyGoveeSaves, setBusyGoveeSaves] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
@@ -798,10 +803,17 @@ const SettingsPage = ({
   const [alertRules, setAlertRules] = useState([]);
   const [persistedAlertRules, setPersistedAlertRules] = useState([]);
   const [telegramSubscriptions, setTelegramSubscriptions] = useState([]);
+  const [persistedSources, setPersistedSources] = useState([]);
+  const [persistedTelegramSubscriptions, setPersistedTelegramSubscriptions] = useState([]);
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
+  const [persistedAppleMessageSubscriptions, setPersistedAppleMessageSubscriptions] = useState([]);
   const [goveeEndpoints, setGoveeEndpoints] = useState([]);
+  const [persistedGoveeEndpoints, setPersistedGoveeEndpoints] = useState([]);
   const [genericConnectorEndpoints, setGenericConnectorEndpoints] = useState([]);
   const [anomalyLlmModelSettings, setAnomalyLlmModelSettings] = useState(
+    ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.map((option) => createAnomalyLlmModelProviderDraft(option.provider_key))
+  );
+  const [persistedAnomalyLlmModelSettings, setPersistedAnomalyLlmModelSettings] = useState(
     ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.map((option) => createAnomalyLlmModelProviderDraft(option.provider_key))
   );
   const [activeAnomalyLlmProviderKey, setActiveAnomalyLlmProviderKey] = useState(null);
@@ -878,16 +890,6 @@ const SettingsPage = ({
     const optionResponse = await fetch(`${BaseURL}/settings/alert-rule-options`);
     if (includeRules) {
       ruleResponse = await fetch(`${BaseURL}/settings/trigger-rules`);
-      if (ruleResponse.ok) {
-        try {
-          const preview = await ruleResponse.clone().json();
-          if (!Array.isArray(preview)) {
-            ruleResponse = await fetch(`${BaseURL}/settings/alert-rules`);
-          }
-        } catch (error) {
-          ruleResponse = await fetch(`${BaseURL}/settings/alert-rules`);
-        }
-      }
     }
     const responses = includeRules ? [ruleResponse, optionResponse] : [optionResponse];
     const firstFailure = responses.find((response) => !response.ok);
@@ -937,7 +939,9 @@ const SettingsPage = ({
       throw new Error(detail || 'Failed to load Telegram trigger subscriptions');
     }
     const data = await response.json();
-    setTelegramSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index)));
+    const hydrated = normalizeListPayload(data).map((subscription, index) => hydrateTelegramSubscription(subscription, index));
+    setTelegramSubscriptions(hydrated);
+    setPersistedTelegramSubscriptions(hydrated);
   };
 
   const reloadAppleMessageSubscriptionState = async () => {
@@ -953,7 +957,9 @@ const SettingsPage = ({
       throw new Error(detail || 'Failed to load Apple Messages trigger subscriptions');
     }
     const data = await response.json();
-    setAppleMessageSubscriptions(normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index)));
+    const hydrated = normalizeListPayload(data).map((subscription, index) => hydrateAppleMessageSubscription(subscription, index));
+    setAppleMessageSubscriptions(hydrated);
+    setPersistedAppleMessageSubscriptions(hydrated);
   };
 
   const reloadGoveeEndpointState = async () => {
@@ -969,7 +975,9 @@ const SettingsPage = ({
       throw new Error(detail || 'Failed to load Govee connector endpoints');
     }
     const data = await response.json();
-    setGoveeEndpoints(normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index)));
+    const hydrated = normalizeListPayload(data).map((endpoint, index) => hydrateGoveeEndpoint(endpoint, index));
+    setGoveeEndpoints(hydrated);
+    setPersistedGoveeEndpoints(hydrated);
   };
 
   const reloadGenericConnectorEndpointState = async () => {
@@ -1008,11 +1016,11 @@ const SettingsPage = ({
     const nextByKey = new Map(
       normalizeListPayload(data).map((item) => [item.provider_key, hydrateAnomalyLlmModelSettings(item)]),
     );
-    setAnomalyLlmModelSettings(
-      ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.map((option) =>
-        nextByKey.get(option.provider_key) || createAnomalyLlmModelProviderDraft(option.provider_key)
-      ),
+    const hydrated = ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.map((option) =>
+      nextByKey.get(option.provider_key) || createAnomalyLlmModelProviderDraft(option.provider_key)
     );
+    setAnomalyLlmModelSettings(hydrated);
+    setPersistedAnomalyLlmModelSettings(hydrated);
   };
 
   const reloadConnectorZooRepoSettings = async () => {
@@ -1056,6 +1064,7 @@ const SettingsPage = ({
           ? sourceData.map((source, index) => hydrateSource(source, index))
           : [createSourceDraft()];
         setSources(hydratedSources);
+        setPersistedSources(hydratedSources);
         try {
           let standardPromptData = EMPTY_PROMPT_SETTINGS;
           const standardPromptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts/standard`);
