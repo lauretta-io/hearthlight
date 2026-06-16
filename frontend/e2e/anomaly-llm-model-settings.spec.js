@@ -79,7 +79,7 @@ const buildModelOptions = () => ({
   ],
 });
 
-const buildStage2Providers = () => ([
+const buildAnomalyLlmModelProviders = () => ([
   {
     provider_key: 'openai',
     display_name: 'OpenAI',
@@ -143,7 +143,9 @@ const buildStage2Providers = () => ([
 ]);
 
 test.beforeEach(async ({ page }) => {
-  let stage2Providers = buildStage2Providers();
+  let anomalyLlmModelProviders = buildAnomalyLlmModelProviders();
+  page.savedAnomalyLlmModelProviderPayloads = [];
+  page.anomalyLlmModelProviderTestPayloads = [];
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -198,8 +200,8 @@ test.beforeEach(async ({ page }) => {
         anomaly_behaviors: ['running'],
       });
     }
-    if (path.endsWith('/settings/stage2-provider-settings') && method === 'GET') {
-      return json(stage2Providers);
+    if (path.endsWith('/settings/anomaly-llm-model-settings') && method === 'GET') {
+      return json(anomalyLlmModelProviders);
     }
     if (path.endsWith('/settings/trigger-rules') && method === 'GET') {
       return json([]);
@@ -244,9 +246,10 @@ test.beforeEach(async ({ page }) => {
         connectors: [],
       });
     }
-    if (path.endsWith('/settings/stage2-provider-settings') && method === 'PUT') {
+    if (path.endsWith('/settings/anomaly-llm-model-settings') && method === 'PUT') {
       const payload = JSON.parse(request.postData() || '[]');
-      stage2Providers = payload.map((item) => ({
+      page.savedAnomalyLlmModelProviderPayloads.push(payload);
+      anomalyLlmModelProviders = payload.map((item) => ({
         ...item,
         api_key: item.api_key ? '********' : '',
         auth_token: item.auth_token ? '********' : '',
@@ -255,10 +258,11 @@ test.beforeEach(async ({ page }) => {
         last_test_message: item.last_test_message ?? null,
         last_tested_at: item.last_tested_at ?? null,
       }));
-      return json(stage2Providers);
+      return json(anomalyLlmModelProviders);
     }
-    if (path.endsWith('/settings/stage2-provider-settings/test') && method === 'POST') {
+    if (path.endsWith('/settings/anomaly-llm-model-settings/test') && method === 'POST') {
       const payload = JSON.parse(request.postData() || '{}');
+      page.anomalyLlmModelProviderTestPayloads.push(payload);
       if (payload.provider_key === 'lm_studio' && payload.base_url === 'http://offline.local/v1') {
         return json({ detail: 'Connection timed out while contacting the provider.' }, 502);
       }
@@ -278,33 +282,48 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+const openProviderSettings = async (page, modelName) => {
+  const card = page.locator('.anomaly-llm-card').filter({ hasText: modelName });
+  await expect(card).toBeVisible();
+  await card.getByRole('button', { name: 'Configure Model' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  return dialog;
+};
+
+const activeTabBanner = (page, text) =>
+  page.locator('.settings-tab-panel > [aria-hidden="false"] > .banner').filter({ hasText: text }).first();
+
 test('loads, saves, and preserves masked OpenAI provider settings', async ({ page }) => {
-  await page.goto('/settings?tab=sources');
+  await page.goto('/settings?tab=models');
 
-  const openaiBaseUrl = page.locator('input[value="https://api.openai.com/v1"]').first();
-  const maskedSecret = page.locator('input[type="password"][value="********"]').first();
+  await expect(page.getByRole('heading', { name: 'Anomaly LLM Models' })).toBeVisible();
+  await expect(page.getByText('Current Anomaly LLM Binding')).toBeVisible();
 
-  await expect(page.getByRole('heading', { name: 'Stage 2 Provider Settings' })).toBeVisible();
-  await expect(page.getByText('Current Stage 2 Binding')).toBeVisible();
-  await expect(openaiBaseUrl).toBeVisible();
-  await expect(maskedSecret).toBeVisible();
+  const dialog = await openProviderSettings(page, 'OpenAI Stage 2');
+  await expect(dialog.getByLabel('Base URL')).toHaveValue('https://api.openai.com/v1');
+  await expect(dialog.getByLabel('API Key')).toHaveValue('********');
 
-  await openaiBaseUrl.fill('https://api.openai.com/v2');
-  await page.getByRole('button', { name: 'Save Stage 2 Provider Settings' }).click();
+  await dialog.getByLabel('Base URL').fill('https://api.openai.com/v2');
+  await dialog.getByRole('button', { name: 'Save Anomaly LLM Model' }).click();
 
-  await expect(page.locator('.banner').filter({ hasText: 'Stage 2 provider settings saved.' }).first()).toBeVisible();
-  await expect(page.locator('input[value="https://api.openai.com/v2"]').first()).toBeVisible();
-  await expect(page.locator('input[type="password"][value="********"]').first()).toBeVisible();
+  await expect(activeTabBanner(page, 'Anomaly LLM model settings saved securely.')).toBeVisible();
+  const lastPayload = page.savedAnomalyLlmModelProviderPayloads.at(-1);
+  const openaiPayload = lastPayload.find((item) => item.provider_key === 'openai');
+  expect(openaiPayload.base_url).toBe('https://api.openai.com/v2');
+  expect(openaiPayload.api_key).toBe('********');
+  await expect(page.locator('.anomaly-llm-card').filter({ hasText: 'Endpoint: https://api.openai.com/v2' })).toBeVisible();
+  await expect(page.locator('.anomaly-llm-card').filter({ hasText: 'Secret stored' }).first()).toBeVisible();
 });
 
 test('validates required OpenAI secrets and omits raw secrets from browser storage', async ({ page }) => {
-  await page.goto('/settings?tab=sources');
+  await page.goto('/settings?tab=models');
 
-  await expect(page.getByRole('heading', { name: 'Stage 2 Provider Settings' })).toBeVisible();
-  await page.locator('input[type="password"][value="********"]').first().fill('');
-  await page.getByRole('button', { name: 'Save Stage 2 Provider Settings' }).click();
+  const dialog = await openProviderSettings(page, 'OpenAI Stage 2');
+  await dialog.getByLabel('API Key').fill('');
+  await dialog.getByRole('button', { name: 'Save Anomaly LLM Model' }).click();
 
-  await expect(page.getByText('API Key is required when the provider is enabled.')).toBeVisible();
+  await expect(dialog.getByText('API Key is required when the provider is enabled.')).toBeVisible();
 
   const storageSnapshot = await page.evaluate(() => ({
     local: Object.values(localStorage),
@@ -317,11 +336,43 @@ test('validates required OpenAI secrets and omits raw secrets from browser stora
 });
 
 test('supports LM Studio optional auth and surfaces connectivity failures', async ({ page }) => {
-  await page.goto('/settings?tab=sources');
+  await page.goto('/settings?tab=models');
 
-  await expect(page.getByRole('heading', { name: 'Stage 2 Provider Settings' })).toBeVisible();
-  await page.locator('input[value="http://localhost:1234/v1"]').first().fill('http://offline.local/v1');
-  await page.getByRole('button', { name: 'Test Connection' }).nth(1).click();
+  const dialog = await openProviderSettings(page, 'LM Studio Stage 2');
+  await dialog.getByLabel('Enabled').check();
+  await dialog.getByLabel('Base URL').fill('http://offline.local/v1');
+  await dialog.getByLabel('API Key').fill('');
+  await dialog.getByRole('button', { name: 'Test Connection' }).click();
 
-  await expect(page.locator('.banner').filter({ hasText: 'Connection timed out while contacting the provider.' }).first()).toBeVisible();
+  await expect(activeTabBanner(page, 'Connection timed out while contacting the provider.')).toBeVisible();
+  const testPayload = page.anomalyLlmModelProviderTestPayloads.at(-1);
+  expect(testPayload.provider_key).toBe('lm_studio');
+  expect(testPayload.api_key).toBe('');
+});
+
+test('rotates the OpenAI API key without changing endpoint or model', async ({ page }) => {
+  await page.goto('/settings?tab=models');
+
+  const dialog = await openProviderSettings(page, 'OpenAI Stage 2');
+  await expect(dialog.getByLabel('Base URL')).toHaveValue('https://api.openai.com/v1');
+  await expect(dialog.getByLabel('Model Name')).toHaveValue('gpt-5.4-mini');
+
+  await dialog.getByLabel('API Key').fill('sk-rotated-test-key');
+  await dialog.getByRole('button', { name: 'Save Anomaly LLM Model' }).click();
+
+  await expect(activeTabBanner(page, 'Anomaly LLM model settings saved securely.')).toBeVisible();
+  const lastPayload = page.savedAnomalyLlmModelProviderPayloads.at(-1);
+  const openaiPayload = lastPayload.find((item) => item.provider_key === 'openai');
+  expect(openaiPayload.base_url).toBe('https://api.openai.com/v1');
+  expect(openaiPayload.model_name).toBe('gpt-5.4-mini');
+  expect(openaiPayload.api_key).toBe('sk-rotated-test-key');
+
+  const storageSnapshot = await page.evaluate(() => ({
+    local: Object.values(localStorage),
+    session: Object.values(sessionStorage),
+    html: document.body.innerHTML,
+  }));
+  expect(storageSnapshot.local.join(' ')).not.toContain('sk-rotated-test-key');
+  expect(storageSnapshot.session.join(' ')).not.toContain('sk-rotated-test-key');
+  expect(storageSnapshot.html).not.toContain('sk-rotated-test-key');
 });

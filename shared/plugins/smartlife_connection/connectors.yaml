@@ -1,0 +1,27 @@
+smartlife:
+  label: Smart Life Connection
+  description: Scene and device control across the Smart Life and Tuya ecosystem.
+  category: automation
+  enabled: true
+  requirements:
+    - base-url
+    - access-token
+    - device-id
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: access_token
+      label: Access Token
+      secret: true
+    - key: device_id
+      label: Device ID
+    - key: scene_id
+      label: Scene ID
+    - key: command
+      label: Command
+    - key: parameters
+      label: JSON Parameters
+  delivery_capabilities:
+    - automation
+    - device_control
+    - sync

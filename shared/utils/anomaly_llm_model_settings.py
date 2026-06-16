@@ -7,9 +7,11 @@ import hashlib
 import json
 import logging
 import os
+import threading
 from typing import Any
 
 from cryptography.fernet import Fernet, InvalidToken
+from sqlalchemy import text
 
 from ..database.database import get_engine
 from ..models import SQLModels
@@ -17,18 +19,20 @@ from .connector_endpoints import MASKED_SECRET_VALUE
 from .workspace_settings import get_workspace_setting_value
 
 logger = logging.getLogger(__name__)
+_ensure_tables_lock = threading.Lock()
+_ensure_tables_done = False
 
 PROVIDER_KEY_OPENAI = "openai"
 PROVIDER_KEY_LM_STUDIO = "lm_studio"
 PROVIDER_KEY_LAURETTA = "lauretta"
 PROVIDER_KEY_CLAUDE_COMPATIBLE = "claude_compatible"
-STAGE2_PROVIDER_KEYS = {
+ANOMALY_LLM_MODEL_PROVIDER_KEYS = {
     PROVIDER_KEY_OPENAI,
     PROVIDER_KEY_LM_STUDIO,
     PROVIDER_KEY_LAURETTA,
     PROVIDER_KEY_CLAUDE_COMPATIBLE,
 }
-STAGE2_PROVIDER_SECRET_KEY_ENV = "WEBAPP_SECRET_ENCRYPTION_KEY"
+ANOMALY_LLM_MODEL_PROVIDER_SECRET_KEY_ENV = "WEBAPP_SECRET_ENCRYPTION_KEY"
 LEGACY_CLAUDE_COMPATIBLE_SETTING_KEY = "claude_anomaly_model"
 
 PROVIDER_METADATA: dict[str, dict[str, Any]] = {
@@ -79,25 +83,75 @@ PROVIDER_METADATA: dict[str, dict[str, Any]] = {
 }
 
 
-class Stage2ProviderSettingsError(RuntimeError):
+class AnomalyLlmModelSettingsError(RuntimeError):
     pass
 
 
-class Stage2ProviderSettingsKeyUnavailable(Stage2ProviderSettingsError):
+class AnomalyLlmModelSettingsKeyUnavailable(AnomalyLlmModelSettingsError):
     pass
 
 
-class Stage2ProviderSettingsDecryptError(Stage2ProviderSettingsError):
+class AnomalyLlmModelSettingsDecryptError(AnomalyLlmModelSettingsError):
     pass
 
 
-def ensure_stage2_provider_setting_tables() -> None:
-    engine = get_engine()
-    SQLModels.Base.metadata.create_all(
-        bind=engine,
-        tables=[SQLModels.Stage2ProviderSetting.__table__],
-        checkfirst=True,
-    )
+def _rename_legacy_stage2_provider_table(engine) -> None:
+    """Preserve deployments that created the table before the settings rename."""
+    if not hasattr(engine, "begin"):
+        return
+    try:
+        with engine.begin() as connection:
+            dialect_name = getattr(getattr(connection, "dialect", None), "name", "")
+            if dialect_name == "postgresql":
+                connection.execute(
+                    text(
+                        """
+                        DO $$
+                        BEGIN
+                            IF to_regclass('control.anomaly_llm_model_setting') IS NULL
+                               AND to_regclass('control.stage2_provider_setting') IS NOT NULL THEN
+                                ALTER TABLE control.stage2_provider_setting
+                                    RENAME TO anomaly_llm_model_setting;
+                            END IF;
+                            IF to_regclass('control.uq_stage2_provider_setting_key') IS NOT NULL
+                               AND to_regclass('control.uq_anomaly_llm_model_setting_key') IS NULL THEN
+                                ALTER INDEX control.uq_stage2_provider_setting_key
+                                    RENAME TO uq_anomaly_llm_model_setting_key;
+                            END IF;
+                        END $$;
+                        """
+                    )
+                )
+            elif dialect_name == "sqlite":
+                rows = connection.execute(
+                    text("SELECT name FROM sqlite_master WHERE type='table' AND name IN (:old_name, :new_name)"),
+                    {"old_name": "stage2_provider_setting", "new_name": "anomaly_llm_model_setting"},
+                ).fetchall()
+                table_names = {row[0] for row in rows}
+                if "stage2_provider_setting" in table_names and "anomaly_llm_model_setting" not in table_names:
+                    connection.execute(
+                        text("ALTER TABLE stage2_provider_setting RENAME TO anomaly_llm_model_setting")
+                    )
+    except Exception:
+        logger.exception("failed to migrate legacy Stage 2 provider settings table")
+        raise
+
+
+def ensure_anomaly_llm_model_setting_tables() -> None:
+    global _ensure_tables_done
+    if _ensure_tables_done:
+        return
+    with _ensure_tables_lock:
+        if _ensure_tables_done:
+            return
+        engine = get_engine()
+        _rename_legacy_stage2_provider_table(engine)
+        SQLModels.Base.metadata.create_all(
+            bind=engine,
+            tables=[SQLModels.AnomalyLlmModelSetting.__table__],
+            checkfirst=True,
+        )
+        _ensure_tables_done = True
 
 
 def utc_now_iso() -> str:
@@ -106,7 +160,7 @@ def utc_now_iso() -> str:
 
 def _normalize_provider_key(provider_key: str) -> str:
     normalized = str(provider_key or "").strip().lower()
-    if normalized not in STAGE2_PROVIDER_KEYS:
+    if normalized not in ANOMALY_LLM_MODEL_PROVIDER_KEYS:
         raise ValueError(f"unsupported provider_key {provider_key!r}")
     return normalized
 
@@ -120,10 +174,10 @@ def _positive_int(value: Any, default: int, *, minimum: int, maximum: int) -> in
 
 
 def _build_fernet() -> Fernet:
-    secret = str(os.environ.get(STAGE2_PROVIDER_SECRET_KEY_ENV) or "").strip()
+    secret = str(os.environ.get(ANOMALY_LLM_MODEL_PROVIDER_SECRET_KEY_ENV) or "").strip()
     if not secret:
-        raise Stage2ProviderSettingsKeyUnavailable(
-            f"{STAGE2_PROVIDER_SECRET_KEY_ENV} is required to read or write saved Stage 2 provider secrets"
+        raise AnomalyLlmModelSettingsKeyUnavailable(
+            f"{ANOMALY_LLM_MODEL_PROVIDER_SECRET_KEY_ENV} is required to read or write saved Anomaly LLM model secrets"
         )
     digest = hashlib.sha256(secret.encode("utf-8")).digest()
     return Fernet(base64.urlsafe_b64encode(digest))
@@ -141,8 +195,8 @@ def decrypt_secret_payload(token: str | None) -> dict[str, Any]:
     try:
         decrypted = _build_fernet().decrypt(raw.encode("utf-8"))
     except InvalidToken as exc:
-        raise Stage2ProviderSettingsDecryptError(
-            "stored Stage 2 provider secret could not be decrypted"
+        raise AnomalyLlmModelSettingsDecryptError(
+            "stored Anomaly LLM model secret could not be decrypted"
         ) from exc
     loaded = json.loads(decrypted.decode("utf-8"))
     return loaded if isinstance(loaded, dict) else {}
@@ -160,23 +214,23 @@ def parse_json_text(raw_value: Any, *, default: Any) -> Any:
     return loaded if isinstance(loaded, type(default)) else loaded
 
 
-def get_stage2_provider_row(db, provider_key: str):
-    ensure_stage2_provider_setting_tables()
+def get_anomaly_llm_model_provider_row(db, provider_key: str):
+    ensure_anomaly_llm_model_setting_tables()
     normalized = _normalize_provider_key(provider_key)
     return (
-        db.query(SQLModels.Stage2ProviderSetting)
+        db.query(SQLModels.AnomalyLlmModelSetting)
         .filter_by(provider_key=normalized, is_deleted=False)
-        .order_by(SQLModels.Stage2ProviderSetting.id.asc())
+        .order_by(SQLModels.AnomalyLlmModelSetting.id.asc())
         .first()
     )
 
 
-def list_stage2_provider_rows(db):
-    ensure_stage2_provider_setting_tables()
+def list_anomaly_llm_model_provider_rows(db):
+    ensure_anomaly_llm_model_setting_tables()
     return (
-        db.query(SQLModels.Stage2ProviderSetting)
+        db.query(SQLModels.AnomalyLlmModelSetting)
         .filter_by(is_deleted=False)
-        .order_by(SQLModels.Stage2ProviderSetting.provider_key.asc())
+        .order_by(SQLModels.AnomalyLlmModelSetting.provider_key.asc())
         .all()
     )
 
@@ -333,7 +387,7 @@ def _merge_secret_value(provider_key: str, existing_secret: dict[str, Any], inco
     return merged
 
 
-def merge_stage2_provider_settings_draft(
+def merge_anomaly_llm_model_settings_draft(
     provider_key: str,
     incoming_payload: dict[str, Any],
     *,
@@ -382,7 +436,7 @@ def _merge_saved_row(
     return payload
 
 
-def get_effective_stage2_provider_settings(
+def get_effective_anomaly_llm_model_settings(
     db,
     provider_key: str,
     *,
@@ -390,7 +444,7 @@ def get_effective_stage2_provider_settings(
 ) -> dict[str, Any]:
     normalized = _normalize_provider_key(provider_key)
     payload = _env_payload_for_provider(normalized, runtime_defaults=runtime_defaults)
-    row = get_stage2_provider_row(db, normalized)
+    row = get_anomaly_llm_model_provider_row(db, normalized)
     if row is not None:
         payload = _merge_saved_row(normalized, payload, row)
     elif normalized == PROVIDER_KEY_CLAUDE_COMPATIBLE:
@@ -405,7 +459,7 @@ def get_effective_stage2_provider_settings(
     )
 
 
-def redact_stage2_provider_settings_payload(payload: dict[str, Any]) -> dict[str, Any]:
+def redact_anomaly_llm_model_settings_payload(payload: dict[str, Any]) -> dict[str, Any]:
     normalized = _normalize_provider_payload(
         payload.get("provider_key") or "",
         payload,
@@ -418,19 +472,19 @@ def redact_stage2_provider_settings_payload(payload: dict[str, Any]) -> dict[str
     return redacted
 
 
-def list_stage2_provider_settings(db) -> list[dict[str, Any]]:
-    rows = {row.provider_key: row for row in list_stage2_provider_rows(db)}
+def list_anomaly_llm_model_settings(db) -> list[dict[str, Any]]:
+    rows = {row.provider_key: row for row in list_anomaly_llm_model_provider_rows(db)}
     results: list[dict[str, Any]] = []
-    for provider_key in sorted(STAGE2_PROVIDER_KEYS):
-        payload = get_effective_stage2_provider_settings(db, provider_key)
+    for provider_key in sorted(ANOMALY_LLM_MODEL_PROVIDER_KEYS):
+        payload = get_effective_anomaly_llm_model_settings(db, provider_key)
         if provider_key in rows:
             payload = _merge_saved_row(provider_key, payload, rows[provider_key])
-        results.append(redact_stage2_provider_settings_payload(payload))
+        results.append(redact_anomaly_llm_model_settings_payload(payload))
     return results
 
 
-def write_stage2_provider_settings(db, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    existing_by_key = {row.provider_key: row for row in list_stage2_provider_rows(db)}
+def write_anomaly_llm_model_settings(db, payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    existing_by_key = {row.provider_key: row for row in list_anomaly_llm_model_provider_rows(db)}
     saved_results: list[dict[str, Any]] = []
     for incoming in payloads:
         provider_key = _normalize_provider_key(incoming.get("provider_key") or "")
@@ -465,7 +519,7 @@ def write_stage2_provider_settings(db, payloads: list[dict[str, Any]]) -> list[d
             require_secret_if_enabled=True,
         )
         if row is None:
-            row = SQLModels.Stage2ProviderSetting(provider_key=provider_key)
+            row = SQLModels.AnomalyLlmModelSetting(provider_key=provider_key)
             db.add(row)
             existing_by_key[provider_key] = row
         row.provider_key = provider_key
@@ -475,19 +529,19 @@ def write_stage2_provider_settings(db, payloads: list[dict[str, Any]]) -> list[d
         )
         row.is_deleted = False
         row.deleted_at = None
-        saved_results.append(redact_stage2_provider_settings_payload(normalized))
+        saved_results.append(redact_anomaly_llm_model_settings_payload(normalized))
     db.flush()
     return saved_results
 
 
-def record_stage2_provider_test_status(
+def record_anomaly_llm_model_provider_test_status(
     db,
     provider_key: str,
     *,
     status: str,
     message: str | None = None,
 ) -> None:
-    row = get_stage2_provider_row(db, provider_key)
+    row = get_anomaly_llm_model_provider_row(db, provider_key)
     if row is None:
         return
     config_payload = parse_json_text(getattr(row, "config_json", None), default={})
@@ -502,13 +556,13 @@ def record_stage2_provider_test_status(
     db.flush()
 
 
-def build_runtime_stage2_provider_settings(
+def build_runtime_anomaly_llm_model_settings(
     db,
     provider_key: str,
     *,
     runtime_defaults: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    payload = get_effective_stage2_provider_settings(
+    payload = get_effective_anomaly_llm_model_settings(
         db,
         provider_key,
         runtime_defaults=runtime_defaults,

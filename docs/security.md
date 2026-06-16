@@ -108,9 +108,9 @@ webhook bearer tokens instead of echoing them back to the browser. Updates prese
 secret when the masked placeholder is submitted unchanged, so operators can edit labels or toggles
 without retyping credentials.
 
-### Stage 2 provider secret storage
+### Anomaly LLM model secret storage
 
-External anomaly-detection provider settings now use a dedicated control-plane
+External Anomaly LLM model settings now use a dedicated control-plane
 table instead of storing provider credentials inside plaintext workspace
 settings JSON.
 

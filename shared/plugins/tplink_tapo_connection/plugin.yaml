@@ -1,0 +1,8 @@
+key: tplink_tapo_connection
+label: TP-Link Tapo Connection
+version: "0.8.2"
+provider: TP-Link
+description: Optional TP-Link Tapo connector plugin for cameras, bulbs, plugs, and scenes.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

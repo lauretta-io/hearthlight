@@ -291,6 +291,80 @@
   border-color: color-mix(in srgb, var(--color-danger-text) 34%, var(--color-border) 66%);
 }
 
+.anomaly-llm-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
+  gap: 14px;
+}
+
+.anomaly-llm-card {
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--color-bg-elevated);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.anomaly-llm-card-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  color: var(--color-text-muted);
+  font-size: 0.9rem;
+  overflow-wrap: anywhere;
+}
+
+.anomaly-llm-card-actions {
+  margin-top: auto;
+  justify-content: flex-start;
+}
+
+.anomaly-llm-model-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.anomaly-llm-model-chip {
+  border: 1px solid var(--color-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: var(--color-bg-soft);
+  color: var(--color-text);
+  font-size: 0.88rem;
+}
+
+.anomaly-label-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr));
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.anomaly-label-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.anomaly-label-editor textarea {
+  min-height: 11rem;
+  resize: vertical;
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  background: var(--color-bg-card-strong);
+  color: var(--color-text);
+  font: inherit;
+  line-height: 1.45;
+}
+
+.anomaly-label-help {
+  grid-column: 1 / -1;
+}
+
 .model-library-stage-list {
   display: flex;
   flex-direction: column;
@@ -588,6 +662,18 @@
   display: flex;
   flex-direction: column;
   gap: 8px;
+  min-width: 0;
+}
+
+.source-grid label > span,
+.model-binding-grid label > span,
+.toggle-field > span,
+.upload-field > span {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .source-grid input,
@@ -603,6 +689,7 @@
   font: inherit;
   width: 100%;
   min-width: 0;
+  max-width: 100%;
 }
 
 .toggle-field input[type="checkbox"] {
@@ -655,7 +742,19 @@
   gap: 8px;
   line-height: 1.2;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
   vertical-align: middle;
+}
+
+.settings-tab-button,
+.settings-subtab,
+.appearance-theme-card,
+.model-library-stage-tab {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .start-button:hover,
@@ -759,6 +858,10 @@
   background: var(--color-bg-card-strong);
   box-shadow: 0 24px 64px color-mix(in srgb, var(--color-bg) 42%, black 58%);
   overflow: hidden;
+}
+
+.settings-modal-wide {
+  width: min(100%, 820px);
 }
 
 .settings-modal-header,

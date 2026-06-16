@@ -15,12 +15,39 @@ class PluginLoaderTests(unittest.TestCase):
     def test_core_plugin_loads_models_triggers_connectors_and_rule_sets(self):
         catalog = load_plugin_catalog()
         plugin_keys = {entry["key"] for entry in catalog["plugins"]}
+        expected_optional_plugins = {
+            "govee_light_connection",
+            "lifx_cloud_connection",
+            "kasa_connection",
+            "smartlife_connection",
+            "smartthings_connection",
+            "switchbot_connection",
+            "wiz_connection",
+            "tplink_tapo_connection",
+            "lutron_caseta_connection",
+            "ewelink_connection",
+            "homeseer_connection",
+        }
         self.assertIn("core_builtin", plugin_keys)
-        self.assertIn("govee_light_connection", plugin_keys)
+        self.assertTrue(expected_optional_plugins.issubset(plugin_keys))
         self.assertIn("builtin_yolox_s_cpu", catalog["models"]["detector"])
         self.assertIn("alert_rule_trigger", {entry["key"] for entry in catalog["triggers"]})
         self.assertIn("telegram", {entry["key"] for entry in catalog["connectors"]})
-        self.assertIn("govee", {entry["key"] for entry in catalog["connectors"]})
+        self.assertTrue(
+            {
+                "govee",
+                "lifx",
+                "kasa",
+                "smartlife",
+                "smartthings",
+                "switchbot",
+                "wiz",
+                "tplink_tapo",
+                "lutron_caseta",
+                "ewelink",
+                "homeseer",
+            }.issubset({entry["key"] for entry in catalog["connectors"]})
+        )
         self.assertIn("starter_detection_rules", {entry["key"] for entry in catalog["rule_sets"]})
 
         connector_plugins = {
@@ -28,6 +55,9 @@ class PluginLoaderTests(unittest.TestCase):
             for entry in catalog["connectors"]
         }
         self.assertEqual(connector_plugins["govee"], "govee_light_connection")
+        self.assertEqual(connector_plugins["lifx"], "lifx_cloud_connection")
+        self.assertEqual(connector_plugins["smartlife"], "smartlife_connection")
+        self.assertEqual(connector_plugins["homeseer"], "homeseer_connection")
         self.assertEqual(connector_plugins["telegram"], "core_builtin")
 
         component_types = {entry["component_type"] for entry in catalog["components"]}

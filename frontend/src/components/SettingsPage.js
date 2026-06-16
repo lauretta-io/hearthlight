@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { BaseURL } from '../config';
 import MonitoringPage from './MonitoringPage';
@@ -58,7 +58,7 @@ const EMPTY_PROMPT_SETTINGS = {
   anomaly_items: [],
   anomaly_behaviors: [],
 };
-const STAGE2_PROVIDER_OPTIONS = [
+const ANOMALY_LLM_MODEL_PROVIDER_OPTIONS = [
   {
     provider_key: 'openai',
     label: 'OpenAI',
@@ -95,6 +95,7 @@ const STAGE2_PROVIDER_OPTIONS = [
 const SETTINGS_TABS = [
   { key: 'monitoring', label: 'Monitor Run' },
   { key: 'sources', label: 'Sources' },
+  { key: 'models', label: 'Models' },
   { key: 'model-library', label: 'Model Library' },
   { key: 'appearance', label: 'Appearance' },
   { key: 'initialization', label: 'Initialization' },
@@ -255,19 +256,9 @@ const hydrateAlertRule = (rule, fallbackIndex = 0) => ({
   isEditing: false,
 });
 
-const createAnomalyItemDraft = (item = '') => ({
-  clientKey: `settings-anomaly-item-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  item,
-});
-
 const hydrateAnomalyItem = (item, fallbackIndex = 0) => ({
   clientKey: `settings-anomaly-item-${fallbackIndex}-${Math.random().toString(16).slice(2)}`,
   item: typeof item === 'string' ? item : (item?.item ?? ''),
-});
-
-const createAnomalyBehaviorDraft = (value = '') => ({
-  clientKey: `settings-anomaly-behavior-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-  value,
 });
 
 const hydrateAnomalyBehavior = (value, fallbackIndex = 0) => ({
@@ -287,8 +278,8 @@ const createTelegramSubscriptionDraft = () => ({
 });
 const MASKED_SECRET_VALUE = '********';
 
-const createStage2ProviderDraft = (providerKey) => {
-  const option = STAGE2_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey);
+const createAnomalyLlmModelProviderDraft = (providerKey) => {
+  const option = ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey);
   return {
     provider_key: providerKey,
     display_name: option?.label || providerKey,
@@ -306,13 +297,13 @@ const createStage2ProviderDraft = (providerKey) => {
   };
 };
 
-const hydrateStage2ProviderSettings = (payload) => {
+const hydrateAnomalyLlmModelSettings = (payload) => {
   const providerKey = payload?.provider_key || '';
   return {
-    ...createStage2ProviderDraft(providerKey),
+    ...createAnomalyLlmModelProviderDraft(providerKey),
     ...payload,
     provider_key: providerKey,
-    display_name: payload?.display_name ?? (STAGE2_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey)?.label || providerKey),
+    display_name: payload?.display_name ?? (ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey)?.label || providerKey),
     enabled: Boolean(payload?.enabled),
     base_url: payload?.base_url ?? '',
     model_name: payload?.model_name ?? '',
@@ -327,8 +318,44 @@ const hydrateStage2ProviderSettings = (payload) => {
   };
 };
 
-const getStage2ProviderOption = (providerKey) =>
-  STAGE2_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey) || null;
+const getAnomalyLlmModelProviderOption = (providerKey) =>
+  ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.find((item) => item.provider_key === providerKey) || null;
+
+const getUiSection = (item, sectionKey = null) => {
+  const ui = item?.ui && typeof item.ui === 'object' ? item.ui : {};
+  if (!sectionKey) {
+    return ui;
+  }
+  const section = ui[sectionKey];
+  return section && typeof section === 'object' ? section : {};
+};
+
+const getUiAction = (uiSection, actionKey, defaults = {}) => {
+  const actions = uiSection?.actions && typeof uiSection.actions === 'object'
+    ? uiSection.actions
+    : {};
+  return {
+    ...defaults,
+    ...(actions[actionKey] && typeof actions[actionKey] === 'object' ? actions[actionKey] : {}),
+  };
+};
+
+const getUiField = (uiSection, fieldKey, defaults = {}) => {
+  const fields = uiSection?.fields && typeof uiSection.fields === 'object'
+    ? uiSection.fields
+    : {};
+  return {
+    ...defaults,
+    ...(fields[fieldKey] && typeof fields[fieldKey] === 'object' ? fields[fieldKey] : {}),
+  };
+};
+
+const renderActionLabel = (action, busy = false) => {
+  if (busy && action.busy_label) {
+    return action.busy_label;
+  }
+  return action.label || action.aria_label || 'Action';
+};
 
 const hydrateTelegramSubscription = (subscription, fallbackIndex = 0) => ({
   clientKey: subscription.id
@@ -678,6 +705,44 @@ const describeModelFit = (option) => {
   return 'Available for specialized or compatibility use.';
 };
 
+const compactWhitespace = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+const buildButtonHelpText = (button) => {
+  const explicit = compactWhitespace(button.getAttribute('aria-label') || button.getAttribute('data-help'));
+  const visible = compactWhitespace(button.textContent);
+  const label = explicit || visible || 'this action';
+  return `Action: ${label}. Hover help is shown here so compact button labels remain understandable.`;
+};
+
+const buildFieldHelpText = (field) => {
+  const label = field.closest('label');
+  const labelText = compactWhitespace(label?.querySelector('span')?.textContent || label?.textContent);
+  const placeholder = compactWhitespace(field.getAttribute('placeholder'));
+  const name = compactWhitespace(field.getAttribute('name') || field.getAttribute('aria-label'));
+  const fieldName = labelText || placeholder || name || 'this field';
+  return `Field: ${fieldName}. Use this control to configure the selected Hearthlight workspace setting.`;
+};
+
+const applySettingsHoverTitles = (root) => {
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll('button').forEach((button) => {
+    if (!button.getAttribute('title')) {
+      button.setAttribute('title', buildButtonHelpText(button));
+    }
+  });
+  root.querySelectorAll('input, select, textarea').forEach((field) => {
+    if (!field.getAttribute('title')) {
+      field.setAttribute('title', buildFieldHelpText(field));
+    }
+    const label = field.closest('label');
+    if (label && !label.getAttribute('title')) {
+      label.setAttribute('title', buildFieldHelpText(field));
+    }
+  });
+};
+
 const SettingsPage = ({
   forcedTab = null,
   hideTabBar = false,
@@ -691,6 +756,7 @@ const SettingsPage = ({
   onSaveAppearance = null,
 }) => {
   const [searchParams, setSearchParams] = useSearchParams();
+  const settingsRootRef = useRef(null);
   const [sources, setSources] = useState(() => {
     const saved = localStorage.getItem('settingsSourcesDraft');
     if (!saved) {
@@ -710,7 +776,7 @@ const SettingsPage = ({
   const [isSavingTelegramSubscriptions, setIsSavingTelegramSubscriptions] = useState(false);
   const [isSavingAppleMessageSubscriptions, setIsSavingAppleMessageSubscriptions] = useState(false);
   const [isSavingGoveeEndpoints, setIsSavingGoveeEndpoints] = useState(false);
-  const [isSavingStage2ProviderSettings, setIsSavingStage2ProviderSettings] = useState(false);
+  const [isSavingAnomalyLlmModelSettings, setIsSavingAnomalyLlmModelSettings] = useState(false);
   const [isSavingConnectorZooRepoSettings, setIsSavingConnectorZooRepoSettings] = useState(false);
   const [banner, setBanner] = useState(null);
   const [mountedModels, setMountedModels] = useState({});
@@ -719,14 +785,14 @@ const SettingsPage = ({
   const [telegramSubscriptionErrors, setTelegramSubscriptionErrors] = useState({});
   const [appleMessageSubscriptionErrors, setAppleMessageSubscriptionErrors] = useState({});
   const [goveeEndpointErrors, setGoveeEndpointErrors] = useState({});
-  const [stage2ProviderErrors, setStage2ProviderErrors] = useState({});
+  const [anomalyLlmModelProviderErrors, setAnomalyLlmModelProviderErrors] = useState({});
   const [busyUploads, setBusyUploads] = useState({});
   const [uploadFeedback, setUploadFeedback] = useState({});
   const [busyTelegramTests, setBusyTelegramTests] = useState({});
   const [busyAppleMessageTests, setBusyAppleMessageTests] = useState({});
   const [busyGoveeTests, setBusyGoveeTests] = useState({});
   const [busyGoveeDiscovery, setBusyGoveeDiscovery] = useState({});
-  const [busyStage2ProviderTests, setBusyStage2ProviderTests] = useState({});
+  const [busyAnomalyLlmModelProviderTests, setBusyAnomalyLlmModelProviderTests] = useState({});
   const [modelOptionCatalog, setModelOptionCatalog] = useState({ model_zoo: null, stages: [] });
   const [defaultBindings, setDefaultBindings] = useState({});
   const [alertRules, setAlertRules] = useState([]);
@@ -735,9 +801,10 @@ const SettingsPage = ({
   const [appleMessageSubscriptions, setAppleMessageSubscriptions] = useState([]);
   const [goveeEndpoints, setGoveeEndpoints] = useState([]);
   const [genericConnectorEndpoints, setGenericConnectorEndpoints] = useState([]);
-  const [stage2ProviderSettings, setStage2ProviderSettings] = useState(
-    STAGE2_PROVIDER_OPTIONS.map((option) => createStage2ProviderDraft(option.provider_key))
+  const [anomalyLlmModelSettings, setAnomalyLlmModelSettings] = useState(
+    ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.map((option) => createAnomalyLlmModelProviderDraft(option.provider_key))
   );
+  const [activeAnomalyLlmProviderKey, setActiveAnomalyLlmProviderKey] = useState(null);
   const [alertRuleOptions, setAlertRuleOptions] = useState({ sources: [] });
   const [alertRuleLoadHint, setAlertRuleLoadHint] = useState('');
   const [connectorSubTab, setConnectorSubTab] = useState('connections');
@@ -799,6 +866,12 @@ const SettingsPage = ({
   useEffect(() => {
     setDraftThemeKey(getThemeOption(currentThemeKey).key);
   }, [currentThemeKey]);
+
+  useEffect(() => {
+    reloadModelRegistryState().catch((error) => {
+      setBanner({ kind: 'error', text: error.message });
+    });
+  }, []);
 
   const reloadAlertRuleState = async ({ includeRules = true, sourcesSnapshot = [] } = {}) => {
     let ruleResponse = null;
@@ -919,8 +992,8 @@ const SettingsPage = ({
     );
   };
 
-  const reloadStage2ProviderSettings = async () => {
-    const response = await fetch(`${BaseURL}/settings/stage2-provider-settings`);
+  const reloadAnomalyLlmModelSettings = async () => {
+    const response = await fetch(`${BaseURL}/settings/anomaly-llm-model-settings`);
     if (!response.ok) {
       let detail = null;
       try {
@@ -929,15 +1002,15 @@ const SettingsPage = ({
       } catch (error) {
         detail = null;
       }
-      throw new Error(detail || 'Failed to load Stage 2 provider settings');
+      throw new Error(detail || 'Failed to load Anomaly LLM model settings');
     }
     const data = await response.json();
     const nextByKey = new Map(
-      normalizeListPayload(data).map((item) => [item.provider_key, hydrateStage2ProviderSettings(item)]),
+      normalizeListPayload(data).map((item) => [item.provider_key, hydrateAnomalyLlmModelSettings(item)]),
     );
-    setStage2ProviderSettings(
-      STAGE2_PROVIDER_OPTIONS.map((option) =>
-        nextByKey.get(option.provider_key) || createStage2ProviderDraft(option.provider_key)
+    setAnomalyLlmModelSettings(
+      ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.map((option) =>
+        nextByKey.get(option.provider_key) || createAnomalyLlmModelProviderDraft(option.provider_key)
       ),
     );
   };
@@ -983,7 +1056,6 @@ const SettingsPage = ({
           ? sourceData.map((source, index) => hydrateSource(source, index))
           : [createSourceDraft()];
         setSources(hydratedSources);
-        await reloadModelRegistryState();
         try {
           let standardPromptData = EMPTY_PROMPT_SETTINGS;
           const standardPromptResponse = await fetch(`${BaseURL}/settings/anomaly-prompts/standard`);
@@ -1010,7 +1082,7 @@ const SettingsPage = ({
         await reloadAppleMessageSubscriptionState();
         await reloadGoveeEndpointState();
         await reloadGenericConnectorEndpointState();
-        await reloadStage2ProviderSettings();
+        await reloadAnomalyLlmModelSettings();
         await reloadConnectorZooRepoSettings();
         await reloadAlertRuleState({
           sourcesSnapshot: sourceData,
@@ -1534,13 +1606,17 @@ const SettingsPage = ({
     return Object.keys(nextErrors).length === 0;
   };
 
-  const validateStage2ProviderSettings = () => {
+  const validateAnomalyLlmModelSettings = (providerKeys = null) => {
     const nextErrors = {};
-    stage2ProviderSettings.forEach((provider) => {
+    const providerKeySet = providerKeys ? new Set(providerKeys) : null;
+    anomalyLlmModelSettings.forEach((provider) => {
+      if (providerKeySet && !providerKeySet.has(provider.provider_key)) {
+        return;
+      }
       if (!provider.enabled) {
         return;
       }
-      const option = getStage2ProviderOption(provider.provider_key);
+      const option = getAnomalyLlmModelProviderOption(provider.provider_key);
       const secretField = option?.secretField || 'api_key';
       const secretValue = String(provider[secretField] || '').trim();
       if (!provider.base_url.trim()) {
@@ -1553,7 +1629,7 @@ const SettingsPage = ({
         nextErrors[provider.provider_key] = `${option?.secretLabel || 'Credential'} is required when the provider is enabled.`;
       }
     });
-    setStage2ProviderErrors(nextErrors);
+    setAnomalyLlmModelProviderErrors(nextErrors);
     return Object.keys(nextErrors).length === 0;
   };
 
@@ -1616,8 +1692,8 @@ const SettingsPage = ({
     }
   };
 
-  const setStage2ProviderField = (providerKey, field, value) => {
-    setStage2ProviderSettings((previous) =>
+  const setAnomalyLlmModelProviderField = (providerKey, field, value) => {
+    setAnomalyLlmModelSettings((previous) =>
       previous.map((provider) =>
         provider.provider_key === providerKey
           ? {
@@ -1627,7 +1703,7 @@ const SettingsPage = ({
           : provider
       )
     );
-    setStage2ProviderErrors((previous) => {
+    setAnomalyLlmModelProviderErrors((previous) => {
       if (!previous[providerKey]) {
         return previous;
       }
@@ -1637,19 +1713,19 @@ const SettingsPage = ({
     });
   };
 
-  const saveStage2Providers = async () => {
-    if (!validateStage2ProviderSettings()) {
+  const saveAnomalyLlmModelProviders = async (providerKey = null) => {
+    if (!validateAnomalyLlmModelSettings(providerKey ? [providerKey] : null)) {
       return;
     }
-    setIsSavingStage2ProviderSettings(true);
+    setIsSavingAnomalyLlmModelSettings(true);
     try {
-      const response = await fetch(`${BaseURL}/settings/stage2-provider-settings`, {
+      const response = await fetch(`${BaseURL}/settings/anomaly-llm-model-settings`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(
-          stage2ProviderSettings.map((provider) => ({
+          anomalyLlmModelSettings.map((provider) => ({
             provider_key: provider.provider_key,
             display_name: provider.display_name,
             enabled: provider.enabled,
@@ -1664,42 +1740,45 @@ const SettingsPage = ({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(resolveApiErrorMessage(data, 'Failed to save Stage 2 provider settings'));
+        throw new Error(resolveApiErrorMessage(data, 'Failed to save anomaly LLM model settings'));
       }
       const nextByKey = new Map(
-        normalizeListPayload(data).map((item) => [item.provider_key, hydrateStage2ProviderSettings(item)]),
+        normalizeListPayload(data).map((item) => [item.provider_key, hydrateAnomalyLlmModelSettings(item)]),
       );
-      setStage2ProviderSettings(
-        STAGE2_PROVIDER_OPTIONS.map((option) =>
-          nextByKey.get(option.provider_key) || createStage2ProviderDraft(option.provider_key)
+      setAnomalyLlmModelSettings(
+        ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.map((option) =>
+          nextByKey.get(option.provider_key) || createAnomalyLlmModelProviderDraft(option.provider_key)
         ),
       );
-      setBanner({ kind: 'success', text: 'Stage 2 provider settings saved.' });
+      if (providerKey) {
+        setActiveAnomalyLlmProviderKey(null);
+      }
+      setBanner({ kind: 'success', text: 'Anomaly LLM model settings saved securely.' });
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
-      setIsSavingStage2ProviderSettings(false);
+      setIsSavingAnomalyLlmModelSettings(false);
     }
   };
 
-  const testStage2Provider = async (provider) => {
-    const option = getStage2ProviderOption(provider.provider_key);
+  const testAnomalyLlmModelProvider = async (provider) => {
+    const option = getAnomalyLlmModelProviderOption(provider.provider_key);
     const secretField = option?.secretField || 'api_key';
     if (provider.enabled) {
       if (!provider.base_url.trim() || !provider.model_name.trim() || (!provider.auth_optional && !String(provider[secretField] || '').trim())) {
-        setStage2ProviderErrors((previous) => ({
+        setAnomalyLlmModelProviderErrors((previous) => ({
           ...previous,
           [provider.provider_key]: 'Complete the required fields before testing this provider.',
         }));
         return;
       }
     }
-    setBusyStage2ProviderTests((previous) => ({
+    setBusyAnomalyLlmModelProviderTests((previous) => ({
       ...previous,
       [provider.provider_key]: true,
     }));
     try {
-      const response = await fetch(`${BaseURL}/settings/stage2-provider-settings/test`, {
+      const response = await fetch(`${BaseURL}/settings/anomaly-llm-model-settings/test`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -1708,9 +1787,9 @@ const SettingsPage = ({
       });
       const data = await response.json().catch(() => ({}));
       if (!response.ok) {
-        throw new Error(resolveApiErrorMessage(data, 'Failed to test Stage 2 provider settings'));
+        throw new Error(resolveApiErrorMessage(data, 'Failed to test Anomaly LLM model settings'));
       }
-      setStage2ProviderSettings((previous) =>
+      setAnomalyLlmModelSettings((previous) =>
         previous.map((item) =>
           item.provider_key === provider.provider_key
             ? {
@@ -1726,56 +1805,34 @@ const SettingsPage = ({
         kind: data?.ok ? 'success' : 'error',
         text: data?.detail || `${option?.label || provider.provider_key} provider test completed.`,
       });
-      await reloadStage2ProviderSettings().catch(() => {});
+      await reloadAnomalyLlmModelSettings().catch(() => {});
     } catch (error) {
       setBanner({ kind: 'error', text: error.message });
     } finally {
-      setBusyStage2ProviderTests((previous) => ({
+      setBusyAnomalyLlmModelProviderTests((previous) => ({
         ...previous,
         [provider.provider_key]: false,
       }));
     }
   };
 
-  const addAnomalyItem = () => {
-    setAnomalyItems((previous) => [...previous, createAnomalyItemDraft()]);
-  };
-
-  const removeAnomalyItem = (clientKey) => {
-    setAnomalyItems((previous) => previous.filter((item) => item.clientKey !== clientKey));
-  };
-
-  const setAnomalyItemField = (clientKey, field, value) => {
-    setAnomalyItems((previous) =>
-      previous.map((item) =>
-        item.clientKey === clientKey
-          ? {
-              ...item,
-              [field]: value,
-            }
-          : item
-      )
+  const setAnomalyItemsFromText = (value) => {
+    setAnomalyItems(
+      value
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item, index) => hydrateAnomalyItem({ item }, index))
     );
   };
 
-  const addAnomalyBehavior = () => {
-    setAnomalyBehaviors((previous) => [...previous, createAnomalyBehaviorDraft()]);
-  };
-
-  const removeAnomalyBehavior = (clientKey) => {
-    setAnomalyBehaviors((previous) => previous.filter((behavior) => behavior.clientKey !== clientKey));
-  };
-
-  const setAnomalyBehaviorField = (clientKey, value) => {
-    setAnomalyBehaviors((previous) =>
-      previous.map((behavior) =>
-        behavior.clientKey === clientKey
-          ? {
-              ...behavior,
-              value,
-            }
-          : behavior
-      )
+  const setAnomalyBehaviorsFromText = (value) => {
+    setAnomalyBehaviors(
+      value
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+        .map((item, index) => hydrateAnomalyBehavior(item, index))
     );
   };
 
@@ -2482,15 +2539,91 @@ const SettingsPage = ({
   const currentDefaultStage2Model = stage2ModelOptions.find(
     (option) => option.model_key === currentDefaultStage2ModelKey,
   ) || null;
-  const currentDefaultStage2ProviderProfile = STAGE2_PROVIDER_OPTIONS.find((option) =>
+  const currentDefaultAnomalyLlmModelProviderProfile = ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.find((option) =>
     option.runtimeProviders.includes(currentDefaultStage2Model?.runtime?.provider)
   ) || null;
-  const stage2ProviderUsageByKey = STAGE2_PROVIDER_OPTIONS.reduce((result, option) => {
+  const anomalyLlmModelProviderUsageByKey = ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.reduce((result, option) => {
     result[option.provider_key] = stage2ModelOptions.filter((modelOption) =>
       option.runtimeProviders.includes(modelOption?.runtime?.provider)
     );
     return result;
   }, {});
+  const anomalyLlmModelSettingsByKey = anomalyLlmModelSettings.reduce((result, provider) => {
+    result[provider.provider_key] = provider;
+    return result;
+  }, {});
+  const anomalyLlmModelCards = stage2ModelOptions
+    .map((modelOption) => {
+      const providerOption = ANOMALY_LLM_MODEL_PROVIDER_OPTIONS.find((option) =>
+        option.runtimeProviders.includes(modelOption?.runtime?.provider)
+      );
+      if (!providerOption) {
+        return null;
+      }
+      return {
+        model: modelOption,
+        ui: getUiSection(modelOption, 'provider_settings'),
+        providerOption,
+        provider: anomalyLlmModelSettingsByKey[providerOption.provider_key]
+          || createAnomalyLlmModelProviderDraft(providerOption.provider_key),
+      };
+    })
+    .filter(Boolean);
+  const activeAnomalyLlmProvider = activeAnomalyLlmProviderKey
+    ? anomalyLlmModelSettingsByKey[activeAnomalyLlmProviderKey]
+      || createAnomalyLlmModelProviderDraft(activeAnomalyLlmProviderKey)
+    : null;
+  const activeAnomalyLlmProviderOption = activeAnomalyLlmProvider
+    ? getAnomalyLlmModelProviderOption(activeAnomalyLlmProvider.provider_key)
+    : null;
+  const activeAnomalyLlmProviderModels = activeAnomalyLlmProvider
+    ? anomalyLlmModelProviderUsageByKey[activeAnomalyLlmProvider.provider_key] || []
+    : [];
+  const activeAnomalyLlmModel = activeAnomalyLlmProviderModels[0] || null;
+  const activeAnomalyLlmUi = getUiSection(activeAnomalyLlmModel, 'provider_settings');
+  const activeAnomalyLlmActions = {
+    cancel: getUiAction(activeAnomalyLlmUi, 'cancel', {
+      label: 'Cancel',
+      aria_label: 'Cancel Anomaly LLM Settings',
+      help: 'Close without saving anomaly LLM provider setting changes.',
+    }),
+    test_connection: getUiAction(activeAnomalyLlmUi, 'test_connection', {
+      label: 'Test',
+      busy_label: 'Testing...',
+      aria_label: 'Test Connection',
+      help: 'Verify this provider endpoint, model, and credential before runtime use.',
+    }),
+    save: getUiAction(activeAnomalyLlmUi, 'save', {
+      label: 'Save LLM',
+      busy_label: 'Saving...',
+      aria_label: 'Save Anomaly LLM Model',
+      help: 'Save encrypted provider settings for this anomaly LLM model.',
+    }),
+  };
+  const activeAnomalyLlmSecretField = activeAnomalyLlmProviderOption?.secretField || 'api_key';
+  const activeAnomalyLlmFields = {
+    base_url: getUiField(activeAnomalyLlmUi, 'base_url', {
+      label: 'Base URL',
+      placeholder: activeAnomalyLlmProvider?.provider_key === 'lm_studio' ? 'http://localhost:1234/v1' : 'https://provider.example/v1',
+      help: 'Provider API base URL.',
+    }),
+    model_name: getUiField(activeAnomalyLlmUi, 'model_name', {
+      label: 'Model Name',
+      placeholder: 'Model override',
+      help: 'Runtime model name override for this provider.',
+    }),
+    timeout_seconds: getUiField(activeAnomalyLlmUi, 'timeout_seconds', {
+      label: 'Timeout (seconds)',
+      help: 'Provider request timeout in seconds.',
+    }),
+    secret: getUiField(activeAnomalyLlmUi, activeAnomalyLlmSecretField, {
+      label: activeAnomalyLlmProviderOption?.secretLabel || 'Credential',
+      placeholder: `${activeAnomalyLlmProviderOption?.secretLabel || 'Credential'}${activeAnomalyLlmProvider?.auth_optional ? ' (optional)' : ''}`,
+      help: activeAnomalyLlmProvider?.auth_optional
+        ? 'Optional credential; leave blank to omit the auth header.'
+        : 'Encrypted credential used only server-side.',
+    }),
+  };
   const mountedModelChanges = MODEL_STAGE_OPTIONS.reduce(
     (result, option) => {
       const persistedSet = new Set(persistedMountedModelsByStage[option.stage] || []);
@@ -2546,12 +2679,24 @@ const SettingsPage = ({
     return option.requires_gpu ? 'Moderate' : 'Heavy';
   };
 
-  const renderModelOptions = (stage) => {
+  const renderModelOptions = (stage, selectedModelKey = '') => {
     const stageOptions = modelOptionsByStage[stage] || [];
     const mountedKeys = new Set(mountedModelsByStage[stage] || []);
     const mountedOptions = stageOptions.filter((option) => mountedKeys.has(option.model_key));
+    const selectedOption = selectedModelKey
+      ? stageOptions.find((option) => option.model_key === selectedModelKey)
+      : null;
+    const shouldRenderSelectedFallback = selectedModelKey
+      && !mountedOptions.some((option) => option.model_key === selectedModelKey);
     return (
       <>
+        {shouldRenderSelectedFallback && (
+          <optgroup label="Current selection">
+            <option value={selectedModelKey}>
+              {selectedOption?.display_name || selectedModelKey}
+            </option>
+          </optgroup>
+        )}
         {mountedOptions.length > 0 && (
           <optgroup label="Mounted">
             {mountedOptions.map((registration) => (
@@ -2581,8 +2726,12 @@ const SettingsPage = ({
     return labels.length > 0 ? labels.join(', ') : 'No connectors selected';
   };
 
+  useEffect(() => {
+    applySettingsHoverTitles(settingsRootRef.current);
+  });
+
   return (
-    <div className="settings-container">
+    <div className="settings-container" ref={settingsRootRef}>
       {mountedModelConflict && (
         <div className="settings-modal-backdrop" role="presentation">
           <div
@@ -2631,8 +2780,164 @@ const SettingsPage = ({
                 className="stop-button"
                 onClick={confirmForcedMountedModelSave}
                 disabled={isSavingMountedModels}
+                aria-label="Stop and Remove Models"
+                title="Stop the current run if needed, remove the selected models, and clear affected bindings."
               >
-                {isSavingMountedModels ? 'Stopping and Removing...' : 'Stop and Remove Models'}
+                {isSavingMountedModels ? 'Removing...' : 'Remove Models'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {activeAnomalyLlmProvider && (
+        <div className="settings-modal-backdrop" role="presentation">
+          <div
+            className="settings-modal settings-modal-wide"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="anomaly-llm-settings-title"
+          >
+            <div className="settings-modal-header">
+              <div>
+                <h3 id="anomaly-llm-settings-title">
+                  {activeAnomalyLlmProviderOption?.label || activeAnomalyLlmProvider.display_name || 'Anomaly LLM'} Settings
+                </h3>
+                <p className="settings-modal-subtitle">
+                  {activeAnomalyLlmUi.description || 'Configure the endpoint, model override, timeout, and encrypted credential used by matching Anomaly LLM models.'}
+                </p>
+              </div>
+            </div>
+            <div className="settings-modal-body">
+              <div className="settings-modal-section">
+                <span className="settings-modal-label">Used By</span>
+                <div className="anomaly-llm-model-chip-row">
+                  {activeAnomalyLlmProviderModels.length > 0 ? (
+                    activeAnomalyLlmProviderModels.map((modelOption) => (
+                      <span key={`active-anomaly-llm-model-${modelOption.model_key}`} className="anomaly-llm-model-chip">
+                        {modelOption.display_name || modelOption.model_key}
+                      </span>
+                    ))
+                  ) : (
+                    <span className="muted-text">No registered Anomaly LLM model currently maps to this profile.</span>
+                  )}
+                </div>
+              </div>
+
+              <div className="model-binding-grid">
+                <label className="toggle-field">
+                  <span>Enabled</span>
+                  <input
+                    type="checkbox"
+                    checked={activeAnomalyLlmProvider.enabled}
+                    onChange={(event) => setAnomalyLlmModelProviderField(activeAnomalyLlmProvider.provider_key, 'enabled', event.target.checked)}
+                  />
+                </label>
+                <label>
+                  <span>{activeAnomalyLlmFields.base_url.label}</span>
+                  <input
+                    type="text"
+                    value={activeAnomalyLlmProvider.base_url}
+                    onChange={(event) => setAnomalyLlmModelProviderField(activeAnomalyLlmProvider.provider_key, 'base_url', event.target.value)}
+                    placeholder={activeAnomalyLlmFields.base_url.placeholder}
+                    title={activeAnomalyLlmFields.base_url.help}
+                  />
+                </label>
+                <label>
+                  <span>{activeAnomalyLlmFields.model_name.label}</span>
+                  <input
+                    type="text"
+                    value={activeAnomalyLlmProvider.model_name}
+                    onChange={(event) => setAnomalyLlmModelProviderField(activeAnomalyLlmProvider.provider_key, 'model_name', event.target.value)}
+                    placeholder={activeAnomalyLlmFields.model_name.placeholder}
+                    title={activeAnomalyLlmFields.model_name.help}
+                  />
+                </label>
+                <label>
+                  <span>{activeAnomalyLlmFields.timeout_seconds.label}</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="300"
+                    step="1"
+                    value={activeAnomalyLlmProvider.timeout_seconds}
+                    onChange={(event) => setAnomalyLlmModelProviderField(activeAnomalyLlmProvider.provider_key, 'timeout_seconds', event.target.value)}
+                    title={activeAnomalyLlmFields.timeout_seconds.help}
+                  />
+                </label>
+                <label>
+                  <span>{activeAnomalyLlmFields.secret.label}</span>
+                  <input
+                    type="password"
+                    value={activeAnomalyLlmProvider[activeAnomalyLlmSecretField] ?? ''}
+                    onChange={(event) => setAnomalyLlmModelProviderField(activeAnomalyLlmProvider.provider_key, activeAnomalyLlmSecretField, event.target.value)}
+                    placeholder={activeAnomalyLlmProvider.secret_present ? MASKED_SECRET_VALUE : activeAnomalyLlmFields.secret.placeholder}
+                    title={activeAnomalyLlmFields.secret.help}
+                  />
+                  <small className="muted-text">
+                    {activeAnomalyLlmProvider.auth_optional
+                      ? 'Leave blank to omit the auth header entirely.'
+                      : 'Leave the masked value unchanged to preserve the saved secret.'}
+                  </small>
+                </label>
+                <div className="readonly-field">
+                  <span>Secret Status</span>
+                  <strong>{activeAnomalyLlmProvider.secret_present ? 'Stored securely' : 'Not stored'}</strong>
+                  <small className="muted-text">Secrets are encrypted before they are written to the control database.</small>
+                </div>
+                <div className="readonly-field">
+                  <span>Last Test</span>
+                  <strong>
+                    {activeAnomalyLlmProvider.last_test_status
+                      ? activeAnomalyLlmProvider.last_test_status === 'ok'
+                        ? 'Passed'
+                        : 'Failed'
+                      : 'Not run'}
+                  </strong>
+                  <small className="muted-text">
+                    {activeAnomalyLlmProvider.last_test_status || activeAnomalyLlmProvider.last_test_message || activeAnomalyLlmProvider.last_tested_at
+                      ? `${activeAnomalyLlmProvider.last_test_message || 'No detail'}${activeAnomalyLlmProvider.last_tested_at ? ` · ${activeAnomalyLlmProvider.last_tested_at}` : ''}`
+                      : 'Run a connection test before relying on this model in production.'}
+                  </small>
+                </div>
+              </div>
+
+              {anomalyLlmModelProviderErrors[activeAnomalyLlmProvider.provider_key] && (
+                <div className="row-error">{anomalyLlmModelProviderErrors[activeAnomalyLlmProvider.provider_key]}</div>
+              )}
+            </div>
+            <div className="control-actions settings-modal-actions">
+              <button
+                type="button"
+                className="ghost-button"
+                onClick={() => setActiveAnomalyLlmProviderKey(null)}
+                disabled={isSavingAnomalyLlmModelSettings}
+                aria-label={activeAnomalyLlmActions.cancel.aria_label}
+                title={activeAnomalyLlmActions.cancel.help}
+              >
+                {renderActionLabel(activeAnomalyLlmActions.cancel)}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => testAnomalyLlmModelProvider(activeAnomalyLlmProvider)}
+                disabled={Boolean(busyAnomalyLlmModelProviderTests[activeAnomalyLlmProvider.provider_key])}
+                aria-label={activeAnomalyLlmActions.test_connection.aria_label}
+                title={activeAnomalyLlmActions.test_connection.help}
+              >
+                {renderActionLabel(
+                  activeAnomalyLlmActions.test_connection,
+                  Boolean(busyAnomalyLlmModelProviderTests[activeAnomalyLlmProvider.provider_key]),
+                )}
+              </button>
+              <button
+                type="button"
+                className="secondary-button"
+                onClick={() => saveAnomalyLlmModelProviders(activeAnomalyLlmProvider.provider_key)}
+                disabled={isSavingAnomalyLlmModelSettings}
+                aria-label={activeAnomalyLlmActions.save.aria_label}
+                title={activeAnomalyLlmActions.save.help}
+              >
+                {renderActionLabel(activeAnomalyLlmActions.save, isSavingAnomalyLlmModelSettings)}
               </button>
             </div>
           </div>
@@ -2826,7 +3131,7 @@ const SettingsPage = ({
                                   <option value="">
                                     Use default ({getDisplayNameForStage(option.stage, defaultBindings[option.stage], 'None')})
                                   </option>
-                                  {renderModelOptions(option.stage)}
+                                  {renderModelOptions(option.stage, source[option.field])}
                                 </select>
                               </label>
                             ))}
@@ -2840,18 +3145,69 @@ const SettingsPage = ({
                     </div>
 
                     <div className="control-actions">
-                      <button type="button" onClick={saveSources} className="secondary-button" disabled={isSaving}>
+                      <button
+                        type="button"
+                        onClick={saveSources}
+                        className="secondary-button"
+                        disabled={isSaving}
+                        aria-label="Update Source Settings"
+                        title="Save all configured source settings and camera model overrides."
+                      >
                         {isSaving ? (
                           <>
                             <span className="button-spinner" aria-hidden="true" />
-                            Updating Source Settings...
+                            Updating...
                           </>
-                        ) : 'Update Source Settings'}
+                        ) : 'Save Sources'}
                       </button>
                     </div>
                   </div>
                 </div>
 
+                <div className="control-column">
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <h3>Integration Endpoint</h3>
+                        <p>Other systems can append a source directly.</p>
+                      </div>
+                    </div>
+                    <div className="empty-state endpoint-info">
+                      <strong>POST {`${BaseURL}/settings/input-sources`}</strong>
+                      <div className="muted-text">
+                        Send an `InputSource` JSON payload to add a camera stream, webcam, or uploaded video reference.
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="card">
+                    <div className="card-header">
+                      <div>
+                        <h3>Upload Endpoint</h3>
+                        <p>Stage video before attaching it to a source.</p>
+                      </div>
+                    </div>
+                    <div className="empty-state endpoint-info">
+                      <strong>POST {`${BaseURL}/settings/input-sources/uploads`}</strong>
+                      <div className="muted-text">
+                        Upload multipart video and use the returned `upload.id` as `upload_id` when adding a `video_upload` source.
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </>
+          ))}
+
+          {renderTabSection('models', (
+            <>
+              {banner && (
+                <div className={`banner banner-${banner.kind}`}>
+                  {banner.text}
+                </div>
+              )}
+
+              <section className="control-grid">
                 <div className="control-column">
                   <div className="card">
                     <div className="card-header">
@@ -2874,7 +3230,7 @@ const SettingsPage = ({
                             }))}
                           >
                             <option value="">No default</option>
-                            {renderModelOptions(option.stage)}
+                            {renderModelOptions(option.stage, defaultBindings[option.stage])}
                           </select>
                         </label>
                       ))}
@@ -2885,8 +3241,10 @@ const SettingsPage = ({
                         onClick={saveDefaultBindings}
                         className="secondary-button"
                         disabled={isSavingBindings}
+                        aria-label="Save Default Bindings"
+                        title="Save the default detector, tracker, and anomaly model bindings."
                       >
-                        {isSavingBindings ? 'Saving...' : 'Save Default Bindings'}
+                        {isSavingBindings ? 'Saving...' : 'Save Defaults'}
                       </button>
                     </div>
                   </div>
@@ -2894,273 +3252,35 @@ const SettingsPage = ({
                   <div className="card">
                     <div className="card-header">
                       <div>
-                        <h3>Stage 2 Provider Settings</h3>
-                        <p>Manage external anomaly detection provider endpoints, model overrides, timeouts, and encrypted credentials.</p>
-                        <p className="muted-text">
-                          The selected Stage 2 model still comes from Default Model Bindings. These provider profiles only control runtime connectivity for external Stage 2 adapters.
-                        </p>
+                        <h3>Anomaly Labels</h3>
+                        <p>Keep the final object and behavior labels short and explicit. Enter one label per line; blank lines are ignored.</p>
                       </div>
                     </div>
-                    <div className="source-list">
-                      <div className="source-row">
-                        <div className="source-row-header">
-                          <div>
-                            <strong>Current Stage 2 Binding</strong>
-                            <div className="muted-text">
-                              {currentDefaultStage2Model
-                                ? `${currentDefaultStage2Model.display_name || currentDefaultStage2Model.model_key} (${currentDefaultStage2Model.model_key})`
-                                : 'No default Stage 2 model is currently selected.'}
-                            </div>
-                          </div>
-                          <span className="model-library-badge">
-                            {currentDefaultStage2ProviderProfile
-                              ? `Uses ${currentDefaultStage2ProviderProfile.label}`
-                              : 'No managed provider profile'}
-                          </span>
-                        </div>
-                        <div className="muted-text">
-                          {currentDefaultStage2ProviderProfile
-                            ? 'Change provider credentials here without moving the Stage 2 binding away from its current model key.'
-                            : 'Prompt-only or local models do not require a secure external provider profile.'}
-                        </div>
-                      </div>
+                    <div className="anomaly-label-grid">
+                      <label className="anomaly-label-editor">
+                        <span>Anomaly Objects</span>
+                        <textarea
+                          value={anomalyItems.map((item) => item.item).join('\n')}
+                          onChange={(event) => setAnomalyItemsFromText(event.target.value)}
+                          placeholder={'weapon\nunattended bag\nrestricted object'}
+                          rows={7}
+                        />
+                        <small className="muted-text">{anomalyItems.length} object label{anomalyItems.length === 1 ? '' : 's'} configured.</small>
+                      </label>
 
-                      {stage2ProviderSettings.map((provider) => {
-                        const option = getStage2ProviderOption(provider.provider_key);
-                        const secretField = option?.secretField || 'api_key';
-                        const providerModels = stage2ProviderUsageByKey[provider.provider_key] || [];
-                        const hasLastTest = Boolean(provider.last_test_status || provider.last_test_message || provider.last_tested_at);
-                        return (
-                          <div key={`stage2-provider-${provider.provider_key}`} className="source-row">
-                            <div className="source-row-header">
-                              <div>
-                                <strong>{option?.label || provider.display_name || provider.provider_key}</strong>
-                                <div className="muted-text">
-                                  {providerModels.length > 0
-                                    ? `Used by: ${formatListLabel(providerModels.map((item) => item.display_name || item.model_key))}`
-                                    : 'Supported secure provider profile for external Stage 2 routing.'}
-                                </div>
-                              </div>
-                              <div className="button-row">
-                                {currentDefaultStage2ProviderProfile?.provider_key === provider.provider_key && (
-                                  <span className="model-library-badge">Current default</span>
-                                )}
-                                <button
-                                  type="button"
-                                  className="secondary-button"
-                                  onClick={() => testStage2Provider(provider)}
-                                  disabled={Boolean(busyStage2ProviderTests[provider.provider_key])}
-                                >
-                                  {busyStage2ProviderTests[provider.provider_key] ? 'Testing...' : 'Test Connection'}
-                                </button>
-                              </div>
-                            </div>
+                      <label className="anomaly-label-editor">
+                        <span>Anomaly Behaviors</span>
+                        <textarea
+                          value={anomalyBehaviors.map((behavior) => behavior.value).join('\n')}
+                          onChange={(event) => setAnomalyBehaviorsFromText(event.target.value)}
+                          placeholder={'running away\nloitering\ntailgating'}
+                          rows={7}
+                        />
+                        <small className="muted-text">{anomalyBehaviors.length} behavior label{anomalyBehaviors.length === 1 ? '' : 's'} configured.</small>
+                      </label>
 
-                            <div className="model-binding-grid">
-                              <label className="toggle-field">
-                                <span>Enabled</span>
-                                <input
-                                  type="checkbox"
-                                  checked={provider.enabled}
-                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'enabled', event.target.checked)}
-                                />
-                              </label>
-                              <label>
-                                <span>Base URL</span>
-                                <input
-                                  type="text"
-                                  value={provider.base_url}
-                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'base_url', event.target.value)}
-                                  placeholder={provider.provider_key === 'lm_studio' ? 'http://localhost:1234/v1' : 'https://provider.example/v1'}
-                                />
-                              </label>
-                              <label>
-                                <span>Model Name</span>
-                                <input
-                                  type="text"
-                                  value={provider.model_name}
-                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'model_name', event.target.value)}
-                                  placeholder="Model override"
-                                />
-                              </label>
-                              <label>
-                                <span>Timeout (seconds)</span>
-                                <input
-                                  type="number"
-                                  min="1"
-                                  max="300"
-                                  step="1"
-                                  value={provider.timeout_seconds}
-                                  onChange={(event) => setStage2ProviderField(provider.provider_key, 'timeout_seconds', event.target.value)}
-                                />
-                              </label>
-                              <label>
-                                <span>{option?.secretLabel || 'Credential'}</span>
-                                <input
-                                  type="password"
-                                  value={provider[secretField] ?? ''}
-                                  onChange={(event) => setStage2ProviderField(provider.provider_key, secretField, event.target.value)}
-                                  placeholder={provider.secret_present ? MASKED_SECRET_VALUE : `${option?.secretLabel || 'Credential'}${provider.auth_optional ? ' (optional)' : ''}`}
-                                />
-                                <small className="muted-text">
-                                  {provider.auth_optional
-                                    ? 'Leave blank to omit the auth header entirely.'
-                                    : 'Leave the masked value unchanged to preserve the saved secret.'}
-                                </small>
-                              </label>
-                              <div className="readonly-field">
-                                <span>Secret Status</span>
-                                <strong>{provider.secret_present ? 'Stored securely' : 'Not stored'}</strong>
-                                <small className="muted-text">
-                                  Saved secrets are encrypted before they are written to the control database.
-                                </small>
-                              </div>
-                              <div className="readonly-field">
-                                <span>Last Test</span>
-                                <strong>
-                                  {provider.last_test_status
-                                    ? provider.last_test_status === 'ok'
-                                      ? 'Passed'
-                                      : 'Failed'
-                                    : 'Not run'}
-                                </strong>
-                                <small className="muted-text">
-                                  {hasLastTest
-                                    ? `${provider.last_test_message || 'No detail'}${provider.last_tested_at ? ` · ${provider.last_tested_at}` : ''}`
-                                    : 'Run a connection test to verify endpoint, model, and credential wiring.'}
-                                </small>
-                              </div>
-                            </div>
-
-                            {stage2ProviderErrors[provider.provider_key] && (
-                              <div className="row-error">{stage2ProviderErrors[provider.provider_key]}</div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                    <div className="control-actions">
-                      <button
-                        type="button"
-                        onClick={saveStage2Providers}
-                        className="secondary-button"
-                        disabled={isSavingStage2ProviderSettings}
-                      >
-                        {isSavingStage2ProviderSettings ? 'Saving...' : 'Save Stage 2 Provider Settings'}
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="card">
-                    <div className="card-header">
-                      <div>
-                        <h3>Anomaly Prompt Settings</h3>
-                        <p>Manage anomaly detection config as structured anomaly items and anomaly behaviors. The prompt template stays hidden in the prompt config file.</p>
-                      </div>
-                    </div>
-                    <div className="source-list">
-                      <div className="source-row">
-                        <div className="source-row-header">
-                          <strong>Anomaly Items</strong>
-                          <button
-                            type="button"
-                            onClick={addAnomalyItem}
-                            className="secondary-button"
-                          >
-                            Add Item
-                          </button>
-                        </div>
-                        {anomalyItems.length === 0 ? (
-                          <div className="empty-state">No anomaly items configured yet.</div>
-                        ) : (
-                          <>
-                            <div className="anomaly-item-list">
-                              {anomalyItems.map((item, index) => (
-                                <div key={item.clientKey} className="anomaly-item-row">
-                                  <span className="anomaly-item-index">{index + 1}</span>
-                                  <input
-                                    type="text"
-                                    value={item.item}
-                                    onChange={(event) => setAnomalyItemField(item.clientKey, 'item', event.target.value)}
-                                    placeholder="weapon"
-                                    className="anomaly-item-input"
-                                    aria-label={`Anomaly item ${index + 1}`}
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => removeAnomalyItem(item.clientKey)}
-                                    className="anomaly-item-remove"
-                                    aria-label={`Remove anomaly item ${index + 1}`}
-                                    title="Remove anomaly item"
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="compact-list-actions">
-                              <button
-                                type="button"
-                                onClick={addAnomalyItem}
-                                className="secondary-button"
-                              >
-                                Add Item
-                              </button>
-                            </div>
-                          </>
-                        )}
-                      </div>
-
-                      <div className="source-row">
-                        <div className="source-row-header">
-                          <strong>Anomaly Behaviors</strong>
-                          <button
-                            type="button"
-                            onClick={addAnomalyBehavior}
-                            className="secondary-button"
-                          >
-                            Add Behavior
-                          </button>
-                        </div>
-                        {anomalyBehaviors.length === 0 ? (
-                          <div className="empty-state">No anomaly behaviors configured yet.</div>
-                        ) : (
-                          <>
-                            <div className="anomaly-item-list">
-                              {anomalyBehaviors.map((behavior, index) => (
-                                <div key={behavior.clientKey} className="anomaly-item-row">
-                                  <span className="anomaly-item-index">{index + 1}</span>
-                                  <input
-                                    type="text"
-                                    value={behavior.value}
-                                    onChange={(event) => setAnomalyBehaviorField(behavior.clientKey, event.target.value)}
-                                    placeholder="running away"
-                                    className="anomaly-item-input"
-                                    aria-label={`Anomaly behavior ${index + 1}`}
-                                  />
-                                  <button
-                                    type="button"
-                                    onClick={() => removeAnomalyBehavior(behavior.clientKey)}
-                                    className="anomaly-item-remove"
-                                    aria-label={`Remove anomaly behavior ${index + 1}`}
-                                    title="Remove anomaly behavior"
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                              ))}
-                            </div>
-                            <div className="compact-list-actions">
-                              <button
-                                type="button"
-                                onClick={addAnomalyBehavior}
-                                className="secondary-button"
-                              >
-                                Add Behavior
-                              </button>
-                            </div>
-                          </>
-                        )}
+                      <div className="empty-state anomaly-label-help">
+                        These labels feed alert rules and Anomaly LLM interpretation. Use concise labels that operators can recognize quickly.
                       </div>
                     </div>
                     <div className="control-actions">
@@ -3169,54 +3289,131 @@ const SettingsPage = ({
                         onClick={loadStandardAnomalyPromptConfig}
                         className="secondary-button"
                         disabled={!standardPromptSettings.anomaly_items?.length && !standardPromptSettings.anomaly_behaviors?.length}
+                        aria-label="Use Standard Anomaly Detection Config"
+                        title="Load the standard anomaly object and behavior labels into this workspace."
                       >
-                        Use Standard Anomaly Detection Config
+                        Use Standard
                       </button>
                       <button
                         type="button"
                         onClick={saveAnomalyPrompts}
                         className="secondary-button"
                         disabled={isSavingAnomalyPrompts}
+                        aria-label="Save Anomaly Detection Config"
+                        title="Save anomaly labels and prompt configuration used by alert rules and Stage 2 interpretation."
                       >
-                        {isSavingAnomalyPrompts ? 'Saving...' : 'Save Anomaly Detection Config'}
+                        {isSavingAnomalyPrompts ? 'Saving...' : 'Save Labels'}
                       </button>
                     </div>
                   </div>
+                </div>
 
+                <div className="control-column">
                   <div className="card">
                     <div className="card-header">
                       <div>
-                        <h3>Integration Endpoint</h3>
-                        <p>Other systems can append a source directly.</p>
+                        <h3>Anomaly LLM Models</h3>
+                        <p>Configure external LLM models that perform final anomaly interpretation. Credentials are stored securely in the control database.</p>
+                        <p className="muted-text">
+                          Default Model Bindings choose which Anomaly Detection model runs. Use each model card here to edit endpoint, model override, timeout, and encrypted credential settings.
+                        </p>
                       </div>
                     </div>
-                    <div className="empty-state endpoint-info">
-                      <strong>POST {`${BaseURL}/settings/input-sources`}</strong>
-                      <div className="muted-text">
-                        Send an `InputSource` JSON payload to add a camera stream, webcam, or uploaded video reference.
+                    <div className="source-list">
+                      <div className="source-row">
+                        <div className="source-row-header">
+                          <div>
+                            <strong>Current Anomaly LLM Binding</strong>
+                            <div className="muted-text">
+                              {currentDefaultStage2Model
+                                ? `${currentDefaultStage2Model.display_name || currentDefaultStage2Model.model_key} (${currentDefaultStage2Model.model_key})`
+                                : 'No default Anomaly Detection model is currently selected.'}
+                            </div>
+                          </div>
+                          <span className="model-library-badge">
+                            {currentDefaultAnomalyLlmModelProviderProfile
+                              ? `Uses ${currentDefaultAnomalyLlmModelProviderProfile.label}`
+                              : 'No managed provider profile'}
+                          </span>
+                        </div>
+                        <div className="muted-text">
+                          {currentDefaultAnomalyLlmModelProviderProfile
+                            ? 'Open the matching model settings to rotate credentials or change endpoints without changing the default binding.'
+                            : 'Prompt-only or local anomaly models do not require an external LLM profile.'}
+                        </div>
                       </div>
-                      <div className="muted-text">GET {`${BaseURL}/models`}</div>
-                      <div className="muted-text">GET {`${BaseURL}/model-options`}</div>
-                      <div className="muted-text">GET/PUT {`${BaseURL}/model-bindings`}</div>
-                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/stage2-provider-settings`}</div>
-                      <div className="muted-text">POST {`${BaseURL}/settings/stage2-provider-settings/test`}</div>
-                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/anomaly-prompts`}</div>
-                      <div className="muted-text">The anomaly detection prompt template is managed in `shared/prompts/stage2_prompt_config.yaml`.</div>
+
+                      {anomalyLlmModelCards.length === 0 ? (
+                        <div className="empty-state">
+                          No external Anomaly LLM models are registered. Mount an OpenAI, LM Studio, Lauretta, or Claude-compatible anomaly model in Model Inventory first.
+                        </div>
+                      ) : (
+                        <div className="anomaly-llm-card-grid">
+                          {anomalyLlmModelCards.map(({ model, ui, providerOption, provider }) => {
+                            const configureAction = getUiAction(ui, 'configure', {
+                              label: 'Configure',
+                              aria_label: 'Configure Model',
+                              help: 'Open endpoint, model, timeout, and credential settings for this anomaly LLM provider.',
+                            });
+                            return (
+                              <div key={`anomaly-llm-${model.model_key}`} className="anomaly-llm-card">
+                                <div className="source-row-header">
+                                  <div>
+                                    <strong>{model.display_name || model.model_key}</strong>
+                                    <div className="muted-text">{ui.summary_label || `${providerOption.label} profile`} · {model.model_key}</div>
+                                  </div>
+                                  <div className="model-library-badges">
+                                    {currentDefaultStage2ModelKey === model.model_key && <span className="model-library-badge">Current default</span>}
+                                    {provider.enabled ? <span className="model-library-badge">Enabled</span> : <span className="model-library-badge">Disabled</span>}
+                                    {provider.secret_present && <span className="model-library-badge">Secret stored</span>}
+                                  </div>
+                                </div>
+                                <div className="anomaly-llm-card-meta">
+                                  <span>Endpoint: {provider.base_url || 'Not configured'}</span>
+                                  <span>Model override: {provider.model_name || 'Registry default'}</span>
+                                  <span>
+                                    Last test: {provider.last_test_status
+                                      ? provider.last_test_status === 'ok' ? 'Passed' : 'Failed'
+                                      : 'Not run'}
+                                  </span>
+                                </div>
+                                {anomalyLlmModelProviderErrors[provider.provider_key] && (
+                                  <div className="row-error">{anomalyLlmModelProviderErrors[provider.provider_key]}</div>
+                                )}
+                                <div className="control-actions anomaly-llm-card-actions">
+                                  <button
+                                    type="button"
+                                    className="secondary-button"
+                                    onClick={() => setActiveAnomalyLlmProviderKey(provider.provider_key)}
+                                    aria-label={configureAction.aria_label}
+                                    title={configureAction.help}
+                                  >
+                                    {renderActionLabel(configureAction)}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
                   </div>
 
                   <div className="card">
                     <div className="card-header">
                       <div>
-                        <h3>Upload Endpoint</h3>
-                        <p>Stage video before attaching it to a source.</p>
+                        <h3>Model and Anomaly APIs</h3>
+                        <p>Use these endpoints for model registry, binding, provider, and anomaly label automation.</p>
                       </div>
                     </div>
                     <div className="empty-state endpoint-info">
-                      <strong>POST {`${BaseURL}/settings/input-sources/uploads`}</strong>
-                      <div className="muted-text">
-                        Upload multipart video and use the returned `upload.id` as `upload_id` when adding a `video_upload` source.
-                      </div>
+                      <div className="muted-text">GET {`${BaseURL}/models`}</div>
+                      <div className="muted-text">GET {`${BaseURL}/model-options`}</div>
+                      <div className="muted-text">GET/PUT {`${BaseURL}/model-bindings`}</div>
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/anomaly-llm-model-settings`}</div>
+                      <div className="muted-text">POST {`${BaseURL}/settings/anomaly-llm-model-settings/test`}</div>
+                      <div className="muted-text">GET/PUT {`${BaseURL}/settings/anomaly-prompts`}</div>
+                      <div className="muted-text">The anomaly detection prompt template is managed in `shared/prompts/stage2_prompt_config.yaml`.</div>
                     </div>
                   </div>
                 </div>
@@ -3509,8 +3706,14 @@ const SettingsPage = ({
                             <strong>Detection Rules</strong>
                             <div className="muted-text">Use detector targets like `PERSON` and `BAG` with a confidence threshold from `0.0` to `1.0`.</div>
                           </div>
-                          <button type="button" onClick={() => addAlertRule('detector')} className="secondary-button">
-                            Add Detection Rule
+                          <button
+                            type="button"
+                            onClick={() => addAlertRule('detector')}
+                            className="secondary-button"
+                            aria-label="Add Detection Rule"
+                            title="Create a new detection rule for detector targets such as PERSON or BAG."
+                          >
+                            Add Rule
                           </button>
                         </div>
                         {detectionRules.length === 0 ? (
@@ -3631,8 +3834,14 @@ const SettingsPage = ({
                             <strong>Anomaly Detection Rules</strong>
                             <div className="muted-text">Use saved anomaly objects or behaviors with a `1-10` trigger cutoff per rule.</div>
                           </div>
-                          <button type="button" onClick={() => addAlertRule('anomaly')} className="secondary-button">
-                            Add Anomaly Rule
+                          <button
+                            type="button"
+                            onClick={() => addAlertRule('anomaly')}
+                            className="secondary-button"
+                            aria-label="Add Anomaly Rule"
+                            title="Create a new anomaly rule that can trigger configured connectors."
+                          >
+                            Add Rule
                           </button>
                         </div>
                         {anomalyRules.length === 0 ? (
@@ -3844,8 +4053,14 @@ const SettingsPage = ({
                           </div>
                           <p>Use a Govee account to discover light-capable devices and trigger light actions when Hearthlight rules fire.</p>
                         </div>
-                        <button type="button" onClick={addGoveeEndpoint} className="secondary-button">
-                          Add Connection
+                        <button
+                          type="button"
+                          onClick={addGoveeEndpoint}
+                          className="secondary-button"
+                          aria-label="Add Connection"
+                          title="Add another Govee light connection endpoint."
+                        >
+                          Add
                         </button>
                       </div>
 
@@ -3967,24 +4182,30 @@ const SettingsPage = ({
                                   onClick={() => testGoveeApiKey(endpoint)}
                                   className="ghost-button"
                                   disabled={Boolean(busyGoveeTests[endpoint.clientKey])}
+                                  aria-label="Test API Key"
+                                  title="Verify that the saved Govee API key can authenticate."
                                 >
-                                  {busyGoveeTests[endpoint.clientKey] ? 'Testing...' : 'Test API Key'}
+                                  {busyGoveeTests[endpoint.clientKey] ? 'Testing...' : 'Test Key'}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => discoverGoveeDevices(endpoint)}
                                   className="ghost-button"
                                   disabled={Boolean(busyGoveeDiscovery[endpoint.clientKey])}
+                                  aria-label="Discover Devices"
+                                  title="Discover light-capable Govee devices available to this API key."
                                 >
-                                  {busyGoveeDiscovery[endpoint.clientKey] ? 'Discovering...' : 'Discover Devices'}
+                                  {busyGoveeDiscovery[endpoint.clientKey] ? 'Finding...' : 'Discover'}
                                 </button>
                                 <button
                                   type="button"
                                   onClick={() => sendGoveeTestAction(endpoint)}
                                   className="ghost-button"
                                   disabled={Boolean(busyGoveeTests[endpoint.clientKey])}
+                                  aria-label="Send Test Action"
+                                  title="Send the configured test light action to the selected Govee device."
                                 >
-                                  {busyGoveeTests[endpoint.clientKey] ? 'Sending Test...' : 'Send Test Action'}
+                                  {busyGoveeTests[endpoint.clientKey] ? 'Sending...' : 'Test Action'}
                                 </button>
                               </div>
                               {goveeDiscoveryMessages[endpoint.clientKey] && (
@@ -4004,8 +4225,10 @@ const SettingsPage = ({
                           onClick={saveGoveeEndpoints}
                           className="secondary-button"
                           disabled={isSavingGoveeEndpoints}
+                          aria-label="Save Govee Light Connections"
+                          title="Save all configured Govee light connector settings."
                         >
-                          {isSavingGoveeEndpoints ? 'Saving...' : 'Save Govee Light Connections'}
+                          {isSavingGoveeEndpoints ? 'Saving...' : 'Save Govee'}
                         </button>
                       </div>
 
@@ -4033,8 +4256,10 @@ const SettingsPage = ({
                         type="button"
                         onClick={addTelegramSubscription}
                         className="secondary-button"
+                        aria-label="Add Subscription"
+                        title="Add a Telegram notification subscription."
                       >
-                        Add Subscription
+                        Add
                       </button>
                     </div>
 
@@ -4120,8 +4345,10 @@ const SettingsPage = ({
                                 onClick={() => sendTelegramTestMessage(subscription)}
                                 className="ghost-button"
                                 disabled={Boolean(busyTelegramTests[subscription.clientKey])}
+                                aria-label="Send Test Message"
+                                title="Send a Telegram test message using this subscription."
                               >
-                                {busyTelegramTests[subscription.clientKey] ? 'Sending Test...' : 'Send Test Message'}
+                                {busyTelegramTests[subscription.clientKey] ? 'Sending...' : 'Test Msg'}
                               </button>
                             </div>
 
@@ -4139,8 +4366,10 @@ const SettingsPage = ({
                         onClick={saveTelegramSubscriptions}
                         className="secondary-button"
                         disabled={isSavingTelegramSubscriptions}
+                        aria-label="Save Telegram Subscriptions"
+                        title="Save all Telegram trigger notification subscriptions."
                       >
-                        {isSavingTelegramSubscriptions ? 'Saving...' : 'Save Telegram Subscriptions'}
+                        {isSavingTelegramSubscriptions ? 'Saving...' : 'Save Telegram'}
                       </button>
                     </div>
 
@@ -4165,8 +4394,10 @@ const SettingsPage = ({
                         type="button"
                         onClick={addAppleMessageSubscription}
                         className="secondary-button"
+                        aria-label="Add Subscription"
+                        title="Add an Apple Messages trigger notification recipient."
                       >
-                        Add Subscription
+                        Add
                       </button>
                     </div>
 
@@ -4234,8 +4465,10 @@ const SettingsPage = ({
                                 onClick={() => sendAppleMessageTest(subscription)}
                                 className="ghost-button"
                                 disabled={Boolean(busyAppleMessageTests[subscription.clientKey])}
+                                aria-label="Send Test Message"
+                                title="Send an Apple Messages test notification to this recipient."
                               >
-                                {busyAppleMessageTests[subscription.clientKey] ? 'Sending Test...' : 'Send Test Message'}
+                                {busyAppleMessageTests[subscription.clientKey] ? 'Sending...' : 'Test Msg'}
                               </button>
                             </div>
 
@@ -4253,8 +4486,10 @@ const SettingsPage = ({
                         onClick={saveAppleMessageSubscriptions}
                         className="secondary-button"
                         disabled={isSavingAppleMessageSubscriptions}
+                        aria-label="Save Apple Messages Subscriptions"
+                        title="Save all Apple Messages trigger notification recipients."
                       >
-                        {isSavingAppleMessageSubscriptions ? 'Saving...' : 'Save Apple Messages Subscriptions'}
+                        {isSavingAppleMessageSubscriptions ? 'Saving...' : 'Save Messages'}
                       </button>
                     </div>
 
@@ -4311,8 +4546,10 @@ const SettingsPage = ({
                         onClick={saveConnectorZooRepoSettings}
                         className="secondary-button"
                         disabled={isSavingConnectorZooRepoSettings}
+                        aria-label="Save Connector Zoo URL"
+                        title="Save the remote Connector Zoo catalog URL for this workspace."
                       >
-                        {isSavingConnectorZooRepoSettings ? 'Saving...' : 'Save Connector Zoo URL'}
+                        {isSavingConnectorZooRepoSettings ? 'Saving...' : 'Save Zoo URL'}
                       </button>
                     </div>
 
@@ -4345,32 +4582,49 @@ const SettingsPage = ({
                       <div className="empty-state">No repo-backed connector entries are available yet. Save a catalog URL and refresh the zoo.</div>
                     ) : (
                       <div className="source-list">
-                        {repoConnectorEntries.map((entry) => (
-                          <div key={`repo-connector-${entry.key}`} className="source-row">
-                            <div className="source-row-header">
-                              <div>
-                                <strong>{entry.label}</strong>
-                                <div className="muted-text">{entry.description}</div>
+                        {repoConnectorEntries.map((entry) => {
+                          const entryUi = getUiSection(entry);
+                          const actionKey = entry.installed ? 'add_connection' : 'install';
+                          const connectorAction = getUiAction(entryUi, actionKey, entry.installed
+                            ? {
+                                label: 'Add',
+                                busy_label: 'Adding...',
+                                aria_label: 'Add Connection',
+                                help: 'Add a configured connection row for this installed connector.',
+                              }
+                            : {
+                                label: 'Install',
+                                busy_label: 'Adding...',
+                                aria_label: 'Add to System',
+                                help: 'Install this connector plugin into the Hearthlight system.',
+                              });
+                          return (
+                            <div key={`repo-connector-${entry.key}`} className="source-row">
+                              <div className="source-row-header">
+                                <div>
+                                  <strong>{entry.label}</strong>
+                                  <div className="muted-text">{entry.description}</div>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => installRepoConnector(entry.key)}
+                                  className="secondary-button"
+                                  disabled={installingRepoConnectorKey === entry.key}
+                                  aria-label={connectorAction.aria_label}
+                                  title={connectorAction.help}
+                                >
+                                  {renderActionLabel(connectorAction, installingRepoConnectorKey === entry.key)}
+                                </button>
                               </div>
-                              <button
-                                type="button"
-                                onClick={() => installRepoConnector(entry.key)}
-                                className="secondary-button"
-                                disabled={installingRepoConnectorKey === entry.key}
-                              >
-                                {installingRepoConnectorKey === entry.key
-                                  ? 'Adding...'
-                                  : (entry.installed ? 'Add Connection' : 'Add to System')}
-                              </button>
+                              <div className="muted-text">Plugin: {entry.plugin_key}{entry.plugin_version ? ` · ${entry.plugin_version}` : ''}</div>
+                              {entry.source_url && (
+                                <div className="muted-text">
+                                  <a href={entry.source_url} target="_blank" rel="noreferrer">Open source listing</a>
+                                </div>
+                              )}
                             </div>
-                            <div className="muted-text">Plugin: {entry.plugin_key}{entry.plugin_version ? ` · ${entry.plugin_version}` : ''}</div>
-                            {entry.source_url && (
-                              <div className="muted-text">
-                                <a href={entry.source_url} target="_blank" rel="noreferrer">Open source listing</a>
-                              </div>
-                            )}
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     )}
                   </div>
@@ -4452,11 +4706,13 @@ const SettingsPage = ({
                       onClick={saveAppearanceSettings}
                       className="secondary-button"
                       disabled={isSavingAppearance || !appearanceLoaded}
+                      aria-label="Save Appearance"
+                      title="Save the selected workspace theme."
                     >
                       {isSavingAppearance ? (
                         <>
                           <span className="button-spinner" aria-hidden="true" />
-                          Saving Appearance...
+                          Saving...
                         </>
                       ) : 'Save Appearance'}
                     </button>

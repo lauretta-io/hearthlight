@@ -84,6 +84,12 @@ For the new mixed-source control plane specifically, there is also a repeatable 
 python3 scripts/control_plane_smoke_test.py
 ```
 
+To verify the already-running local UI proxy without changing source rows or starting a run:
+
+```bash
+python3 scripts/control_plane_smoke_test.py --base-url http://127.0.0.1:3000/api --defaults-only
+```
+
 Or let the script manage the minimal compose stack itself:
 
 ```bash
@@ -95,6 +101,7 @@ It exercises:
 - `/sources/uploads`
 - `/sources`
 - `/models`
+- `/model-options`
 - `/model-bindings`
 - `/system/model-health`
 - `/system/resources`
@@ -104,6 +111,77 @@ It exercises:
 
 The script cleans up its temporary source rows and uploaded media when it finishes. With
 `--manage-compose`, it also starts and stops `db`, `rabbitmq`, and `webapp`.
+
+## Hosted production verifier
+
+Use the deployment verifier for hosted completion evidence:
+
+Hosted ingress clients should be configured with `HEARTHLIGHT_INGRESS_CLIENT_KEYS` before running
+acceptance benchmarks. When configured, invalid keys return `401`, and usage ledger rows are written
+per hashed client key and processed bucket.
+
+```bash
+python3 scripts/benchmark_queue_ingress.py \
+  --base-url https://hearthlight.example.com/api \
+  --endpoint /v1/hearthlight/anomaly-submissions \
+  --client-key client-a="$HEARTHLIGHT_CLIENT_KEY_A" \
+  --client-key client-b="$HEARTHLIGHT_CLIENT_KEY_B" \
+  --auth-header Authorization \
+  --auth-scheme bearer \
+  --repeat 3 \
+  --requests-per-repeat 1000 \
+  --concurrency 64 \
+  --output shared/output/benchmarks/queue_only_run_1.json
+```
+
+Generate the settled benchmark JSON before the verifier with the worker service, GPU resize path,
+and live provider routing enabled:
+
+```bash
+python3 scripts/benchmark_settled_ingress.py \
+  --base-url https://hearthlight.example.com/api \
+  --endpoint /v1/hearthlight/anomaly-submissions \
+  --status-endpoint-template /v1/hearthlight/anomaly-submissions/{submission_id} \
+  --client-key client-a="$HEARTHLIGHT_CLIENT_KEY_A" \
+  --client-key client-b="$HEARTHLIGHT_CLIENT_KEY_B" \
+  --auth-header Authorization \
+  --auth-scheme bearer \
+  --requests 100 \
+  --concurrency 16 \
+  --settle-timeout-seconds 180 \
+  --output shared/output/benchmarks/settled_run_1.json
+```
+
+```bash
+python3 scripts/run_deployment_verification.py \
+  --base-url https://hearthlight.example.com \
+  --api-key "$HEARTHLIGHT_ADMIN_API_KEY" \
+  --provider-key openai \
+  --ingress-client-key "$HEARTHLIGHT_CLIENT_KEY_A" \
+  --invalid-ingress-client-key "$HEARTHLIGHT_INVALID_CLIENT_KEY" \
+  --queue-benchmark-json shared/output/benchmarks/queue_only_run_1.json \
+  --queue-benchmark-json shared/output/benchmarks/queue_only_run_2.json \
+  --settled-benchmark-json shared/output/benchmarks/settled_run_1.json
+```
+
+This is the acceptance-facing audit command for the hosted stack. It requires runtime diagnostics,
+GPU media smoke, live provider smoke, end-to-end smoke, and queue-only median throughput of at
+least 200 submissions/sec across repeated benchmark results with multiple client keys.
+Runtime diagnostics are strict by default: they must prove the production profile uses pgbouncer,
+S3 object storage, hosted local-stack settings, and the tuned API/worker values from the Compose
+reference deployment. `--skip-runtime-profile-check` is available only for non-acceptance local
+debugging.
+Live provider smoke must prove `request_reached_provider=true`,
+`normalized_result_returned=true`, and `provider_response_validated=true`; a successful HTTP
+status without a recognized OpenAI-compatible, Claude-compatible, or Lauretta response shape is a
+failed hosted proof.
+When settled benchmark JSON is supplied, the verifier records ingress and settled throughput as
+separate min/median/max summaries and fails if the settled benchmark reports unexpected submission
+or settle failures. Settled throughput below 200/sec is still recorded as a secondary optimization
+target rather than the primary acceptance gate.
+The ingress contract check also submits a small inline asset and reads it back from the hosted
+object store through the submission asset endpoint, so object persistence is part of the verifier
+rather than a manual inspection step.
 
 On Apple Silicon / Linux arm64, this API-only path is the realistic Docker validation target. The
 `webapp` image can now build with CPU `onnxruntime` and without `tensorrt`/`triton`, while
@@ -131,7 +209,7 @@ cd frontend
 npm test -- --watchAll=false
 ```
 
-The secure Stage 2 provider settings workflow now also has browser-driven E2E
+The secure Anomaly LLM model settings workflow now also has browser-driven E2E
 coverage through Playwright:
 
 ```bash
@@ -145,7 +223,7 @@ The Playwright suite stubs the backend API so operators can verify:
 - API-key rotation behavior
 - endpoint changes
 - provider test success/failure handling
-- no raw Stage 2 provider secrets retained in browser storage
+- no raw Anomaly LLM model secrets retained in browser storage
 
 Use a modern Node/npm toolchain for this. The local machine used for this
 update has Node `22.21.0`.

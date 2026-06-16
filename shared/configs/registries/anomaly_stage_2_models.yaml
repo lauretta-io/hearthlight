@@ -116,6 +116,7 @@ claude_compatible_stage_2:
   adapter: claude_compatible_stage_2
   artifact_ref: external_claude_compatible_api
   runtime:
+    provider: claude_compatible
     backend: http
     prompt_mode: external-json
     fallback_on_failure: false
@@ -134,6 +135,44 @@ claude_compatible_stage_2:
   requires_gpu: false
   resource_profile:
     cpu_cores: 1
+  ui:
+    provider_settings:
+      summary_label: Claude-compatible profile
+      actions:
+        configure:
+          label: Configure
+          aria_label: Configure Claude-Compatible Model
+          help: Open endpoint, model, timeout, and token settings for this Claude-compatible anomaly model.
+        test_connection:
+          label: Test
+          busy_label: Testing...
+          aria_label: Test Claude-Compatible Connection
+          help: Send a lightweight request to verify the Claude-compatible anomaly endpoint and token.
+        save:
+          label: Save LLM
+          busy_label: Saving...
+          aria_label: Save Claude-Compatible Anomaly LLM Model
+          help: Save encrypted Claude-compatible provider settings for anomaly detection.
+        cancel:
+          label: Cancel
+          aria_label: Cancel Claude-Compatible Settings
+          help: Close without saving Claude-compatible provider setting changes.
+      fields:
+        base_url:
+          label: Base URL
+          placeholder: https://provider.example/v1
+          help: Claude-compatible anomaly API base URL.
+        model_name:
+          label: Model Name
+          placeholder: claude-compatible-model
+          help: Model name sent to the Claude-compatible anomaly endpoint.
+        timeout_seconds:
+          label: Timeout
+          help: Request timeout in seconds for Claude-compatible anomaly calls.
+        auth_token:
+          label: Auth Token
+          placeholder: Claude-compatible auth token
+          help: Encrypted token used only server-side for Claude-compatible requests.
 
 vlm_anomaly_demo_stage_2:
   stage: anomaly_stage_2
@@ -183,6 +222,44 @@ chatgpt_api_stage_2:
   resource_profile:
     cpu_cores: 1
     rate_guidance: moderate
+  ui:
+    provider_settings:
+      summary_label: OpenAI profile
+      actions:
+        configure:
+          label: Configure
+          aria_label: Configure Model
+          help: Open endpoint, model, timeout, and credential settings for this OpenAI anomaly model.
+        test_connection:
+          label: Test
+          busy_label: Testing...
+          aria_label: Test OpenAI Connection
+          help: Send a lightweight request to verify the OpenAI endpoint, model, and API key.
+        save:
+          label: Save LLM
+          busy_label: Saving...
+          aria_label: Save OpenAI Anomaly LLM Model
+          help: Save encrypted OpenAI provider settings for anomaly detection.
+        cancel:
+          label: Cancel
+          aria_label: Cancel OpenAI Settings
+          help: Close without saving OpenAI provider setting changes.
+      fields:
+        base_url:
+          label: Base URL
+          placeholder: https://api.openai.com/v1
+          help: OpenAI-compatible API base URL used by this Stage 2 model.
+        model_name:
+          label: Model Name
+          placeholder: gpt-5.4-mini
+          help: Optional runtime model override for the OpenAI-compatible request.
+        timeout_seconds:
+          label: Timeout
+          help: Request timeout in seconds for OpenAI anomaly calls.
+        api_key:
+          label: API Key
+          placeholder: OpenAI API key
+          help: Encrypted API key used only server-side for OpenAI requests.
 
 claude_api_stage_2:
   stage: anomaly_stage_2
@@ -212,6 +289,44 @@ claude_api_stage_2:
   resource_profile:
     cpu_cores: 1
     rate_guidance: moderate
+  ui:
+    provider_settings:
+      summary_label: Claude profile
+      actions:
+        configure:
+          label: Configure
+          aria_label: Configure Claude Model
+          help: Open endpoint, model, timeout, and token settings for this Claude anomaly model.
+        test_connection:
+          label: Test
+          busy_label: Testing...
+          aria_label: Test Claude Connection
+          help: Send a lightweight request to verify the Claude-compatible endpoint and token.
+        save:
+          label: Save LLM
+          busy_label: Saving...
+          aria_label: Save Claude Anomaly LLM Model
+          help: Save encrypted Claude-compatible provider settings for anomaly detection.
+        cancel:
+          label: Cancel
+          aria_label: Cancel Claude Settings
+          help: Close without saving Claude-compatible provider setting changes.
+      fields:
+        base_url:
+          label: Base URL
+          placeholder: https://api.anthropic.com/v1
+          help: Claude-compatible API base URL used by this Stage 2 model.
+        model_name:
+          label: Model Name
+          placeholder: claude-sonnet-4-6
+          help: Optional runtime model override for Claude-compatible requests.
+        timeout_seconds:
+          label: Timeout
+          help: Request timeout in seconds for Claude anomaly calls.
+        auth_token:
+          label: Auth Token
+          placeholder: Claude-compatible auth token
+          help: Encrypted token used only server-side for Claude-compatible requests.
 
 lm_studio_stage_2:
   stage: anomaly_stage_2
@@ -241,6 +356,44 @@ lm_studio_stage_2:
   resource_profile:
     cpu_cores: 1
     rate_guidance: moderate
+  ui:
+    provider_settings:
+      summary_label: LM Studio profile
+      actions:
+        configure:
+          label: Configure
+          aria_label: Configure LM Studio Model
+          help: Open endpoint, model, timeout, and optional credential settings for this LM Studio anomaly model.
+        test_connection:
+          label: Test
+          busy_label: Testing...
+          aria_label: Test LM Studio Connection
+          help: Verify the configured LM Studio OpenAI-compatible endpoint without requiring an auth header.
+        save:
+          label: Save LLM
+          busy_label: Saving...
+          aria_label: Save LM Studio Anomaly LLM Model
+          help: Save LM Studio endpoint settings for anomaly detection.
+        cancel:
+          label: Cancel
+          aria_label: Cancel LM Studio Settings
+          help: Close without saving LM Studio provider setting changes.
+      fields:
+        base_url:
+          label: Base URL
+          placeholder: http://localhost:1234/v1
+          help: LM Studio OpenAI-compatible API base URL.
+        model_name:
+          label: Model Name
+          placeholder: local-model
+          help: Local model name exposed by LM Studio.
+        timeout_seconds:
+          label: Timeout
+          help: Request timeout in seconds for LM Studio anomaly calls.
+        api_key:
+          label: API Key
+          placeholder: Optional API key
+          help: Optional credential; leave blank to omit the authorization header.
 
 lauretta_api_stage_2:
   stage: anomaly_stage_2
@@ -270,3 +423,41 @@ lauretta_api_stage_2:
   resource_profile:
     cpu_cores: 1
     rate_guidance: moderate
+  ui:
+    provider_settings:
+      summary_label: Lauretta profile
+      actions:
+        configure:
+          label: Configure
+          aria_label: Configure Lauretta Model
+          help: Open endpoint, model, timeout, and credential settings for this Lauretta anomaly model.
+        test_connection:
+          label: Test
+          busy_label: Testing...
+          aria_label: Test Lauretta Connection
+          help: Send a lightweight request to verify the Lauretta endpoint, model, and API key.
+        save:
+          label: Save LLM
+          busy_label: Saving...
+          aria_label: Save Lauretta Anomaly LLM Model
+          help: Save encrypted Lauretta provider settings for anomaly detection.
+        cancel:
+          label: Cancel
+          aria_label: Cancel Lauretta Settings
+          help: Close without saving Lauretta provider setting changes.
+      fields:
+        base_url:
+          label: Base URL
+          placeholder: https://api.lauretta.io/v1
+          help: Lauretta OpenAI-compatible API base URL.
+        model_name:
+          label: Model Name
+          placeholder: lauretta-anomaly-stage-2
+          help: Optional runtime model override for Lauretta anomaly calls.
+        timeout_seconds:
+          label: Timeout
+          help: Request timeout in seconds for Lauretta anomaly calls.
+        api_key:
+          label: API Key
+          placeholder: Lauretta API key
+          help: Encrypted API key used only server-side for Lauretta requests.

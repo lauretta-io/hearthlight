@@ -1,0 +1,8 @@
+key: lifx_cloud_connection
+label: LIFX Cloud Connection
+version: "0.8.2"
+provider: LIFX
+description: Optional LIFX Cloud connector plugin for trigger-driven lighting actions.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

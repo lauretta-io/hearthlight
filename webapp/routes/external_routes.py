@@ -1,12 +1,16 @@
 import os
 import queue
 import shutil
+import subprocess
 import time
 import logging
 import asyncio
+import base64
+import hashlib
 import json
 import re
-from datetime import datetime
+import uuid
+from datetime import datetime, timezone
 from importlib import import_module
 from pathlib import Path
 from threading import Lock
@@ -19,7 +23,7 @@ from urllib import request as urllib_request
 import cv2
 import numpy as np
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile
-from fastapi.responses import StreamingResponse
+from fastapi.responses import Response, StreamingResponse
 from omegaconf import OmegaConf
 from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -63,6 +67,9 @@ from ...shared.models.APIModels import (
     GoveeDeviceStateResponse,
     GoveeDiscoveredDevice,
     InputSource,
+    LaurettaAnomalySubmissionRequest,
+    LaurettaAnomalySubmissionResponse,
+    LaurettaSubmissionAssetRecord,
     ModelBinding,
     ModelHealth,
     ModelOptionCatalog,
@@ -86,8 +93,8 @@ from ...shared.models.APIModels import (
     SOURCE_KIND_CAMERA_URL,
     SOURCE_KIND_VIDEO_UPLOAD,
     SOURCE_KIND_WEBCAM,
-    Stage2ProviderSettings,
-    Stage2ProviderSettingsTestResponse,
+    AnomalyLlmModelSettings,
+    AnomalyLlmModelSettingsTestResponse,
     Status,
     TriggerRule,
     TriggerZooEntry,
@@ -161,19 +168,19 @@ from ...shared.utils.govee_connector import (
     send_test_govee_trigger_action,
     test_govee_api_key,
 )
-from ...shared.utils.stage2_provider_settings import (
+from ...shared.utils.anomaly_llm_model_settings import (
     PROVIDER_KEY_CLAUDE_COMPATIBLE,
     PROVIDER_KEY_LAURETTA,
     PROVIDER_KEY_LM_STUDIO,
     PROVIDER_KEY_OPENAI,
-    Stage2ProviderSettingsDecryptError,
-    Stage2ProviderSettingsKeyUnavailable,
-    build_runtime_stage2_provider_settings,
-    get_effective_stage2_provider_settings,
-    list_stage2_provider_settings,
-    merge_stage2_provider_settings_draft,
-    record_stage2_provider_test_status,
-    write_stage2_provider_settings,
+    AnomalyLlmModelSettingsDecryptError,
+    AnomalyLlmModelSettingsKeyUnavailable,
+    build_runtime_anomaly_llm_model_settings,
+    get_effective_anomaly_llm_model_settings,
+    list_anomaly_llm_model_settings,
+    merge_anomaly_llm_model_settings_draft,
+    record_anomaly_llm_model_provider_test_status,
+    write_anomaly_llm_model_settings,
 )
 from ...shared.utils.telegram_notifications import (
     ensure_telegram_subscription_tables,
@@ -267,6 +274,12 @@ from ...shared.utils.system_state import (
 from .operations_routes import create_entity_id, create_incident_id, get_last_journey_node
 
 external_router = APIRouter()
+ADMIN_DIAGNOSTIC_PROVIDER_KEYS = (
+    PROVIDER_KEY_OPENAI,
+    PROVIDER_KEY_LM_STUDIO,
+    PROVIDER_KEY_LAURETTA,
+    PROVIDER_KEY_CLAUDE_COMPATIBLE,
+)
 logger = logging.getLogger(__name__)
 
 CONFIG_PATH = Path(os.environ.get("HEARTHLIGHT_CONFIG_PATH", "shared/configs/config.yaml"))
@@ -326,6 +339,600 @@ def build_default_connector_zoo_repo_settings() -> ConnectorZooRepoSettings:
     return ConnectorZooRepoSettings(catalog_url=DEFAULT_CONNECTOR_ZOO_CATALOG_URL)
 
 
+ingress_tables_ready = False
+ingress_tables_lock = Lock()
+
+
+def get_hearthlight_object_store_dir() -> Path:
+    return Path(os.environ.get("HEARTHLIGHT_OBJECT_STORE_DIR", "shared/output/object_store")).resolve()
+
+
+def get_hearthlight_object_store_backend() -> str:
+    return str(os.environ.get("HEARTHLIGHT_OBJECT_STORE_BACKEND", "filesystem") or "filesystem").strip().lower()
+
+
+def put_submission_object(object_key: str, raw_bytes: bytes) -> None:
+    backend = get_hearthlight_object_store_backend()
+    if backend in {"filesystem", "local", "file"}:
+        object_store = get_hearthlight_object_store_dir()
+        path = object_store / object_key
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(raw_bytes)
+        return
+    if backend == "s3":
+        bucket = str(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_BUCKET", "") or "").strip()
+        if not bucket:
+            raise RuntimeError("HEARTHLIGHT_OBJECT_STORE_S3_BUCKET is required when HEARTHLIGHT_OBJECT_STORE_BACKEND=s3")
+        try:
+            import boto3
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("boto3 is required for HEARTHLIGHT_OBJECT_STORE_BACKEND=s3") from exc
+        client = boto3.client(
+            "s3",
+            endpoint_url=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL") or None),
+            region_name=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_REGION") or None),
+            aws_access_key_id=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID") or None),
+            aws_secret_access_key=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY") or None),
+        )
+        client.put_object(Bucket=bucket, Key=object_key, Body=raw_bytes)
+        return
+    raise RuntimeError(f"unsupported Hearthlight object store backend: {backend}")
+
+
+def read_submission_object(object_key: str) -> bytes:
+    backend = get_hearthlight_object_store_backend()
+    if backend in {"filesystem", "local", "file"}:
+        object_store = get_hearthlight_object_store_dir()
+        path = (object_store / object_key).resolve()
+        if not str(path).startswith(str(object_store) + os.sep):
+            raise RuntimeError("submission asset path escapes object store root")
+        return path.read_bytes()
+    if backend == "s3":
+        bucket = str(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_BUCKET", "") or "").strip()
+        if not bucket:
+            raise RuntimeError("HEARTHLIGHT_OBJECT_STORE_S3_BUCKET is required when HEARTHLIGHT_OBJECT_STORE_BACKEND=s3")
+        try:
+            import boto3
+        except ModuleNotFoundError as exc:
+            raise RuntimeError("boto3 is required for HEARTHLIGHT_OBJECT_STORE_BACKEND=s3") from exc
+        client = boto3.client(
+            "s3",
+            endpoint_url=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL") or None),
+            region_name=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_REGION") or None),
+            aws_access_key_id=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID") or None),
+            aws_secret_access_key=(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY") or None),
+        )
+        response = client.get_object(Bucket=bucket, Key=object_key)
+        return response["Body"].read()
+    raise RuntimeError(f"unsupported Hearthlight object store backend: {backend}")
+
+
+def ensure_hearthlight_ingress_tables() -> None:
+    global ingress_tables_ready
+    if ingress_tables_ready:
+        return
+    with ingress_tables_lock:
+        if ingress_tables_ready:
+            return
+        SQLModels.Base.metadata.create_all(
+            bind=get_engine(),
+            tables=[
+                SQLModels.HearthlightSubmission.__table__,
+                SQLModels.IngressClient.__table__,
+                SQLModels.SubmissionAsset.__table__,
+                SQLModels.UsageLedger.__table__,
+            ],
+            checkfirst=True,
+        )
+        with get_engine().begin() as connection:
+            connection.execute(text("ALTER TABLE control.hearthlight_submission ADD COLUMN IF NOT EXISTS provider_key VARCHAR(64)"))
+            connection.execute(text("ALTER TABLE control.hearthlight_submission ADD COLUMN IF NOT EXISTS provider_status VARCHAR(32) DEFAULT 'skipped'"))
+            connection.execute(text("ALTER TABLE control.hearthlight_submission ADD COLUMN IF NOT EXISTS provider_error TEXT"))
+        ingress_tables_ready = True
+
+
+def hash_secret_value(raw_value: str) -> str:
+    return hashlib.sha256(raw_value.encode("utf-8")).hexdigest()
+
+
+def extract_ingress_client_key(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    raw_value = (
+        request.headers.get("Authorization")
+        or request.headers.get("X-API-Key")
+        or request.headers.get("x-api-key")
+        or ""
+    ).strip()
+    if raw_value.lower().startswith("bearer "):
+        raw_value = raw_value[7:].strip()
+    if not raw_value:
+        return None
+    return raw_value
+
+
+def hash_ingress_client_key(request: Request | None) -> str | None:
+    raw_value = extract_ingress_client_key(request)
+    return hash_secret_value(raw_value) if raw_value else None
+
+
+def parse_positive_int_env(name: str, default: int | None = None) -> int | None:
+    raw = str(os.environ.get(name, "") or "").strip()
+    if not raw:
+        return default
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def bootstrap_ingress_clients_from_env(db: Session) -> None:
+    raw_clients = str(os.environ.get("HEARTHLIGHT_INGRESS_CLIENT_KEYS", "") or "").strip()
+    if not raw_clients:
+        return
+    quota_640 = parse_positive_int_env("HEARTHLIGHT_INGRESS_DAILY_QUOTA_640X480")
+    quota_1mp = parse_positive_int_env("HEARTHLIGHT_INGRESS_DAILY_QUOTA_1MP")
+    quota_2mp = parse_positive_int_env("HEARTHLIGHT_INGRESS_DAILY_QUOTA_2MP")
+    changed = False
+    for index, entry in enumerate(raw_clients.split(","), start=1):
+        value = entry.strip()
+        if not value:
+            continue
+        if "=" in value:
+            label, secret = value.split("=", 1)
+            label = label.strip() or f"client-{index}"
+            secret = secret.strip()
+        else:
+            label = f"client-{index}"
+            secret = value
+        if not secret:
+            continue
+        client_key_hash = hash_secret_value(secret)
+        existing = (
+            db.query(SQLModels.IngressClient)
+            .filter_by(client_key_hash=client_key_hash, is_deleted=False)
+            .first()
+        )
+        if existing is None:
+            db.add(
+                SQLModels.IngressClient(
+                    client_label=label,
+                    client_key_hash=client_key_hash,
+                    enabled=True,
+                    quota_640x480=quota_640,
+                    quota_1mp=quota_1mp,
+                    quota_2mp=quota_2mp,
+                )
+            )
+            changed = True
+    if changed:
+        db.commit()
+
+
+def ingress_clients_configured(db: Session) -> bool:
+    if str(os.environ.get("HEARTHLIGHT_INGRESS_CLIENT_KEYS", "") or "").strip():
+        return True
+    return (
+        db.query(SQLModels.IngressClient)
+        .filter_by(is_deleted=False)
+        .first()
+        is not None
+    )
+
+
+def resolve_ingress_client(db: Session, request: Request) -> SQLModels.IngressClient | None:
+    bootstrap_ingress_clients_from_env(db)
+    if not ingress_clients_configured(db):
+        return None
+    client_key = extract_ingress_client_key(request)
+    if not client_key:
+        raise HTTPException(status_code=401, detail="missing ingress client key")
+    client_key_hash = hash_secret_value(client_key)
+    row = (
+        db.query(SQLModels.IngressClient)
+        .filter_by(client_key_hash=client_key_hash, is_deleted=False)
+        .first()
+    )
+    if row is None or not bool(row.enabled):
+        raise HTTPException(status_code=401, detail="invalid ingress client key")
+    return row
+
+
+def quota_for_bucket(client: SQLModels.IngressClient | None, bucket: str) -> int | None:
+    if client is None:
+        return None
+    return {
+        "640x480": client.quota_640x480,
+        "1mp": client.quota_1mp,
+        "2mp": client.quota_2mp,
+    }.get(bucket)
+
+
+def ledger_created_on_utc_day(row: SQLModels.UsageLedger, day) -> bool:
+    created_at = getattr(row, "created_at", None)
+    if created_at is None:
+        return True
+    if isinstance(created_at, str):
+        try:
+            created_at = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    return getattr(created_at, "date", lambda: None)() == day
+
+
+def used_token_units_for_bucket(db: Session, client_key_hash: str, bucket: str) -> int:
+    today = datetime.now(timezone.utc).date()
+    rows = (
+        db.query(SQLModels.UsageLedger)
+        .filter_by(
+            client_key_hash=client_key_hash,
+            bucket=bucket,
+            event_type="final",
+            is_deleted=False,
+        )
+        .all()
+    )
+    return sum(
+        int(getattr(row, "token_units", 0) or 0)
+        for row in rows
+        if ledger_created_on_utc_day(row, today)
+    )
+
+
+def enforce_ingress_quota(
+    *,
+    db: Session,
+    client: SQLModels.IngressClient | None,
+    bucket: str,
+    token_units: int,
+) -> None:
+    quota = quota_for_bucket(client, bucket)
+    if quota is None:
+        return
+    used = used_token_units_for_bucket(db, client.client_key_hash, bucket)
+    if used + token_units > quota:
+        raise HTTPException(
+            status_code=429,
+            detail=f"daily quota exceeded for bucket {bucket}",
+        )
+
+
+def select_submission_bucket(payload: LaurettaAnomalySubmissionRequest) -> str:
+    max_pixels = 0
+    for attachment in payload.image_attachments:
+        if attachment.width and attachment.height:
+            max_pixels = max(max_pixels, int(attachment.width) * int(attachment.height))
+    if max_pixels <= 640 * 480:
+        return "640x480"
+    if max_pixels <= 1_000_000:
+        return "1mp"
+    return "2mp"
+
+
+def token_units_for_bucket(bucket: str) -> int:
+    return {
+        "640x480": 1,
+        "1mp": 2,
+        "2mp": 4,
+    }.get(bucket, 1)
+
+
+def decode_attachment_bytes(attachment) -> bytes | None:
+    encoded = attachment.data_base64 or attachment.data
+    if not encoded:
+        return None
+    if "," in encoded and encoded.split(",", 1)[0].startswith("data:"):
+        encoded = encoded.split(",", 1)[1]
+    return base64.b64decode(encoded, validate=False)
+
+
+def store_submission_assets(
+    *,
+    db: Session,
+    submission_id: str,
+    payload: LaurettaAnomalySubmissionRequest,
+) -> list[SQLModels.SubmissionAsset]:
+    rows: list[SQLModels.SubmissionAsset] = []
+    for index, attachment in enumerate(payload.image_attachments, start=1):
+        raw_bytes = decode_attachment_bytes(attachment)
+        if raw_bytes is None:
+            metadata = {
+                **dict(attachment.metadata or {}),
+                "uri": attachment.uri,
+                "object_key": attachment.object_key,
+                "inline": False,
+            }
+            raw_bytes = json.dumps(metadata, sort_keys=True).encode("utf-8")
+            suffix = ".json"
+        else:
+            suffix = ".bin"
+        checksum = hashlib.sha256(raw_bytes).hexdigest()
+        object_key = f"submissions/{submission_id}/attachment-{index}{suffix}"
+        put_submission_object(object_key, raw_bytes)
+        row = SQLModels.SubmissionAsset(
+            submission_id=submission_id,
+            asset_role="original",
+            media_type=attachment.media_type,
+            object_key=object_key,
+            checksum_sha256=checksum,
+            size_bytes=len(raw_bytes),
+            metadata_json=json.dumps(
+                {
+                    **dict(attachment.metadata or {}),
+                    "width": attachment.width,
+                    "height": attachment.height,
+                    "uri": attachment.uri,
+                    "source_object_key": attachment.object_key,
+                },
+                sort_keys=True,
+            ),
+        )
+        db.add(row)
+        rows.append(row)
+    return rows
+
+
+def parse_submission_row_json(raw_value: str | None, fallback):
+    if not raw_value:
+        return fallback
+    try:
+        return json.loads(raw_value)
+    except json.JSONDecodeError:
+        return fallback
+
+
+def sanitize_provider_error(message: str, secrets: list[str] | None = None) -> str:
+    sanitized = str(message or "").strip()
+    for secret in secrets or []:
+        if secret:
+            sanitized = sanitized.replace(secret, "********")
+    sanitized = re.sub(
+        r"Authorization\s*:\s*Bearer\s+[^\s,;]+",
+        "Authorization: Bearer ********",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    sanitized = re.sub(
+        r"(api[_-]?key|auth[_-]?token|x-api-key)\s*[:=]\s*[^\s,;]+",
+        r"\1: ********",
+        sanitized,
+        flags=re.IGNORECASE,
+    )
+    return sanitized[:1000]
+
+
+def choose_ingress_provider_key(payload: LaurettaAnomalySubmissionRequest) -> str | None:
+    metadata = dict(payload.metadata or {})
+    requested = str(
+        metadata.get("provider_key")
+        or metadata.get("anomaly_llm_model_provider_key")
+        or os.environ.get("HEARTHLIGHT_INGRESS_PROVIDER_KEY")
+        or ""
+    ).strip()
+    return requested or None
+
+
+def should_forward_ingress_submission(payload: LaurettaAnomalySubmissionRequest) -> bool:
+    metadata = dict(payload.metadata or {})
+    if bool(metadata.get("queue_only")):
+        return False
+    raw = str(os.environ.get("HEARTHLIGHT_INGRESS_FORWARD_PROVIDER", "true")).strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def parse_openai_compatible_provider_result(raw: dict[str, Any]) -> dict[str, Any]:
+    content = (
+        raw.get("choices", [{}])[0]
+        .get("message", {})
+        .get("content", "{}")
+        if isinstance(raw.get("choices"), list)
+        else "{}"
+    )
+    if isinstance(content, str):
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            parsed = {"reasoning": content}
+    elif isinstance(content, dict):
+        parsed = dict(content)
+    else:
+        parsed = {}
+    return {
+        "title": str(parsed.get("title") or parsed.get("summary") or "Provider result").strip(),
+        "category": str(parsed.get("category") or parsed.get("anomaly_category") or "provider_result").strip(),
+        "score": float(parsed.get("score") or parsed.get("confidence") or 0.0),
+        "reasoning": str(parsed.get("reasoning") or parsed.get("description") or "").strip(),
+        "visible_items": parsed.get("visible_items") if isinstance(parsed.get("visible_items"), list) else [],
+        "visible_activities": parsed.get("visible_activities") if isinstance(parsed.get("visible_activities"), list) else [],
+        "raw_provider_result": raw,
+    }
+
+
+def validate_openai_compatible_smoke_response(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("OpenAI-compatible provider returned a non-object response")
+    choices = raw.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("OpenAI-compatible provider response missing choices")
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise ValueError("OpenAI-compatible provider choice must be an object")
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("OpenAI-compatible provider response missing message")
+    content = message.get("content")
+    if isinstance(content, str) and not content.strip():
+        raise ValueError("OpenAI-compatible provider response content is empty")
+    if content is None:
+        raise ValueError("OpenAI-compatible provider response missing content")
+    return parse_openai_compatible_provider_result(raw)
+
+
+def validate_claude_compatible_smoke_response(raw: Any) -> dict[str, Any]:
+    parsed = parse_claude_anomaly_response(raw)
+    if not parsed.get("title") or not parsed.get("category"):
+        raise ValueError("Claude-compatible provider response missing normalized anomaly fields")
+    return parsed
+
+
+def validate_lauretta_smoke_response(raw: Any) -> dict[str, Any]:
+    if not isinstance(raw, dict):
+        raise ValueError("Lauretta provider returned a non-object response")
+    submission_id = str(raw.get("submission_id") or "").strip()
+    status = str(raw.get("status") or "").strip()
+    if not submission_id:
+        raise ValueError("Lauretta provider response missing submission_id")
+    if not status:
+        raise ValueError("Lauretta provider response missing status")
+    return raw
+
+
+def dispatch_ingress_submission_to_provider(
+    *,
+    db: Session,
+    row: SQLModels.HearthlightSubmission,
+    payload: LaurettaAnomalySubmissionRequest,
+    provider_key: str | None,
+) -> None:
+    if not should_forward_ingress_submission(payload):
+        row.provider_status = "skipped"
+        return
+    try:
+        provider_payload = select_anomaly_llm_model_provider_for_smoke(db, provider_key)
+    except Exception as exc:
+        row.provider_status = "skipped"
+        row.provider_error = sanitize_provider_error(str(exc))
+        return
+    provider_key = str(provider_payload.get("provider_key") or provider_key or "").strip()
+    row.provider_key = provider_key or None
+    api_key = str(provider_payload.get("api_key") or "").strip()
+    auth_token = str(provider_payload.get("auth_token") or "").strip()
+    secrets = [api_key, auth_token]
+    base_url = str(provider_payload.get("base_url") or "").strip()
+    model_name = str(provider_payload.get("model_name") or "").strip()
+    timeout_seconds = float(provider_payload.get("timeout_seconds") or 30)
+    try:
+        if provider_key == PROVIDER_KEY_CLAUDE_COMPATIBLE:
+            request_payload = build_claude_anomaly_request(
+                config={
+                    "enabled": True,
+                    "base_url": base_url,
+                    "auth_token": auth_token,
+                    "model_name": model_name,
+                    "timeout_seconds": timeout_seconds,
+                    "retry_count": 0,
+                    "prompt_template": payload.prompt_text,
+                },
+                event_id=row.submission_id,
+                run_id=None,
+                source_id=None,
+                camera_id=row.camera_id,
+                frame_id=None,
+                stage_1_model_key="hearthlight_ingress",
+                stage_2_model_key="claude_compatible_stage_2",
+                candidate_category="ingress_submission",
+                candidate_score=0.0,
+                candidate_reasoning=payload.expected_results_text or "",
+                visible_items=[],
+                visible_activities=[],
+                anomaly_object_list=[],
+                anomaly_activity_list=[],
+                asset_references=[],
+            )
+            raw_result = send_claude_anomaly_request(
+                {
+                    "enabled": True,
+                    "base_url": base_url,
+                    "auth_token": auth_token,
+                    "model_name": model_name,
+                    "timeout_seconds": timeout_seconds,
+                    "retry_count": 0,
+                    "prompt_template": payload.prompt_text,
+                },
+                request_payload,
+            )
+            parsed = parse_claude_anomaly_response(raw_result)
+        else:
+            headers = {"Content-Type": "application/json"}
+            if api_key:
+                headers["Authorization"] = f"Bearer {api_key}"
+            request_body = {
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "system",
+                        "content": "Return compact JSON with title, category, score, reasoning, visible_items, and visible_activities.",
+                    },
+                    {
+                        "role": "user",
+                        "content": json.dumps(
+                            {
+                                "submission_id": row.submission_id,
+                                "camera_id": row.camera_id,
+                                "user_id": row.user_id,
+                                "prompt_text": payload.prompt_text,
+                                "expected_results_text": payload.expected_results_text,
+                                "asset_references": [asset.model_dump(mode="json") for asset in payload.asset_references],
+                                "metadata": dict(payload.metadata or {}),
+                            },
+                            sort_keys=True,
+                        ),
+                    },
+                ],
+                "response_format": {"type": "json_object"},
+            }
+            req = urllib_request.Request(
+                f"{base_url.rstrip('/')}/chat/completions",
+                data=json.dumps(request_body).encode("utf-8"),
+                headers=headers,
+                method="POST",
+            )
+            with urllib_request.urlopen(req, timeout=timeout_seconds) as response:
+                raw_result = json.loads(response.read().decode("utf-8") or "{}")
+            parsed = parse_openai_compatible_provider_result(raw_result)
+        row.result_json = json.dumps(parsed, sort_keys=True)
+        row.provider_status = "completed"
+        row.provider_error = None
+    except Exception as exc:
+        row.provider_status = "error"
+        row.provider_error = sanitize_provider_error(str(exc), secrets)
+
+
+def build_lauretta_submission_response(
+    row: SQLModels.HearthlightSubmission,
+    assets: list[SQLModels.SubmissionAsset] | None = None,
+) -> LaurettaAnomalySubmissionResponse:
+    assets = assets or []
+    return LaurettaAnomalySubmissionResponse(
+        submission_id=row.submission_id,
+        status=row.status,
+        camera_id=row.camera_id,
+        user_id=row.user_id,
+        prompt_text=row.prompt_text,
+        expected_results_text=row.expected_results_text,
+        processed_bucket=row.processed_bucket,
+        token_units_reserved=row.token_units_reserved,
+        token_units_final=row.token_units_final,
+        provider_key=row.provider_key,
+        provider_status=row.provider_status,
+        provider_error=row.provider_error,
+        assets=[
+            LaurettaSubmissionAssetRecord(
+                object_key=asset.object_key,
+                media_type=asset.media_type,
+                size_bytes=asset.size_bytes,
+                checksum_sha256=asset.checksum_sha256,
+                metadata=parse_submission_row_json(asset.metadata_json, {}),
+            )
+            for asset in assets
+        ],
+        result=parse_submission_row_json(row.result_json, {}),
+        created_at=row.created_at.isoformat() if row.created_at else None,
+        updated_at=row.updated_at.isoformat() if row.updated_at else None,
+    )
+
+
 def normalize_connector_zoo_catalog_url(catalog_url: str | None) -> str:
     normalized = str(catalog_url or "").strip()
     legacy_local_default = (
@@ -381,7 +988,7 @@ def read_claude_anomaly_model_settings(db: Session) -> ClaudeAnomalyModelSetting
     if not isinstance(payload, dict):
         payload = default_claude_anomaly_model_config()
     try:
-        provider_payload = get_effective_stage2_provider_settings(db, PROVIDER_KEY_CLAUDE_COMPATIBLE)
+        provider_payload = get_effective_anomaly_llm_model_settings(db, PROVIDER_KEY_CLAUDE_COMPATIBLE)
         payload = {
             **payload,
             "enabled": bool(provider_payload.get("enabled", payload.get("enabled"))),
@@ -390,10 +997,10 @@ def read_claude_anomaly_model_settings(db: Session) -> ClaudeAnomalyModelSetting
             "timeout_seconds": int(provider_payload.get("timeout_seconds") or payload.get("timeout_seconds") or 10),
             "auth_token": str(provider_payload.get("auth_token") or payload.get("auth_token") or "").strip(),
         }
-    except (Stage2ProviderSettingsKeyUnavailable, Stage2ProviderSettingsDecryptError):
+    except (AnomalyLlmModelSettingsKeyUnavailable, AnomalyLlmModelSettingsDecryptError):
         raise
     except Exception:
-        logger.exception("Failed to load Stage 2 Claude-compatible provider settings")
+        logger.exception("Failed to load Claude-compatible Anomaly LLM model settings")
     try:
         redacted = redact_claude_anomaly_model_config(payload)
     except Exception:
@@ -419,7 +1026,7 @@ def write_claude_anomaly_model_settings(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     set_workspace_setting_value(db, SETTING_KEY_CLAUDE_ANOMALY_MODEL, normalized)
-    write_stage2_provider_settings(
+    write_anomaly_llm_model_settings(
         db,
         [
             {
@@ -437,52 +1044,119 @@ def write_claude_anomaly_model_settings(
     return read_claude_anomaly_model_settings(db)
 
 
-def _get_stage2_provider_response(db: Session) -> list[Stage2ProviderSettings]:
+def _get_anomaly_llm_model_provider_response(db: Session) -> list[AnomalyLlmModelSettings]:
     try:
-        payloads = list_stage2_provider_settings(db)
-    except Stage2ProviderSettingsKeyUnavailable as exc:
+        payloads = list_anomaly_llm_model_settings(db)
+    except AnomalyLlmModelSettingsKeyUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Stage2ProviderSettingsDecryptError as exc:
+    except AnomalyLlmModelSettingsDecryptError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
-    return [Stage2ProviderSettings.model_validate(item) for item in payloads]
+    return [AnomalyLlmModelSettings.model_validate(item) for item in payloads]
 
 
-def _save_stage2_provider_settings(
+def _bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
+    return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _runtime_profile_diagnostics() -> dict[str, Any]:
+    object_store_backend = get_hearthlight_object_store_backend()
+    return {
+        "api": {
+            "api_web_concurrency": os.environ.get("API_WEB_CONCURRENCY"),
+            "api_client_cache_ttl_seconds": os.environ.get("API_CLIENT_CACHE_TTL_SECONDS"),
+            "local_stack": _bool_env("HEARTHLIGHT_LOCAL_STACK"),
+        },
+        "database": {
+            "postgres_host": os.environ.get("POSTGRES_HOST"),
+            "postgres_port": os.environ.get("POSTGRES_PORT"),
+            "db_pool_size": os.environ.get("DB_POOL_SIZE"),
+            "db_max_overflow": os.environ.get("DB_MAX_OVERFLOW"),
+        },
+        "worker": {
+            "worker_runtime": get_worker_runtime_mode(),
+            "worker_concurrency": os.environ.get("WORKER_CONCURRENCY"),
+            "worker_poll_seconds": os.environ.get("WORKER_POLL_SECONDS"),
+            "inline_inference_after_preprocess": _bool_env("INLINE_INFERENCE_AFTER_PREPROCESS", True),
+        },
+        "object_store": {
+            "backend": object_store_backend,
+            "s3_bucket": os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_BUCKET") if object_store_backend == "s3" else None,
+            "s3_endpoint_url": os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL") if object_store_backend == "s3" else None,
+            "s3_region": os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_REGION") if object_store_backend == "s3" else None,
+            "s3_access_key_present": bool(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID")),
+            "s3_secret_key_present": bool(os.environ.get("HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY")),
+        },
+    }
+
+
+def _save_anomaly_llm_model_settings(
     db: Session,
-    payloads: list[Stage2ProviderSettings],
-) -> list[Stage2ProviderSettings]:
+    payloads: list[AnomalyLlmModelSettings],
+) -> list[AnomalyLlmModelSettings]:
     try:
-        write_stage2_provider_settings(db, [item.model_dump() for item in payloads])
-    except Stage2ProviderSettingsKeyUnavailable as exc:
+        write_anomaly_llm_model_settings(db, [item.model_dump() for item in payloads])
+    except AnomalyLlmModelSettingsKeyUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Stage2ProviderSettingsDecryptError as exc:
+    except AnomalyLlmModelSettingsDecryptError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     db.commit()
-    return _get_stage2_provider_response(db)
+    return _get_anomaly_llm_model_provider_response(db)
 
 
-def _build_stage2_provider_test_result(
+def save_anomaly_llm_model_provider_item(
     db: Session,
-    payload: Stage2ProviderSettings,
-) -> Stage2ProviderSettingsTestResponse:
+    payload: AnomalyLlmModelSettings,
+    *,
+    provider_key: str,
+) -> AnomalyLlmModelSettings:
+    if payload.provider_key != provider_key:
+        raise HTTPException(status_code=400, detail="provider key mismatch")
+    existing = _get_anomaly_llm_model_provider_response(db)
+    next_payloads: list[AnomalyLlmModelSettings] = []
+    matched = False
+    for item in existing:
+        if item.provider_key == provider_key:
+            matched = True
+            next_payloads.append(payload)
+            continue
+        next_payloads.append(item)
+    if not matched:
+        next_payloads.append(payload)
+    persisted = _save_anomaly_llm_model_settings(db, next_payloads)
+    saved = next((item for item in persisted if item.provider_key == provider_key), None)
+    if saved is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"anomaly LLM provider {provider_key} not found after save",
+        )
+    return saved
+
+
+def _build_anomaly_llm_model_provider_test_result(
+    db: Session,
+    payload: AnomalyLlmModelSettings,
+) -> AnomalyLlmModelSettingsTestResponse:
     provider_key = payload.provider_key
     try:
-        existing_payload = get_effective_stage2_provider_settings(db, provider_key)
-    except Stage2ProviderSettingsKeyUnavailable as exc:
+        existing_payload = get_effective_anomaly_llm_model_settings(db, provider_key)
+    except AnomalyLlmModelSettingsKeyUnavailable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except Stage2ProviderSettingsDecryptError as exc:
+    except AnomalyLlmModelSettingsDecryptError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     try:
-        normalized_payload = merge_stage2_provider_settings_draft(
+        normalized_payload = merge_anomaly_llm_model_settings_draft(
             provider_key,
             payload.model_dump(),
             existing_payload=existing_payload,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    normalized = Stage2ProviderSettings.model_validate(normalized_payload)
+    normalized = AnomalyLlmModelSettings.model_validate(normalized_payload)
     secret_values = [
         str(normalized.api_key or "").strip(),
         str(normalized.auth_token or "").strip(),
@@ -511,6 +1185,10 @@ def _build_stage2_provider_test_result(
 
     detail = ""
     ok = False
+    request_reached_provider = False
+    normalized_result_returned = False
+    provider_response_validated = False
+    provider_response_shape: str | None = None
     last_tested_at = None
     try:
         if provider_key == PROVIDER_KEY_CLAUDE_COMPATIBLE:
@@ -540,7 +1218,7 @@ def _build_stage2_provider_test_result(
                 anomaly_activity_list=["presence resume"],
                 asset_references=[],
             )
-            send_claude_anomaly_request(
+            raw_result = send_claude_anomaly_request(
                 {
                     "enabled": normalized.enabled,
                     "base_url": normalized.base_url,
@@ -552,6 +1230,11 @@ def _build_stage2_provider_test_result(
                 },
                 request_payload,
             )
+            request_reached_provider = True
+            validate_claude_compatible_smoke_response(raw_result)
+            normalized_result_returned = True
+            provider_response_validated = True
+            provider_response_shape = "claude_compatible_anomaly_result"
         elif provider_key == PROVIDER_KEY_LAURETTA:
             body = {
                 "camera_id": 1,
@@ -571,7 +1254,12 @@ def _build_stage2_provider_test_result(
                 method="POST",
             )
             with urllib_request.urlopen(req, timeout=normalized.timeout_seconds) as response:
-                json.loads(response.read().decode("utf-8") or "{}")
+                raw_result = json.loads(response.read().decode("utf-8") or "{}")
+            request_reached_provider = True
+            validate_lauretta_smoke_response(raw_result)
+            normalized_result_returned = True
+            provider_response_validated = True
+            provider_response_shape = "lauretta_anomaly_submission"
         else:
             request_body = {
                 "model": normalized.model_name,
@@ -589,42 +1277,123 @@ def _build_stage2_provider_test_result(
                 method="POST",
             )
             with urllib_request.urlopen(req, timeout=normalized.timeout_seconds) as response:
-                json.loads(response.read().decode("utf-8") or "{}")
+                raw_result = json.loads(response.read().decode("utf-8") or "{}")
+            request_reached_provider = True
+            validate_openai_compatible_smoke_response(raw_result)
+            normalized_result_returned = True
+            provider_response_validated = True
+            provider_response_shape = "openai_chat_completions"
         ok = True
         detail = "Connection test succeeded."
-        record_stage2_provider_test_status(db, provider_key, status="ok", message=detail)
+        record_anomaly_llm_model_provider_test_status(db, provider_key, status="ok", message=detail)
         db.commit()
-        refreshed = get_effective_stage2_provider_settings(db, provider_key)
+        refreshed = get_effective_anomaly_llm_model_settings(db, provider_key)
         last_tested_at = refreshed.get("last_tested_at")
     except urllib_error.HTTPError as exc:
         response_body = exc.read(4096).decode("utf-8", errors="replace")
         detail = _sanitize_detail(f"HTTP {exc.code} {response_body}".strip())
-        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        record_anomaly_llm_model_provider_test_status(db, provider_key, status="error", message=detail)
         db.commit()
     except urllib_error.URLError as exc:
         detail = _sanitize_detail(str(getattr(exc, "reason", exc)))
-        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        record_anomaly_llm_model_provider_test_status(db, provider_key, status="error", message=detail)
         db.commit()
     except Exception as exc:
         detail = _sanitize_detail(str(exc))
-        record_stage2_provider_test_status(db, provider_key, status="error", message=detail)
+        record_anomaly_llm_model_provider_test_status(db, provider_key, status="error", message=detail)
         db.commit()
     if last_tested_at is None:
         try:
-            refreshed = get_effective_stage2_provider_settings(db, provider_key)
+            refreshed = get_effective_anomaly_llm_model_settings(db, provider_key)
             last_tested_at = refreshed.get("last_tested_at")
         except Exception:
             last_tested_at = None
-    return Stage2ProviderSettingsTestResponse(
+    return AnomalyLlmModelSettingsTestResponse(
         provider_key=provider_key,
         ok=ok,
         detail=detail,
         effective_base_url=normalized.base_url,
         effective_model_name=normalized.model_name,
         secret_present=normalized.secret_present,
+        request_reached_provider=request_reached_provider,
+        normalized_result_returned=normalized_result_returned,
+        provider_response_validated=provider_response_validated,
+        provider_response_shape=provider_response_shape,
         last_test_status="ok" if ok else "error",
         last_tested_at=last_tested_at,
     )
+
+
+def detect_nvidia_gpu_path(snapshot: dict | None = None) -> dict[str, Any]:
+    snapshot = snapshot or {}
+    details: dict[str, Any] = {
+        "resource_monitor_gpus": snapshot.get("gpus") or [],
+        "dev_nvidia_present": any(Path("/dev").glob("nvidia*")) if Path("/dev").exists() else False,
+        "nvidia_smi_available": False,
+        "ffmpeg_available": shutil.which("ffmpeg") is not None,
+        "ffmpeg_hwaccels": [],
+    }
+    nvidia_smi = shutil.which("nvidia-smi")
+    if nvidia_smi:
+        try:
+            completed = subprocess.run(
+                [nvidia_smi, "-L"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            details["nvidia_smi_available"] = completed.returncode == 0
+            details["nvidia_smi_output"] = completed.stdout.strip()[:500]
+            details["nvidia_smi_error"] = completed.stderr.strip()[:500]
+        except Exception as exc:
+            details["nvidia_smi_error"] = str(exc)
+    ffmpeg_binary = shutil.which("ffmpeg")
+    if ffmpeg_binary:
+        try:
+            completed = subprocess.run(
+                [ffmpeg_binary, "-hide_banner", "-hwaccels"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+            hwaccels = [
+                line.strip()
+                for line in completed.stdout.splitlines()
+                if line.strip() and not line.lower().startswith("hardware acceleration")
+            ]
+            details["ffmpeg_hwaccels"] = hwaccels
+        except Exception as exc:
+            details["ffmpeg_hwaccels_error"] = str(exc)
+    details["gpu_used"] = bool(
+        details["resource_monitor_gpus"]
+        or details["dev_nvidia_present"]
+        or details["nvidia_smi_available"]
+    )
+    details["cuda_video_path_available"] = any(
+        value.lower() in {"cuda", "cuvid", "nvdec", "nvenc"}
+        for value in details["ffmpeg_hwaccels"]
+    )
+    return details
+
+
+def select_anomaly_llm_model_provider_for_smoke(db: Session, provider_key: str | None = None) -> dict[str, Any]:
+    candidate_keys = [provider_key] if provider_key else list(ADMIN_DIAGNOSTIC_PROVIDER_KEYS)
+    last_error: Exception | None = None
+    for key in candidate_keys:
+        if not key:
+            continue
+        try:
+            payload = get_effective_anomaly_llm_model_settings(db, key)
+        except Exception as exc:
+            last_error = exc
+            continue
+        if provider_key or payload.get("enabled") or payload.get("secret_present") or payload.get("auth_optional"):
+            return payload
+    if last_error:
+        raise last_error
+    raise ValueError("no Anomaly LLM model provider profile is configured for diagnostics")
 
 
 def read_connector_zoo_repo_settings(db: Session) -> ConnectorZooRepoSettings:
@@ -835,9 +1604,12 @@ state_lock = Lock()
 source_template_columns_lock = Lock()
 plugin_tables_lock = Lock()
 registry_bundle_sync_lock = Lock()
+dependency_status_lock = Lock()
 source_template_columns_ready = False
 plugin_tables_ready = False
 last_registry_bundle_sync_signature = None
+dependency_status_cache: dict[str, Any] | None = None
+DEPENDENCY_STATUS_CACHE_TTL_SECONDS = float(os.environ.get("DEPENDENCY_STATUS_CACHE_TTL_SECONDS", "5"))
 
 status = SystemStatus.IDLE
 frame_id = None
@@ -920,18 +1692,31 @@ def check_ffmpeg_dependency():
 
 
 def collect_dependency_status():
-    checks = {}
-    for name, checker in (
-        ("database", check_database_dependency),
-        ("rabbitmq", check_rabbitmq_dependency),
-        ("ffmpeg", check_ffmpeg_dependency),
-    ):
-        try:
-            checker()
-            checks[name] = (True, None)
-        except Exception as exc:
-            checks[name] = (False, str(exc))
-    return normalize_dependency_status(checks)
+    global dependency_status_cache
+    now = time.monotonic()
+    with dependency_status_lock:
+        if (
+            dependency_status_cache is not None
+            and now - float(dependency_status_cache.get("monotonic", 0.0)) < DEPENDENCY_STATUS_CACHE_TTL_SECONDS
+        ):
+            return dict(dependency_status_cache["status"])
+        checks = {}
+        for name, checker in (
+            ("database", check_database_dependency),
+            ("rabbitmq", check_rabbitmq_dependency),
+            ("ffmpeg", check_ffmpeg_dependency),
+        ):
+            try:
+                checker()
+                checks[name] = (True, None)
+            except Exception as exc:
+                checks[name] = (False, str(exc))
+        normalized = normalize_dependency_status(checks)
+        dependency_status_cache = {
+            "monotonic": now,
+            "status": normalized,
+        }
+        return dict(normalized)
 
 
 def merge_hybrid_operator_status(
@@ -1442,7 +2227,10 @@ def _sync_registry_bundle_to_db_if_needed(
     signature = _build_registry_bundle_sync_signature(bundle, source_rows)
     if last_registry_bundle_sync_signature == signature:
         return
-    with registry_bundle_sync_lock:
+    if not registry_bundle_sync_lock.acquire(blocking=False):
+        logger.info("Registry metadata sync already running; serving in-memory registry bundle")
+        return
+    try:
         if last_registry_bundle_sync_signature == signature:
             return
         synced_source_rows = source_rows if source_rows is not None else get_active_source_rows(db)
@@ -1462,6 +2250,8 @@ def _sync_registry_bundle_to_db_if_needed(
             if getattr(source_row, "id", None) is not None:
                 db.refresh(source_row)
         last_registry_bundle_sync_signature = signature
+    finally:
+        registry_bundle_sync_lock.release()
 
 
 def get_registry_bundle(
@@ -1976,6 +2766,7 @@ def build_model_registration_responses(bundle: dict):
                     healthcheck=dict(registration.get("healthcheck") or {}),
                     requires_gpu=bool(registration.get("requires_gpu")),
                     resource_profile=dict(registration.get("resource_profile") or {}),
+                    ui=dict(registration.get("ui") or {}),
                     source_path=registration.get("source_path"),
                 )
             )
@@ -2250,6 +3041,67 @@ def append_source(db: Session, source: InputSource):
         anomaly_stage_2_model_key=source.anomaly_stage_2_model_key,
     )
     return upsert_sources_and_build_response(db, [*existing_sources, new_source])
+
+
+def save_source_item(
+    db: Session,
+    source: InputSource,
+    *,
+    source_id: int | None = None,
+) -> InputSource:
+    snapshot = get_current_resource_snapshot(db)
+    existing_sources = build_source_responses(db, snapshot)
+    existing_ids = {item.id for item in existing_sources if item.id is not None}
+    if source_id is not None and source.id not in {None, source_id}:
+        raise HTTPException(status_code=400, detail="source id mismatch")
+    next_sources: list[InputSource] = []
+    matched = False
+    for existing_source in existing_sources:
+        if source_id is not None and existing_source.id == source_id:
+            matched = True
+            next_sources.append(
+                source.model_copy(
+                    update={
+                        "id": source_id,
+                        "order": existing_source.order,
+                    }
+                )
+            )
+            continue
+        next_sources.append(existing_source)
+    if source_id is None:
+        next_sources.append(
+            source.model_copy(
+                update={
+                    "id": None,
+                    "order": len(existing_sources),
+                }
+            )
+        )
+    elif not matched:
+        raise HTTPException(status_code=404, detail=f"source {source_id} not found")
+    persisted_sources = upsert_sources_and_build_response(db, next_sources)
+    if source_id is None:
+        created = [
+            item for item in persisted_sources if item.id is not None and item.id not in existing_ids
+        ]
+        if created:
+            return created[-1]
+        return persisted_sources[-1]
+    saved = next((item for item in persisted_sources if item.id == source_id), None)
+    if saved is None:
+        raise HTTPException(status_code=404, detail=f"source {source_id} not found after save")
+    return saved
+
+
+def delete_source_item(db: Session, source_id: int):
+    snapshot = get_current_resource_snapshot(db)
+    existing_sources = build_source_responses(db, snapshot)
+    next_sources = [item for item in existing_sources if item.id != source_id]
+    if len(next_sources) == len(existing_sources):
+        raise HTTPException(status_code=404, detail=f"source {source_id} not found")
+    upsert_sources_and_build_response(db, next_sources)
+    return {"detail": "source deleted"}
 
 
 def _load_yaml_text(path: Path) -> str:
@@ -2800,6 +3652,60 @@ def replace_trigger_rules(db: Session, rules: list[TriggerRule]):
     return build_trigger_rule_responses(db)
 
 
+def save_trigger_rule_item(
+    db: Session,
+    rule: TriggerRule,
+    *,
+    rule_id: int | None = None,
+) -> TriggerRule:
+    existing_rules = build_trigger_rule_responses(db)
+    existing_ids = {item.id for item in existing_rules if item.id is not None}
+    if rule_id is not None and rule.id not in {None, rule_id}:
+        raise HTTPException(status_code=400, detail="rule id mismatch")
+    next_rules: list[TriggerRule] = []
+    matched = False
+    for existing_rule in existing_rules:
+        if rule_id is not None and existing_rule.id == rule_id:
+            matched = True
+            next_rules.append(
+                rule.model_copy(
+                    update={
+                        "id": rule_id,
+                    }
+                )
+            )
+            continue
+        next_rules.append(existing_rule)
+    if rule_id is None:
+        next_rules.append(rule.model_copy(update={"id": None}))
+    elif not matched:
+        raise HTTPException(status_code=404, detail=f"trigger rule {rule_id} not found")
+    persisted_rules = replace_trigger_rules(db, next_rules)
+    if rule_id is None:
+        created = [
+            item for item in persisted_rules if item.id is not None and item.id not in existing_ids
+        ]
+        if created:
+            return created[-1]
+        return persisted_rules[-1]
+    saved = next((item for item in persisted_rules if item.id == rule_id), None)
+    if saved is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"trigger rule {rule_id} not found after save",
+        )
+    return saved
+
+
+def delete_trigger_rule_item(db: Session, rule_id: int):
+    existing_rules = build_trigger_rule_responses(db)
+    next_rules = [item for item in existing_rules if item.id != rule_id]
+    if len(next_rules) == len(existing_rules):
+        raise HTTPException(status_code=404, detail=f"trigger rule {rule_id} not found")
+    replace_trigger_rules(db, next_rules)
+    return {"detail": "trigger rule deleted"}
+
+
 def get_connector_endpoint_rows(db: Session, connector_key: str | None = None):
     return list_connector_endpoint_rows(db, connector_key=connector_key, enabled_only=False)
 
@@ -2886,6 +3792,70 @@ def replace_connector_endpoints(
             row.deleted_at = datetime.utcnow()
     db.commit()
     return build_connector_endpoint_responses(db, connector_key=connector_key)
+
+
+def save_connector_endpoint_item(
+    db: Session,
+    endpoint: ConnectorEndpoint,
+    *,
+    endpoint_id: int | None = None,
+    connector_key: str | None = None,
+) -> ConnectorEndpoint:
+    existing_endpoints = build_connector_endpoint_responses(db, connector_key=connector_key)
+    existing_ids = {item.id for item in existing_endpoints if item.id is not None}
+    if endpoint_id is not None and endpoint.id not in {None, endpoint_id}:
+        raise HTTPException(status_code=400, detail="connector endpoint id mismatch")
+    next_endpoints: list[ConnectorEndpoint] = []
+    matched = False
+    for existing_endpoint in existing_endpoints:
+        if endpoint_id is not None and existing_endpoint.id == endpoint_id:
+            matched = True
+            next_endpoints.append(endpoint.model_copy(update={"id": endpoint_id}))
+            continue
+        next_endpoints.append(existing_endpoint)
+    if endpoint_id is None:
+        next_endpoints.append(endpoint.model_copy(update={"id": None}))
+    elif not matched:
+        raise HTTPException(
+            status_code=404,
+            detail=f"connector endpoint {endpoint_id} not found",
+        )
+    persisted_endpoints = replace_connector_endpoints(
+        db,
+        next_endpoints,
+        connector_key=connector_key,
+    )
+    if endpoint_id is None:
+        created = [
+            item for item in persisted_endpoints if item.id is not None and item.id not in existing_ids
+        ]
+        if created:
+            return created[-1]
+        return persisted_endpoints[-1]
+    saved = next((item for item in persisted_endpoints if item.id == endpoint_id), None)
+    if saved is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"connector endpoint {endpoint_id} not found after save",
+        )
+    return saved
+
+
+def delete_connector_endpoint_item(
+    db: Session,
+    endpoint_id: int,
+    *,
+    connector_key: str | None = None,
+):
+    existing_endpoints = build_connector_endpoint_responses(db, connector_key=connector_key)
+    next_endpoints = [item for item in existing_endpoints if item.id != endpoint_id]
+    if len(next_endpoints) == len(existing_endpoints):
+        raise HTTPException(
+            status_code=404,
+            detail=f"connector endpoint {endpoint_id} not found",
+        )
+    replace_connector_endpoints(db, next_endpoints, connector_key=connector_key)
+    return {"detail": "connector endpoint deleted"}
 
 
 def create_connector_endpoint_row(
@@ -3005,6 +3975,64 @@ def replace_telegram_trigger_subscriptions(
     return build_telegram_trigger_subscription_responses(db)
 
 
+def save_telegram_trigger_subscription_item(
+    db: Session,
+    subscription: TelegramTriggerSubscription,
+    *,
+    subscription_id: int | None = None,
+) -> TelegramTriggerSubscription:
+    existing_subscriptions = build_telegram_trigger_subscription_responses(db)
+    existing_ids = {item.id for item in existing_subscriptions if item.id is not None}
+    if subscription_id is not None and subscription.id not in {None, subscription_id}:
+        raise HTTPException(status_code=400, detail="telegram subscription id mismatch")
+    next_subscriptions: list[TelegramTriggerSubscription] = []
+    matched = False
+    for existing_subscription in existing_subscriptions:
+        if subscription_id is not None and existing_subscription.id == subscription_id:
+            matched = True
+            next_subscriptions.append(
+                subscription.model_copy(update={"id": subscription_id})
+            )
+            continue
+        next_subscriptions.append(existing_subscription)
+    if subscription_id is None:
+        next_subscriptions.append(subscription.model_copy(update={"id": None}))
+    elif not matched:
+        raise HTTPException(
+            status_code=404,
+            detail=f"telegram subscription {subscription_id} not found",
+        )
+    persisted_subscriptions = replace_telegram_trigger_subscriptions(db, next_subscriptions)
+    if subscription_id is None:
+        created = [
+            item for item in persisted_subscriptions if item.id is not None and item.id not in existing_ids
+        ]
+        if created:
+            return created[-1]
+        return persisted_subscriptions[-1]
+    saved = next((item for item in persisted_subscriptions if item.id == subscription_id), None)
+    if saved is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"telegram subscription {subscription_id} not found after save",
+        )
+    return saved
+
+
+def delete_telegram_trigger_subscription_item(db: Session, subscription_id: int):
+    existing_subscriptions = build_telegram_trigger_subscription_responses(db)
+    next_subscriptions = [
+        item for item in existing_subscriptions if item.id != subscription_id
+    ]
+    if len(next_subscriptions) == len(existing_subscriptions):
+        raise HTTPException(
+            status_code=404,
+            detail=f"telegram subscription {subscription_id} not found",
+        )
+    replace_telegram_trigger_subscriptions(db, next_subscriptions)
+    return {"detail": "telegram subscription deleted"}
+
+
 def get_apple_message_trigger_subscription_rows(db: Session):
     ensure_apple_message_subscription_tables()
     return get_connector_endpoint_rows(db, CONNECTOR_KEY_APPLE_MESSAGES)
@@ -3067,6 +4095,64 @@ def replace_apple_message_trigger_subscriptions(
             row.deleted_at = datetime.utcnow()
     db.commit()
     return build_apple_message_trigger_subscription_responses(db)
+
+
+def save_apple_message_trigger_subscription_item(
+    db: Session,
+    subscription: AppleMessageTriggerSubscription,
+    *,
+    subscription_id: int | None = None,
+) -> AppleMessageTriggerSubscription:
+    existing_subscriptions = build_apple_message_trigger_subscription_responses(db)
+    existing_ids = {item.id for item in existing_subscriptions if item.id is not None}
+    if subscription_id is not None and subscription.id not in {None, subscription_id}:
+        raise HTTPException(status_code=400, detail="apple messages subscription id mismatch")
+    next_subscriptions: list[AppleMessageTriggerSubscription] = []
+    matched = False
+    for existing_subscription in existing_subscriptions:
+        if subscription_id is not None and existing_subscription.id == subscription_id:
+            matched = True
+            next_subscriptions.append(
+                subscription.model_copy(update={"id": subscription_id})
+            )
+            continue
+        next_subscriptions.append(existing_subscription)
+    if subscription_id is None:
+        next_subscriptions.append(subscription.model_copy(update={"id": None}))
+    elif not matched:
+        raise HTTPException(
+            status_code=404,
+            detail=f"apple messages subscription {subscription_id} not found",
+        )
+    persisted_subscriptions = replace_apple_message_trigger_subscriptions(db, next_subscriptions)
+    if subscription_id is None:
+        created = [
+            item for item in persisted_subscriptions if item.id is not None and item.id not in existing_ids
+        ]
+        if created:
+            return created[-1]
+        return persisted_subscriptions[-1]
+    saved = next((item for item in persisted_subscriptions if item.id == subscription_id), None)
+    if saved is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"apple messages subscription {subscription_id} not found after save",
+        )
+    return saved
+
+
+def delete_apple_message_trigger_subscription_item(db: Session, subscription_id: int):
+    existing_subscriptions = build_apple_message_trigger_subscription_responses(db)
+    next_subscriptions = [
+        item for item in existing_subscriptions if item.id != subscription_id
+    ]
+    if len(next_subscriptions) == len(existing_subscriptions):
+        raise HTTPException(
+            status_code=404,
+            detail=f"apple messages subscription {subscription_id} not found",
+        )
+    replace_apple_message_trigger_subscriptions(db, next_subscriptions)
+    return {"detail": "apple messages subscription deleted"}
 
 
 def get_claude_api_connector_rows(db: Session):
@@ -4348,33 +5434,33 @@ def test_settings_claude_anomaly_model(
 
 
 @external_router.get(
-    "/settings/stage2-provider-settings",
-    response_model=list[Stage2ProviderSettings],
+    "/settings/anomaly-llm-model-settings",
+    response_model=list[AnomalyLlmModelSettings],
 )
-def get_settings_stage2_provider_settings(db: Session = Depends(get_db)):
-    return _get_stage2_provider_response(db)
+def get_settings_anomaly_llm_model_settings(db: Session = Depends(get_db)):
+    return _get_anomaly_llm_model_provider_response(db)
 
 
 @external_router.put(
-    "/settings/stage2-provider-settings",
-    response_model=list[Stage2ProviderSettings],
+    "/settings/anomaly-llm-model-settings",
+    response_model=list[AnomalyLlmModelSettings],
 )
-def update_settings_stage2_provider_settings(
-    payload: list[Stage2ProviderSettings],
+def update_settings_anomaly_llm_model_settings(
+    payload: list[AnomalyLlmModelSettings],
     db: Session = Depends(get_db),
 ):
-    return _save_stage2_provider_settings(db, payload)
+    return _save_anomaly_llm_model_settings(db, payload)
 
 
 @external_router.post(
-    "/settings/stage2-provider-settings/test",
-    response_model=Stage2ProviderSettingsTestResponse,
+    "/settings/anomaly-llm-model-settings/test",
+    response_model=AnomalyLlmModelSettingsTestResponse,
 )
-def test_settings_stage2_provider_settings(
-    payload: Stage2ProviderSettings,
+def test_settings_anomaly_llm_model_settings(
+    payload: AnomalyLlmModelSettings,
     db: Session = Depends(get_db),
 ):
-    return _build_stage2_provider_test_result(db, payload)
+    return _build_anomaly_llm_model_provider_test_result(db, payload)
 
 
 @external_router.get("/settings/connector-zoo-repo", response_model=ConnectorZooRepoSettings)
@@ -4917,6 +6003,245 @@ def delete_settings_uploaded_source(upload_id: int, db: Session = Depends(get_db
     return delete_uploaded_source_record(upload_id, db)
 
 
+@external_router.post(
+    "/v1/hearthlight/anomaly-submissions",
+    response_model=LaurettaAnomalySubmissionResponse,
+)
+def create_hearthlight_anomaly_submission(
+    payload: LaurettaAnomalySubmissionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    ensure_hearthlight_ingress_tables()
+    submission_id = f"sub_{uuid.uuid4().hex}"
+    bucket = select_submission_bucket(payload)
+    token_units = token_units_for_bucket(bucket)
+    client = resolve_ingress_client(db, request)
+    client_key_hash = client.client_key_hash if client is not None else hash_ingress_client_key(request)
+    enforce_ingress_quota(db=db, client=client, bucket=bucket, token_units=token_units)
+    result_payload = {
+        "title": "Submission accepted",
+        "category": "queued",
+        "score": 0.0,
+        "reasoning": "Persisted by Hearthlight ingress for asynchronous anomaly processing.",
+        "visible_items": [],
+        "visible_activities": [],
+    }
+    row = SQLModels.HearthlightSubmission(
+        submission_id=submission_id,
+        status="completed",
+        camera_id=payload.camera_id,
+        user_id=payload.user_id,
+        client_key_hash=client_key_hash,
+        prompt_raw_json=json.dumps(payload.model_dump(mode="json"), sort_keys=True),
+        prompt_text=payload.prompt_text,
+        expected_results_text=payload.expected_results_text,
+        metadata_json=json.dumps(dict(payload.metadata or {}), sort_keys=True),
+        result_json=json.dumps(result_payload, sort_keys=True),
+        processed_bucket=bucket,
+        token_units_reserved=token_units,
+        token_units_final=token_units,
+    )
+    db.add(row)
+    asset_rows = store_submission_assets(db=db, submission_id=submission_id, payload=payload)
+    db.add(
+        SQLModels.UsageLedger(
+            submission_id=submission_id,
+            client_key_hash=client_key_hash,
+            bucket=bucket,
+            token_units=token_units,
+            event_type="reservation",
+            metadata_json=json.dumps({"strict": True}, sort_keys=True),
+        )
+    )
+    db.add(
+        SQLModels.UsageLedger(
+            submission_id=submission_id,
+            client_key_hash=client_key_hash,
+            bucket=bucket,
+            token_units=token_units,
+            event_type="final",
+            metadata_json=json.dumps({"actual_processed_bucket": bucket}, sort_keys=True),
+        )
+    )
+    dispatch_ingress_submission_to_provider(
+        db=db,
+        row=row,
+        payload=payload,
+        provider_key=choose_ingress_provider_key(payload),
+    )
+    db.commit()
+    db.refresh(row)
+    for asset in asset_rows:
+        db.refresh(asset)
+    return build_lauretta_submission_response(row, asset_rows)
+
+
+@external_router.get(
+    "/v1/hearthlight/anomaly-submissions/{submission_id}",
+    response_model=LaurettaAnomalySubmissionResponse,
+)
+def get_hearthlight_anomaly_submission(
+    submission_id: str,
+    db: Session = Depends(get_db),
+):
+    ensure_hearthlight_ingress_tables()
+    row = (
+        db.query(SQLModels.HearthlightSubmission)
+        .filter_by(submission_id=submission_id, is_deleted=False)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="submission not found")
+    assets = (
+        db.query(SQLModels.SubmissionAsset)
+        .filter_by(submission_id=submission_id, is_deleted=False)
+        .order_by(SQLModels.SubmissionAsset.id.asc())
+        .all()
+    )
+    return build_lauretta_submission_response(row, assets)
+
+
+@external_router.get("/v1/hearthlight/anomaly-submissions/{submission_id}/assets/{asset_index}")
+def get_hearthlight_anomaly_submission_asset(
+    submission_id: str,
+    asset_index: int,
+    db: Session = Depends(get_db),
+):
+    ensure_hearthlight_ingress_tables()
+    if asset_index < 0:
+        raise HTTPException(status_code=404, detail="asset not found")
+    row = (
+        db.query(SQLModels.HearthlightSubmission)
+        .filter_by(submission_id=submission_id, is_deleted=False)
+        .first()
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="submission not found")
+    assets = (
+        db.query(SQLModels.SubmissionAsset)
+        .filter_by(submission_id=submission_id, is_deleted=False)
+        .order_by(SQLModels.SubmissionAsset.id.asc())
+        .all()
+    )
+    if asset_index >= len(assets):
+        raise HTTPException(status_code=404, detail="asset not found")
+    asset = assets[asset_index]
+    try:
+        content = read_submission_object(asset.object_key)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="asset object not found") from exc
+    except Exception as exc:
+        logger.exception("Failed to read Hearthlight submission asset")
+        raise HTTPException(status_code=500, detail="failed to read submission asset") from exc
+    return Response(
+        content=content,
+        media_type=asset.media_type or "application/octet-stream",
+        headers={
+            "X-Hearthlight-Asset-Checksum-SHA256": asset.checksum_sha256,
+            "X-Hearthlight-Asset-Object-Key": asset.object_key,
+        },
+    )
+
+
+@external_router.get("/v1/admin/diagnostics/runtime")
+def get_admin_diagnostics_runtime(db: Session = Depends(get_db)):
+    snapshot = get_current_resource_snapshot(db)
+    dependency_status = snapshot.get("dependency_status") or collect_dependency_status()
+    source_rows = get_active_source_rows(db)
+    bundle = get_registry_bundle(db, source_rows=source_rows)
+    try:
+        provider_settings = _get_anomaly_llm_model_provider_response(db)
+        provider_settings_error = None
+    except HTTPException as exc:
+        provider_settings = []
+        provider_settings_error = str(exc.detail)
+    return {
+        "ok": True,
+        "status": snapshot.get("system_status") or snapshot.get("status") or "unknown",
+        "worker_runtime": get_worker_runtime_mode(),
+        "runtime_profile": _runtime_profile_diagnostics(),
+        "dependencies": dependency_status,
+        "module_status": snapshot.get("module_status") or {},
+        "resources": {
+            "gpus": snapshot.get("gpus") or [],
+            "cpu_percent": snapshot.get("cpu_percent"),
+            "memory_percent": snapshot.get("memory_percent"),
+            "disk_percent": snapshot.get("disk_percent"),
+        },
+        "model_zoo": (bundle.get("model_zoo") or {}) if isinstance(bundle, dict) else {},
+        "anomaly_llm_model_settings": provider_settings,
+        "anomaly_llm_model_settings_error": provider_settings_error,
+    }
+
+
+@external_router.post("/v1/admin/diagnostics/media-smoke")
+def post_admin_diagnostics_media_smoke(db: Session = Depends(get_db)):
+    snapshot = get_current_resource_snapshot(db)
+    gpu_details = detect_nvidia_gpu_path(snapshot)
+    return {
+        "ok": bool(gpu_details["ffmpeg_available"]),
+        "status": "ok" if gpu_details["ffmpeg_available"] else "error",
+        "ffmpeg_present": bool(gpu_details["ffmpeg_available"]),
+        "gpu_used": bool(gpu_details["gpu_used"]),
+        "cuda_video_path_available": bool(gpu_details["cuda_video_path_available"]),
+        "details": gpu_details,
+    }
+
+
+@external_router.post("/v1/admin/diagnostics/provider-smoke")
+def post_admin_diagnostics_provider_smoke(
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+):
+    payload = payload or {}
+    provider_key = str(payload.get("provider_key") or "").strip() or None
+    try:
+        provider_payload = select_anomaly_llm_model_provider_for_smoke(db, provider_key)
+    except AnomalyLlmModelSettingsKeyUnavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except AnomalyLlmModelSettingsDecryptError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result = _build_anomaly_llm_model_provider_test_result(
+        db,
+        AnomalyLlmModelSettings.model_validate(provider_payload),
+    )
+    return {
+        "ok": bool(result.ok),
+        "status": "ok" if result.ok else "error",
+        "provider_key": result.provider_key,
+        "detail": result.detail,
+        "effective_base_url": result.effective_base_url,
+        "effective_model_name": result.effective_model_name,
+        "secret_present": result.secret_present,
+        "request_reached_provider": result.request_reached_provider,
+        "normalized_result_returned": result.normalized_result_returned,
+        "provider_response_validated": result.provider_response_validated,
+        "provider_response_shape": result.provider_response_shape,
+        "last_test_status": result.last_test_status,
+        "last_tested_at": result.last_tested_at,
+    }
+
+
+@external_router.post("/v1/admin/diagnostics/end-to-end-smoke")
+def post_admin_diagnostics_end_to_end_smoke(
+    payload: dict[str, Any] | None = None,
+    db: Session = Depends(get_db),
+):
+    media = post_admin_diagnostics_media_smoke(db)
+    provider = post_admin_diagnostics_provider_smoke(payload or {}, db)
+    ok = bool(media.get("ok")) and bool(provider.get("ok"))
+    return {
+        "ok": ok,
+        "status": "ok" if ok else "error",
+        "gpu_used": bool(media.get("gpu_used")),
+        "media_smoke": media,
+        "provider_smoke": provider,
+    }
+
+
 @external_router.get("/system/resources", response_model=ResourceSnapshot)
 def get_system_resources(db: Session = Depends(get_db)):
     snapshot = get_current_resource_snapshot(db)
@@ -5167,7 +6492,7 @@ def get_monitoring_overview(
                 + [event.model_dump() for event in build_resource_event_records(db, limit)]
             )[: (limit or 20)]
         ],
-        stage2_provider_settings=_get_stage2_provider_response(db),
+        anomaly_llm_model_settings=_get_anomaly_llm_model_provider_response(db),
         feed_endpoints=[
             FeedEndpoint.model_validate(item) for item in build_feed_endpoint_catalog()
         ],

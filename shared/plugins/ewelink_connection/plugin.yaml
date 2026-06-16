@@ -1,0 +1,8 @@
+key: ewelink_connection
+label: eWeLink Smart Home Connection
+version: "0.8.2"
+provider: eWeLink
+description: Optional eWeLink connector plugin for switch, light, and scene control.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

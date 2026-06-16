@@ -85,7 +85,7 @@ flowchart LR
 
 - `webapp` is both the operator-facing control plane and the API surface for external systems.
 - Source definitions, uploaded media, resource telemetry, model registrations, model bindings,
-  anomaly prompt settings, Stage 2 provider settings, and alert rules all persist under the
+  anomaly label settings, Anomaly LLM model settings, and alert rules all persist under the
   Postgres `control` schema.
 - Runtime entities such as runs, incidents, entities, journey nodes, recordings, frames, and
   anomaly events persist under `runtime`.
@@ -219,16 +219,22 @@ Notable route groups:
 - `/start`, `/stop`, `/status`
 - `/sources`, `/sources/uploads`, `/system/resources`
 - `/model-options`, `/model-bindings`
-- `/settings/stage2-provider-settings`
+- `/settings/anomaly-llm-model-settings`
+- `/v1/hearthlight/anomaly-submissions`: Lauretta-compatible Stage 2 ingress for prompt/image
+  submissions. The endpoint persists prompt fields separately, stores submitted assets under the
+  configured object-store directory, writes reservation/final usage-ledger rows, and exposes
+  `GET /v1/hearthlight/anomaly-submissions/{submission_id}` for status/readback. Normal submissions
+  attempt secure Anomaly LLM model provider dispatch when a provider profile is configured; benchmark
+  queue-only submissions set `metadata.queue_only=true` to prove ingress without provider latency.
 
-## Stage 2 Provider Settings
+## Anomaly LLM Model Settings
 
-External Stage 2 anomaly adapters now resolve their connection details through a
+External Anomaly LLM adapters now resolve their connection details through a
 workspace-level secure settings layer.
 
 Control-plane persistence:
 
-- `control.stage2_provider_setting`
+- `control.anomaly_llm_model_setting`
 
 Stored fields:
 
@@ -239,12 +245,12 @@ Stored fields:
 
 Runtime resolution order:
 
-1. saved secure provider settings
+1. saved secure Anomaly LLM model settings
 2. env-based bootstrap overrides
 3. model-registry runtime defaults
 
 This keeps `/model-bindings` responsible for model-key selection while secure
-provider settings handle the mutable endpoint and credential surface needed for
+Anomaly LLM model settings handle the mutable endpoint and credential surface needed for
 operators to rotate keys or move endpoints without editing YAML or `.env`
 files.
 - `/settings/appearance`

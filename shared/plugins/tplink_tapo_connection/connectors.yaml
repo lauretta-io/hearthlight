@@ -1,0 +1,26 @@
+tplink_tapo:
+  label: TP-Link Tapo Connection
+  description: Smart camera, plug, bulb, and device control for TP-Link Tapo environments.
+  category: iot
+  enabled: true
+  requirements:
+    - base-url
+    - access-token
+    - device-id
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: access_token
+      label: Access Token
+      secret: true
+    - key: device_id
+      label: Device ID
+    - key: command
+      label: Command
+    - key: parameters
+      label: JSON Parameters
+    - key: scene_id
+      label: Scene ID
+  delivery_capabilities:
+    - device_control
+    - sync

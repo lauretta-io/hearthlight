@@ -8,6 +8,17 @@ _engine = None
 _session_factory = sessionmaker(autocommit=False, autoflush=False)
 
 
+def _int_env(name: str, default: int) -> int:
+    raw_value = str(os.environ.get(name, "") or "").strip()
+    if not raw_value:
+        return default
+    try:
+        parsed = int(raw_value)
+    except ValueError:
+        return default
+    return parsed if parsed >= 0 else default
+
+
 def get_database_uri():
     required_env = [
         "POSTGRES_USER",
@@ -35,8 +46,8 @@ def get_engine():
         _engine = create_engine(
             get_database_uri(),
             pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
+            pool_size=_int_env("DB_POOL_SIZE", 10),
+            max_overflow=_int_env("DB_MAX_OVERFLOW", 20),
             connect_args={"options": "-c synchronous_commit=off"},
         )
         _session_factory.configure(bind=_engine)

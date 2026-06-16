@@ -65,6 +65,17 @@ The system now uses multiple config sources together:
 - `shared/configs/model_bindings.yaml`: default stage bindings for the active plugin-backed model catalog
 - Postgres `control` schema: persisted input sources, uploads, alert rules, and control-plane state
 
+## Naming alignment
+
+Project-owned file names, module names, object names, routes, tests, and docs should use the same
+domain term after a rename. For example, the secure external LLM connection settings are
+`anomaly_llm_model_settings` in Python modules, `AnomalyLlmModelSettings` in API schemas, and
+`/settings/anomaly-llm-model-settings` in routes and browser tests.
+
+Keep stable external protocol terms only when they are still the domain contract. For example,
+`anomaly_stage_2`, `stage_2_model_key`, and `stage2_prompt_config.yaml` remain valid model-stage
+terms even though the operator settings surface is named Anomaly LLM Models.
+
 ## The Three Zoos
 
 At the repository level, Hearthlight organizes operator-selectable capabilities into three plugin-backed

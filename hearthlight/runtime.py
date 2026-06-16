@@ -1,13 +1,21 @@
 from __future__ import annotations
 
+import json
 import os
 import socket
 import subprocess
 import time
 from pathlib import Path
 from typing import Mapping
+from urllib import error, request
 
 from shared.utils.docker_cli import build_docker_env, find_docker_binary
+from shared.utils.local_worker_runtime import (
+    DEFAULT_LOCAL_WORKER_PORT,
+    WORKER_RUNTIME_HYBRID_LOCAL_CPU,
+    WORKER_RUNTIME_HYBRID_LOCAL_MLX,
+    detect_default_worker_runtime,
+)
 
 DEFAULT_DB_HOST = "localhost"
 DEFAULT_DB_PORT = "5433"
@@ -19,6 +27,7 @@ DEFAULT_RABBIT_PORT = "5673"
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 BASE_COMPOSE_PATH = ROOT_DIR / "docker-compose.yaml"
+LOCAL_WORKER_PID_PATH = ROOT_DIR / "shared" / "output" / "local_runtime" / "supervisor.pid"
 
 
 def _load_env_file(path: Path) -> dict[str, str]:
@@ -199,6 +208,83 @@ def run_docker_reset_db(root_dir: Path = ROOT_DIR) -> None:
     subprocess.run(command, cwd=root_dir, env=build_docker_env(docker_binary), check=True)
 
 
+def local_worker_status(root_dir: Path = ROOT_DIR, timeout_seconds: float = 2.0) -> dict:
+    env_file_values = _load_env_file(root_dir / ".env")
+    port = (
+        os.environ.get("HEARTHLIGHT_LOCAL_WORKER_PORT")
+        or env_file_values.get("HEARTHLIGHT_LOCAL_WORKER_PORT")
+        or str(DEFAULT_LOCAL_WORKER_PORT)
+    )
+    url = f"http://127.0.0.1:{str(port).strip() or DEFAULT_LOCAL_WORKER_PORT}/healthz"
+    try:
+        with request.urlopen(url, timeout=timeout_seconds) as response:
+            payload = json.loads(response.read().decode())
+    except error.URLError as exc:
+        return {
+            "status": "unavailable",
+            "url": url,
+            "detail": str(exc.reason if hasattr(exc, "reason") else exc),
+        }
+    except Exception as exc:
+        return {
+            "status": "unavailable",
+            "url": url,
+            "detail": str(exc),
+        }
+    if not isinstance(payload, dict):
+        return {"status": "unavailable", "url": url, "detail": "health response was not a JSON object"}
+    payload.setdefault("url", url)
+    return payload
+
+
+def _should_report_local_worker_status(root_dir: Path, use_cuda: bool) -> bool:
+    pid_path = root_dir / LOCAL_WORKER_PID_PATH.relative_to(ROOT_DIR)
+    if pid_path.exists():
+        return True
+    env_file_values = _load_env_file(root_dir / ".env")
+    configured_runtime = (
+        os.environ.get("HEARTHLIGHT_WORKER_RUNTIME")
+        or env_file_values.get("HEARTHLIGHT_WORKER_RUNTIME")
+        or ""
+    ).strip()
+    if configured_runtime in {WORKER_RUNTIME_HYBRID_LOCAL_CPU, WORKER_RUNTIME_HYBRID_LOCAL_MLX}:
+        return True
+    profile = "cuda" if use_cuda else "cpu"
+    return detect_default_worker_runtime(profile=profile) in {
+        WORKER_RUNTIME_HYBRID_LOCAL_CPU,
+        WORKER_RUNTIME_HYBRID_LOCAL_MLX,
+    }
+
+
+def print_local_worker_status(root_dir: Path = ROOT_DIR, use_cuda: bool = False) -> None:
+    should_report = _should_report_local_worker_status(root_dir, use_cuda)
+    status = local_worker_status(root_dir)
+    if status.get("status") == "unavailable" and not should_report:
+        return
+
+    print("")
+    print("Local worker supervisor")
+    print(f"  health: {status.get('status', 'unknown')}")
+    if status.get("runtime"):
+        print(f"  runtime: {status['runtime']}")
+    if status.get("url"):
+        print(f"  url: {status['url']}")
+    if status.get("detail"):
+        print(f"  detail: {status['detail']}")
+
+    workers = status.get("workers") if isinstance(status.get("workers"), dict) else {}
+    for module_name in ("INGESTOR", "REID", "ANOMALY"):
+        worker = workers.get(module_name) if isinstance(workers.get(module_name), dict) else {}
+        running = worker.get("running")
+        state = "running" if running else "not running"
+        pid = worker.get("pid")
+        reason = worker.get("reason")
+        suffix = f" pid={pid}" if pid else ""
+        if reason and not running:
+            suffix += f" ({reason})"
+        print(f"  {module_name}: {state}{suffix}")
+
+
 def compose_status(root_dir: Path = ROOT_DIR, use_cuda: bool = False) -> int:
     from run.launcher import compose_command
 
@@ -211,8 +297,11 @@ def compose_status(root_dir: Path = ROOT_DIR, use_cuda: bool = False) -> int:
         "db",
         "rabbitmq",
         "webapp",
+        "reverse_proxy",
         "ingestor",
         "association",
         "anomaly",
     ]
-    return subprocess.call(command, cwd=root_dir, env=build_docker_env(docker_binary))
+    result = subprocess.call(command, cwd=root_dir, env=build_docker_env(docker_binary))
+    print_local_worker_status(root_dir, use_cuda=use_cuda)
+    return result

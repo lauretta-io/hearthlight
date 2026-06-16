@@ -1,11 +1,23 @@
 catalog_version: 1
-generated_at: "2026-05-27T00:00:00Z"
+generated_at: "2026-06-13T00:00:00Z"
 source_url: "./connector_zoo_repo.yaml"
+x_connector_zoo_ui: &connector_zoo_ui
+  actions:
+    install:
+      label: Install
+      busy_label: Adding...
+      aria_label: Add to System
+      help: Install this connector plugin into the Hearthlight system.
+    add_connection:
+      label: Add
+      busy_label: Adding...
+      aria_label: Add Connection
+      help: Add a configured connection row for this installed connector.
 connectors:
   - key: govee
     label: Govee Light Connection
     description: Trigger-driven light actions for Govee devices discovered from a Govee account.
-    category: integrations
+    category: lighting
     enabled: true
     requirements:
       - api-key
@@ -14,9 +26,204 @@ connectors:
     delivery_capabilities:
       - light_control
       - async
+    ui: *connector_zoo_ui
     plugin_key: govee_light_connection
     plugin_version: "0.8.2"
     plugin_manifest_url: "../plugins/govee_light_connection/plugin.yaml"
     plugin_files:
       connectors.yaml: "../plugins/govee_light_connection/connectors.yaml"
     source_url: "../plugins/govee_light_connection/"
+  - key: homeseer
+    label: HomeSeer Connection
+    description: Event, device, and scene execution across HomeSeer automations.
+    category: automation
+    enabled: true
+    requirements:
+      - base-url
+      - access-token
+      - device-ref
+    delivery_capabilities:
+      - automation
+      - device_control
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: homeseer_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/homeseer_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/homeseer_connection/connectors.yaml"
+    source_url: "../plugins/homeseer_connection/"
+  - key: kasa
+    label: TP-Link Kasa Connection
+    description: Smart plug, bulb, and strip actions through a Kasa bridge or local API proxy.
+    category: lighting
+    enabled: true
+    requirements:
+      - base-url
+      - device-alias
+    delivery_capabilities:
+      - device_control
+      - light_control
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: kasa_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/kasa_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/kasa_connection/connectors.yaml"
+    source_url: "../plugins/kasa_connection/"
+  - key: lifx
+    label: LIFX Cloud Connection
+    description: Cloud-managed scenes, selectors, and brightness/color actions for LIFX lights.
+    category: lighting
+    enabled: true
+    requirements:
+      - api-token
+      - selector
+    delivery_capabilities:
+      - light_control
+      - scene_activation
+      - async
+    ui: *connector_zoo_ui
+    plugin_key: lifx_cloud_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/lifx_cloud_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/lifx_cloud_connection/connectors.yaml"
+    source_url: "../plugins/lifx_cloud_connection/"
+  - key: lutron_caseta
+    label: Lutron Caseta and RA2 Select Connection
+    description: Cloud lighting, dimmer, and shade automation for Lutron Caseta and RA2 Select systems.
+    category: lighting
+    enabled: true
+    requirements:
+      - base-url
+      - access-token
+      - device-id
+    delivery_capabilities:
+      - light_control
+      - scene_activation
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: lutron_caseta_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/lutron_caseta_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/lutron_caseta_connection/connectors.yaml"
+    source_url: "../plugins/lutron_caseta_connection/"
+  - key: smartlife
+    label: Smart Life Connection
+    description: Scene and device control across the Smart Life and Tuya ecosystem.
+    category: automation
+    enabled: true
+    requirements:
+      - base-url
+      - access-token
+      - device-id
+    delivery_capabilities:
+      - automation
+      - device_control
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: smartlife_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/smartlife_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/smartlife_connection/connectors.yaml"
+    source_url: "../plugins/smartlife_connection/"
+  - key: smartthings
+    label: Samsung SmartThings Connection
+    description: Device and component command routing through the SmartThings API.
+    category: automation
+    enabled: true
+    requirements:
+      - personal-access-token
+      - device-id
+    delivery_capabilities:
+      - automation
+      - device_control
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: smartthings_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/smartthings_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/smartthings_connection/connectors.yaml"
+    source_url: "../plugins/smartthings_connection/"
+  - key: switchbot
+    label: SwitchBot Connection
+    description: Scenes, curtains, bots, and device-state actions for SwitchBot deployments.
+    category: iot
+    enabled: true
+    requirements:
+      - base-url
+      - device-id
+    delivery_capabilities:
+      - device_control
+      - scene_activation
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: switchbot_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/switchbot_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/switchbot_connection/connectors.yaml"
+    source_url: "../plugins/switchbot_connection/"
+  - key: tplink_tapo
+    label: TP-Link Tapo Connection
+    description: Smart camera, plug, bulb, and device control for TP-Link Tapo environments.
+    category: iot
+    enabled: true
+    requirements:
+      - base-url
+      - access-token
+      - device-id
+    delivery_capabilities:
+      - device_control
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: tplink_tapo_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/tplink_tapo_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/tplink_tapo_connection/connectors.yaml"
+    source_url: "../plugins/tplink_tapo_connection/"
+  - key: ewelink
+    label: eWeLink Smart Home Connection
+    description: Switch, light, and scene control across eWeLink-managed devices.
+    category: iot
+    enabled: true
+    requirements:
+      - base-url
+      - access-token
+      - device-id
+    delivery_capabilities:
+      - device_control
+      - automation
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: ewelink_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/ewelink_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/ewelink_connection/connectors.yaml"
+    source_url: "../plugins/ewelink_connection/"
+  - key: wiz
+    label: WiZ Connection
+    description: Cloud room, light, scene, and brightness automation for WiZ lighting.
+    category: lighting
+    enabled: true
+    requirements:
+      - base-url
+      - access-token
+    delivery_capabilities:
+      - light_control
+      - scene_activation
+      - sync
+    ui: *connector_zoo_ui
+    plugin_key: wiz_connection
+    plugin_version: "0.8.2"
+    plugin_manifest_url: "../plugins/wiz_connection/plugin.yaml"
+    plugin_files:
+      connectors.yaml: "../plugins/wiz_connection/connectors.yaml"
+    source_url: "../plugins/wiz_connection/"

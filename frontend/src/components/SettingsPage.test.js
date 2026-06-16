@@ -2,6 +2,8 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import SettingsPage from './SettingsPage';
 
+let mockModelBindings;
+
 const buildJsonResponse = (body) =>
   Promise.resolve({
     ok: true,
@@ -19,7 +21,7 @@ beforeEach(() => {
   let connectorZooRepoSettings = {
     catalog_url: 'https://raw.githubusercontent.com/lauretta-io/hearthlight/main/shared/catalogs/connector_zoo_repo.yaml',
   };
-  let stage2ProviderSettings = [
+  let anomalyLlmModelSettings = [
     {
       provider_key: 'openai',
       display_name: 'OpenAI',
@@ -104,6 +106,12 @@ beforeEach(() => {
   };
   let goveeEndpoints = [];
   let genericConnectorEndpoints = [];
+  mockModelBindings = [
+    { stage: 'detector', model_key: 'builtin_yolox_s_gpu', binding_scope: 'default', source_id: null },
+    { stage: 'tracker', model_key: 'builtin_bytetrack', binding_scope: 'default', source_id: null },
+    { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
+    { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
+  ];
   global.fetch = jest.fn((url, options = {}) => {
     if (url.endsWith('/settings/input-sources') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
@@ -198,12 +206,7 @@ beforeEach(() => {
       });
     }
     if (url.endsWith('/model-bindings') && (!options.method || options.method === 'GET')) {
-      return buildJsonResponse([
-        { stage: 'detector', model_key: 'builtin_yolox_s_gpu', binding_scope: 'default', source_id: null },
-        { stage: 'tracker', model_key: 'builtin_bytetrack', binding_scope: 'default', source_id: null },
-        { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
-        { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
-      ]);
+      return buildJsonResponse(mockModelBindings);
     }
     if (url.endsWith('/settings/anomaly-prompts') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse({
@@ -213,8 +216,8 @@ beforeEach(() => {
         anomaly_behaviors: ['running'],
       });
     }
-    if (url.endsWith('/settings/stage2-provider-settings') && (!options.method || options.method === 'GET')) {
-      return buildJsonResponse(stage2ProviderSettings);
+    if (url.endsWith('/settings/anomaly-llm-model-settings') && (!options.method || options.method === 'GET')) {
+      return buildJsonResponse(anomalyLlmModelSettings);
     }
     if (url.endsWith('/settings/trigger-rules') && (!options.method || options.method === 'GET')) {
       return buildJsonResponse([
@@ -482,9 +485,9 @@ beforeEach(() => {
         anomaly_behaviors: ['running'],
       });
     }
-    if (url.endsWith('/settings/stage2-provider-settings') && options.method === 'PUT') {
+    if (url.endsWith('/settings/anomaly-llm-model-settings') && options.method === 'PUT') {
       const payload = JSON.parse(options.body);
-      stage2ProviderSettings = payload.map((item) => ({
+      anomalyLlmModelSettings = payload.map((item) => ({
         ...item,
         api_key: item.api_key ? '********' : '',
         auth_token: item.auth_token ? '********' : '',
@@ -493,9 +496,9 @@ beforeEach(() => {
         last_test_message: item.last_test_message ?? null,
         last_tested_at: item.last_tested_at ?? null,
       }));
-      return buildJsonResponse(stage2ProviderSettings);
+      return buildJsonResponse(anomalyLlmModelSettings);
     }
-    if (url.endsWith('/settings/stage2-provider-settings/test') && options.method === 'POST') {
+    if (url.endsWith('/settings/anomaly-llm-model-settings/test') && options.method === 'POST') {
       const payload = JSON.parse(options.body);
       if (payload.provider_key === 'lm_studio' && payload.base_url === 'http://offline.local/v1') {
         return buildErrorResponse(502, {
@@ -599,15 +602,21 @@ test('renders source settings and saves to settings endpoint', async () => {
   expect(screen.queryByRole('tab', { name: 'Rules' })).toBeNull();
   expect(screen.queryByRole('tab', { name: 'Connectors' })).toBeNull();
   expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
-  expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
+  expect(screen.getByRole('tab', { name: 'Models' })).toBeTruthy();
   expect(screen.getByText('Type')).toBeTruthy();
   expect(screen.getByText('Camera URL')).toBeTruthy();
   expect(screen.getByText('Frame Processing')).toBeTruthy();
   expect(screen.getByDisplayValue('1')).toBeTruthy();
-  expect(screen.getByRole('button', { name: 'Update Source Settings' })).toBeTruthy();
+  const saveSourcesButton = screen.getByRole('button', { name: 'Update Source Settings' });
+  expect(saveSourcesButton).toBeTruthy();
+  expect(screen.getByText('Save Sources')).toBeTruthy();
+  await waitFor(() => {
+    expect(saveSourcesButton.getAttribute('title')).toContain('Save all configured source settings');
+    expect(screen.getByDisplayValue('Gate 1').getAttribute('title')).toContain('Field: Label');
+  });
 
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Update Source Settings' }));
+    fireEvent.click(saveSourcesButton);
   });
 
   await waitFor(() => {
@@ -643,7 +652,7 @@ test('keeps source overrides visible and exposes target frame rate mode', async 
 test('limits run model bindings to mounted models only', async () => {
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+      <MemoryRouter initialEntries={['/settings?tab=models']}>
         <SettingsPage />
       </MemoryRouter>,
     );
@@ -651,15 +660,61 @@ test('limits run model bindings to mounted models only', async () => {
 
   expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
 
-  const detectorOverrideSelect = screen.getByLabelText('Detector Override');
-  const detectorOverrideLabels = Array.from(detectorOverrideSelect.querySelectorAll('option')).map((option) => option.textContent);
-  expect(detectorOverrideLabels).toContain('YOLOX Small (GPU)');
-  expect(detectorOverrideLabels).not.toContain('YOLOX Tiny (CPU)');
-
   const defaultDetectorSelect = screen.getByLabelText('Detector');
   const defaultDetectorLabels = Array.from(defaultDetectorSelect.querySelectorAll('option')).map((option) => option.textContent);
   expect(defaultDetectorLabels).toContain('YOLOX Small (GPU)');
   expect(defaultDetectorLabels).not.toContain('YOLOX Tiny (CPU)');
+});
+
+test('keeps saved default binding visible when mounted model state is stale', async () => {
+  mockModelBindings = [
+    { stage: 'detector', model_key: 'builtin_yolox_tiny_cpu', binding_scope: 'default', source_id: null },
+    { stage: 'tracker', model_key: 'builtin_bytetrack', binding_scope: 'default', source_id: null },
+    { stage: 'anomaly_stage_1', model_key: 'heuristic_presence_stage_1', binding_scope: 'default', source_id: null },
+    { stage: 'anomaly_stage_2', model_key: 'prompt_rules_stage_2', binding_scope: 'default', source_id: null },
+  ];
+
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByDisplayValue('Gate 1')).toBeTruthy();
+
+  const detectorOverrideSelect = screen.getByLabelText('Detector Override');
+  expect(detectorOverrideSelect.querySelector('option[value=""]')?.textContent).toContain('YOLOX Tiny (CPU)');
+});
+
+test('loads default model bindings even when source settings fail', async () => {
+  const defaultFetch = global.fetch;
+  global.fetch = jest.fn((url, options = {}) => {
+    if (url.endsWith('/settings/input-sources') && (!options.method || options.method === 'GET')) {
+      return buildErrorResponse(500, { detail: 'source settings unavailable' });
+    }
+    return defaultFetch(url, options);
+  });
+
+  await act(async () => {
+    render(
+      <MemoryRouter initialEntries={['/settings?tab=models']}>
+        <SettingsPage />
+      </MemoryRouter>,
+    );
+  });
+
+  expect(await screen.findByText('Default Model Bindings')).toBeTruthy();
+
+  await waitFor(() => {
+    expect(screen.getByLabelText('Detector').value).toBe('builtin_yolox_s_gpu');
+  });
+
+  const defaultDetectorSelect = screen.getByLabelText('Detector');
+  const defaultDetectorLabels = Array.from(defaultDetectorSelect.querySelectorAll('option')).map((option) => option.textContent);
+  expect(defaultDetectorLabels).toContain('YOLOX Small (GPU)');
+  expect(screen.getAllByText('Failed to load input source settings').length).toBeGreaterThan(0);
 });
 
 test('renders initialization tab content when selected', async () => {
@@ -679,18 +734,18 @@ test('renders initialization tab content when selected', async () => {
 test('renders stage 2 anomaly config and saves structured anomaly settings', async () => {
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+      <MemoryRouter initialEntries={['/settings?tab=models']}>
         <SettingsPage />
       </MemoryRouter>,
     );
   });
 
-  expect(await screen.findByText('Anomaly Prompt Settings')).toBeTruthy();
+  expect(await screen.findByText('Anomaly Labels')).toBeTruthy();
   expect(screen.getByDisplayValue('weapon')).toBeTruthy();
   expect(screen.getByDisplayValue('running')).toBeTruthy();
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Save Anomaly Detection Config'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Anomaly Detection Config' }));
   });
 
   await waitFor(() => {
@@ -701,43 +756,52 @@ test('renders stage 2 anomaly config and saves structured anomaly settings', asy
   });
 });
 
-test('renders secure Stage 2 provider settings with masked secret state', async () => {
+test('renders secure Anomaly LLM model settings with masked secret state', async () => {
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+      <MemoryRouter initialEntries={['/settings?tab=models']}>
         <SettingsPage />
       </MemoryRouter>,
     );
   });
 
-  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
-  expect(screen.getByText('Current Stage 2 Binding')).toBeTruthy();
+  expect(await screen.findByText('Anomaly LLM Models')).toBeTruthy();
+  expect(screen.getByText('Current Anomaly LLM Binding')).toBeTruthy();
+  expect(screen.getByText('OpenAI Stage 2')).toBeTruthy();
+
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Configure Model' })[0]);
+  });
+
   expect(screen.getByDisplayValue('https://api.openai.com/v1')).toBeTruthy();
   expect(screen.getByDisplayValue('gpt-5.4-mini')).toBeTruthy();
   expect(screen.getAllByDisplayValue('********').length).toBeGreaterThan(0);
   expect(screen.getByText('Stored securely')).toBeTruthy();
 });
 
-test('preserves masked Stage 2 provider secrets when saving non-secret edits', async () => {
+test('preserves masked Anomaly LLM model secrets when saving non-secret edits', async () => {
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+      <MemoryRouter initialEntries={['/settings?tab=models']}>
         <SettingsPage />
       </MemoryRouter>,
     );
   });
 
-  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
+  expect(await screen.findByText('Anomaly LLM Models')).toBeTruthy();
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Configure Model' })[0]);
+  });
   fireEvent.change(screen.getByDisplayValue('https://api.openai.com/v1'), {
     target: { value: 'https://api.openai.com/v2' },
   });
 
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Save Stage 2 Provider Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Anomaly LLM Model' }));
   });
 
   const saveCall = global.fetch.mock.calls.find(
-    ([url, options]) => url.endsWith('/settings/stage2-provider-settings') && options?.method === 'PUT',
+    ([url, options]) => url.endsWith('/settings/anomaly-llm-model-settings') && options?.method === 'PUT',
   );
   expect(saveCall).toBeTruthy();
   const requestBody = JSON.parse(saveCall[1].body);
@@ -746,50 +810,56 @@ test('preserves masked Stage 2 provider secrets when saving non-secret edits', a
   expect(openaiPayload.api_key).toBe('********');
 });
 
-test('validates required Stage 2 provider secrets before saving', async () => {
+test('validates required Anomaly LLM model secrets before saving', async () => {
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+      <MemoryRouter initialEntries={['/settings?tab=models']}>
         <SettingsPage />
       </MemoryRouter>,
     );
   });
 
-  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
+  expect(await screen.findByText('Anomaly LLM Models')).toBeTruthy();
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Configure Model' })[0]);
+  });
   fireEvent.change(screen.getAllByDisplayValue('********')[0], {
     target: { value: '' },
   });
 
   await act(async () => {
-    fireEvent.click(screen.getByRole('button', { name: 'Save Stage 2 Provider Settings' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Anomaly LLM Model' }));
   });
 
-  expect(await screen.findByText('API Key is required when the provider is enabled.')).toBeTruthy();
+  expect((await screen.findAllByText('API Key is required when the provider is enabled.')).length).toBeGreaterThan(0);
   expect(
     global.fetch.mock.calls.find(
-      ([url, options]) => url.endsWith('/settings/stage2-provider-settings') && options?.method === 'PUT',
+      ([url, options]) => url.endsWith('/settings/anomaly-llm-model-settings') && options?.method === 'PUT',
     ),
   ).toBeUndefined();
 });
 
-test('tests Stage 2 provider connectivity from the settings UI', async () => {
+test('tests Anomaly LLM model connectivity from the settings UI', async () => {
   await act(async () => {
     render(
-      <MemoryRouter initialEntries={['/settings?tab=sources']}>
+      <MemoryRouter initialEntries={['/settings?tab=models']}>
         <SettingsPage />
       </MemoryRouter>,
     );
   });
 
-  expect(await screen.findByText('Stage 2 Provider Settings')).toBeTruthy();
+  expect(await screen.findByText('Anomaly LLM Models')).toBeTruthy();
+  await act(async () => {
+    fireEvent.click(screen.getAllByRole('button', { name: 'Configure Model' })[0]);
+  });
 
   await act(async () => {
-    fireEvent.click(screen.getAllByRole('button', { name: 'Test Connection' })[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Test Connection' }));
   });
 
   await waitFor(() => {
     expect(global.fetch).toHaveBeenCalledWith(
-      expect.stringMatching(/\/settings\/stage2-provider-settings\/test$/),
+      expect.stringMatching(/\/settings\/anomaly-llm-model-settings\/test$/),
       expect.objectContaining({ method: 'POST' }),
     );
   });
@@ -895,7 +965,7 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Save Telegram Subscriptions'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Telegram Subscriptions' }));
   });
 
   await waitFor(() => {
@@ -906,7 +976,7 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Save Apple Messages Subscriptions'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Apple Messages Subscriptions' }));
   });
 
   await waitFor(() => {
@@ -950,7 +1020,7 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Discover Devices'));
+    fireEvent.click(screen.getByRole('button', { name: 'Discover Devices' }));
   });
 
   expect((await screen.findAllByText(/Discovered 1 Govee light device/)).length).toBeGreaterThan(0);
@@ -962,7 +1032,7 @@ test('renders connectors tab and saves both connector subscription types', async
   });
 
   await act(async () => {
-    fireEvent.click(screen.getByText('Save Govee Light Connections'));
+    fireEvent.click(screen.getByRole('button', { name: 'Save Govee Light Connections' }));
   });
 
   await waitFor(() => {

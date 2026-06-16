@@ -1,0 +1,49 @@
+services:
+  ingestor:
+    image: ${HEARTHLIGHT_INGESTOR_GPU_IMAGE:-hearthlight-ingestor:cuda}
+    build:
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: cuda
+        INGESTOR_BASE_IMAGE: anibali/pytorch:2.0.0-cuda11.8-ubuntu22.04
+    gpus: all
+    runtime: nvidia
+    environment:
+      HEARTHLIGHT_IMAGE_VARIANT: cuda
+      NVIDIA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-all}
+
+  association:
+    image: ${HEARTHLIGHT_ASSOCIATION_GPU_IMAGE:-hearthlight-association:cuda}
+    build:
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: cuda
+    environment:
+      HEARTHLIGHT_IMAGE_VARIANT: cuda
+
+  anomaly:
+    image: ${HEARTHLIGHT_ANOMALY_GPU_IMAGE:-hearthlight-anomaly:cuda}
+    build:
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: cuda
+    gpus: all
+    runtime: nvidia
+    environment:
+      HEARTHLIGHT_IMAGE_VARIANT: cuda
+      NVIDIA_VISIBLE_DEVICES: ${CUDA_VISIBLE_DEVICES:-all}
+      NVIDIA_DRIVER_CAPABILITIES: ${NVIDIA_DRIVER_CAPABILITIES:-all}
+
+  webapp:
+    image: ${HEARTHLIGHT_WEBAPP_GPU_IMAGE:-hearthlight-webapp:cuda}
+    build:
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: cuda
+    environment:
+      HEARTHLIGHT_IMAGE_VARIANT: cuda
+
+  reset_db:
+    image: ${HEARTHLIGHT_WEBAPP_GPU_IMAGE:-hearthlight-webapp:cuda}
+    build:
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: cuda
+    environment:
+      HEARTHLIGHT_IMAGE_VARIANT: cuda

@@ -1,0 +1,8 @@
+key: homeseer_connection
+label: HomeSeer Connection
+version: "0.8.2"
+provider: HomeSeer
+description: Optional HomeSeer connector plugin for device, event, and scene execution.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

@@ -1,0 +1,8 @@
+key: switchbot_connection
+label: SwitchBot Connection
+version: "0.8.2"
+provider: SwitchBot
+description: Optional SwitchBot connector plugin for scenes, bots, curtains, and device actions.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

@@ -47,8 +47,8 @@ required credentials:
 - `lm_studio_stage_2` accepts `--lm-studio-api-base-url` and `--lm-studio-model-name`, and can also take an optional `--lm-studio-api-key` if LM Studio authentication is enabled
 - `lauretta_api_stage_2` requires both `--lauretta-api-key` and `--lauretta-api-base-url`, and accepts `--lauretta-model-name`
 
-After startup, operators can manage external Stage 2 provider settings directly
-from `Settings > Sources > Stage 2 Provider Settings`. This secure settings
+After startup, operators can manage external Anomaly LLM model settings directly
+from `Settings > Models > Anomaly LLM Models`. This secure settings
 surface supports:
 
 - `openai`
@@ -128,8 +128,8 @@ Once the API and UI are up:
 - choose the shared workspace theme in `Appearance` if needed
 - save input sources
 - save default model bindings
-- save Stage 2 provider settings when the selected anomaly Stage 2 model uses an external provider
-- save anomaly prompt settings
+- save Anomaly LLM model settings when the selected anomaly model uses an external provider
+- save anomaly labels
 - prompt settings now store anomaly objects and behaviors only; anomaly `1-10` cutoffs belong to anomaly trigger rules
 - define triggered alerts if needed
 - review the launch-plan panel for the host-side startup command
@@ -180,8 +180,8 @@ Runtime initialization happens through the control plane:
 
 - persisted source queue
 - default per-stage model bindings
-- encrypted Stage 2 provider settings for external anomaly adapters
-- saved anomaly prompt settings
+- encrypted Anomaly LLM model settings for external anomaly adapters
+- saved anomaly label settings
 - per-source alert rules
 - admission checks
 - `/start` and `/stop`

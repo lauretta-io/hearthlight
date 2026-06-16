@@ -61,6 +61,7 @@ def _normalize_repo_connector_entry(value: Any) -> dict[str, Any]:
         "enabled": bool(entry.get("enabled", True)),
         "requirements": [str(item).strip() for item in list(entry.get("requirements") or []) if str(item).strip()],
         "fields": list(entry.get("fields") or []),
+        "ui": dict(entry.get("ui") or {}),
         "delivery_capabilities": [
             str(item).strip() for item in list(entry.get("delivery_capabilities") or []) if str(item).strip()
         ],

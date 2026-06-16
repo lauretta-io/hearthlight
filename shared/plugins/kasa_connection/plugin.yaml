@@ -1,0 +1,8 @@
+key: kasa_connection
+label: TP-Link Kasa Connection
+version: "0.8.2"
+provider: TP-Link
+description: Optional TP-Link Kasa connector plugin for smart plugs, bulbs, and strips.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

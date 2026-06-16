@@ -2,6 +2,9 @@ FROM python:3.10
 
 WORKDIR /app
 
+ARG TARGETARCH
+ARG HEARTHLIGHT_IMAGE_VARIANT=cpu
+
 RUN existing_user=$(getent passwd 1000 | cut -d: -f1) && \
     if [ -z "$existing_user" ]; then \
         groupadd -g 1000 appuser && \
@@ -22,6 +25,17 @@ RUN apt-get update && \
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    if [ "$HEARTHLIGHT_IMAGE_VARIANT" = "cuda" ]; then \
+        pip install --no-cache-dir \
+            torch==2.7.0 \
+            triton==3.3.0; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        pip install --no-cache-dir torch==2.7.0; \
+    else \
+        pip install --no-cache-dir \
+            --index-url https://download.pytorch.org/whl/cpu \
+            torch==2.7.0; \
+    fi
 
 USER 1000

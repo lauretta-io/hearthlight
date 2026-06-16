@@ -1,0 +1,27 @@
+ewelink:
+  label: eWeLink Smart Home Connection
+  description: Switch, light, and scene control across eWeLink-managed devices.
+  category: iot
+  enabled: true
+  requirements:
+    - base-url
+    - access-token
+    - device-id
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: access_token
+      label: Access Token
+      secret: true
+    - key: device_id
+      label: Device ID
+    - key: scene_id
+      label: Scene ID
+    - key: command
+      label: Command
+    - key: parameters
+      label: JSON Parameters
+  delivery_capabilities:
+    - device_control
+    - automation
+    - sync

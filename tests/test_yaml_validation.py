@@ -13,6 +13,10 @@ class YamlValidationTests(unittest.TestCase):
         workflow_path = REPO_ROOT / ".github" / "workflows" / "macos-dmg.yml"
         self.assertEqual(classify_yaml_parser(workflow_path), "pyyaml")
 
+    def test_docker_compose_uses_compose_yaml_parser(self):
+        compose_path = REPO_ROOT / "docker-compose.production.yaml"
+        self.assertEqual(classify_yaml_parser(compose_path), "compose")
+
     def test_repo_yaml_validation_has_no_owned_failures(self):
         failures = validate_repo_yaml()
         self.assertEqual(failures, [])

@@ -1,0 +1,8 @@
+key: lutron_caseta_connection
+label: Lutron Caseta and RA2 Select Connection
+version: "0.8.2"
+provider: Lutron
+description: Optional Lutron Caseta and RA2 Select connector plugin for lighting and shade automations.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

@@ -86,6 +86,61 @@ def expect(condition: bool, message: str):
         raise RuntimeError(message)
 
 
+def validate_model_registry_defaults(base_url: str, api_key: str | None) -> tuple[dict, list[dict]]:
+    model_options = send_json(base_url, "/model-options", api_key=api_key)
+    expect(isinstance(model_options, dict), "model-options response must be an object")
+
+    stages = model_options.get("stages")
+    expect(isinstance(stages, list) and stages, "model-options response is missing stages")
+    options_by_stage = {}
+    for stage_entry in stages:
+        stage = stage_entry.get("stage") if isinstance(stage_entry, dict) else None
+        options = stage_entry.get("options") if isinstance(stage_entry, dict) else None
+        if stage:
+            options_by_stage[stage] = options if isinstance(options, list) else []
+
+    mounted_models = model_options.get("mounted_models")
+    expect(isinstance(mounted_models, dict), "model-options response is missing mounted_models")
+
+    required_stages = ["detector", "tracker", "anomaly_stage_1", "anomaly_stage_2"]
+    for stage in required_stages:
+        expect(stage in options_by_stage, f"model-options is missing stage {stage}")
+        expect(options_by_stage[stage], f"model-options stage {stage} has no options")
+        expect(stage in mounted_models, f"mounted_models is missing stage {stage}")
+
+    bindings = send_json(base_url, "/model-bindings", api_key=api_key)
+    expect(isinstance(bindings, list) and bindings, "expected default model bindings")
+    defaults = {
+        binding.get("stage"): binding
+        for binding in bindings
+        if binding.get("binding_scope") == "default"
+    }
+    for stage in required_stages:
+        binding = defaults.get(stage)
+        expect(binding is not None, f"default binding is missing for {stage}")
+        model_key = binding.get("model_key")
+        expect(model_key, f"default binding for {stage} has no model_key")
+        expect(
+            binding.get("resolved") is not False,
+            f"default binding for {stage} is unresolved: {binding.get('unavailable_reason')}",
+        )
+        stage_model_keys = {
+            option.get("model_key")
+            for option in options_by_stage.get(stage, [])
+            if isinstance(option, dict)
+        }
+        expect(
+            model_key in stage_model_keys,
+            f"default binding {stage}={model_key} is absent from model-options",
+        )
+        expect(
+            model_key in set(mounted_models.get(stage, [])),
+            f"default binding {stage}={model_key} is not mounted",
+        )
+
+    return model_options, bindings
+
+
 def build_smoke_video_bytes() -> bytes:
     ffmpeg_binary = os.environ.get("FFMPEG_BINARY", "ffmpeg")
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -158,6 +213,11 @@ def main():
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--api-key", default=os.environ.get("WEBAPP_API_KEY"))
     parser.add_argument("--skip-start", action="store_true")
+    parser.add_argument(
+        "--defaults-only",
+        action="store_true",
+        help="Only validate health, readiness, model options, model bindings, and status without mutating sources.",
+    )
     parser.add_argument("--manage-compose", action="store_true")
     parser.add_argument("--docker-binary")
     parser.add_argument("--timeout-seconds", type=float, default=90.0)
@@ -194,6 +254,33 @@ def main():
             timeout_seconds=args.timeout_seconds,
             poll_interval_seconds=args.poll_interval_seconds,
         )
+
+        model_options, bindings = validate_model_registry_defaults(base_url, args.api_key)
+        status = send_json(base_url, "/status", api_key=args.api_key)
+        expect(isinstance(status, dict), "status response must be an object")
+        expect("resources" in status, "status response is missing resources")
+        if args.defaults_only:
+            mounted_summary = {
+                stage: model_options.get("mounted_models", {}).get(stage, [])
+                for stage in ("detector", "tracker", "anomaly_stage_1", "anomaly_stage_2")
+            }
+            default_summary = {
+                binding.get("stage"): binding.get("model_key")
+                for binding in bindings
+                if binding.get("binding_scope") == "default"
+            }
+            print("PASS: control-plane defaults smoke succeeded")
+            print(json.dumps(
+                {
+                    "base_url": base_url,
+                    "defaults": default_summary,
+                    "mounted_models": mounted_summary,
+                    "system_status": status.get("status"),
+                },
+                indent=2,
+                sort_keys=True,
+            ))
+            return 0
 
         smoke_mp4 = build_smoke_video_bytes()
         upload_response = send_multipart(
@@ -255,8 +342,6 @@ def main():
         detector_models = send_json(base_url, "/models/detector", api_key=args.api_key)
         expect(detector_models, "expected at least one detector model")
 
-        bindings = send_json(base_url, "/model-bindings", api_key=args.api_key)
-        expect(bindings, "expected default model bindings")
         saved_bindings = send_json(
             base_url,
             "/model-bindings",

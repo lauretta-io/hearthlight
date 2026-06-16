@@ -1,0 +1,27 @@
+switchbot:
+  label: SwitchBot Connection
+  description: Scenes, curtains, bots, and device-state actions for SwitchBot deployments.
+  category: iot
+  enabled: true
+  requirements:
+    - base-url
+    - device-id
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: token
+      label: Token
+      secret: true
+    - key: secret
+      label: Secret
+      secret: true
+    - key: device_id
+      label: Device ID
+    - key: command
+      label: Command
+    - key: scene_name
+      label: Scene Name
+  delivery_capabilities:
+    - device_control
+    - scene_activation
+    - sync

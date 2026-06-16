@@ -57,8 +57,18 @@ CONNECTOR_KEYS = {
     "webhook",
     "slack",
     "govee",
+    "lifx",
+    "kasa",
+    "smartlife",
+    "smartthings",
+    "switchbot",
+    "wiz",
+    "tplink_tapo",
+    "lutron_caseta",
+    "ewelink",
+    "homeseer",
 }
-STAGE2_PROVIDER_KEYS = {
+ANOMALY_LLM_MODEL_PROVIDER_KEYS = {
     "openai",
     "lm_studio",
     "lauretta",
@@ -275,6 +285,7 @@ class ModelRegistration(BaseModel):
     healthcheck: dict = Field(default_factory=dict)
     requires_gpu: bool = False
     resource_profile: dict = Field(default_factory=dict)
+    ui: dict = Field(default_factory=dict)
     source_path: str | None = None
     plugin_key: str | None = None
 
@@ -290,6 +301,7 @@ class ModelOption(BaseModel):
     healthcheck: dict = Field(default_factory=dict)
     requires_gpu: bool = False
     resource_profile: dict = Field(default_factory=dict)
+    ui: dict = Field(default_factory=dict)
     source_path: str | None = None
     option_origin: str
     comes_from_model_zoo: bool = False
@@ -753,6 +765,7 @@ class ConnectorZooEntry(BaseModel):
     enabled: bool = True
     requirements: list[str] = Field(default_factory=list)
     fields: list[dict] = Field(default_factory=list)
+    ui: dict = Field(default_factory=dict)
     delivery_capabilities: list[str] = Field(default_factory=list)
     plugin_key: str | None = None
     source_path: str | None = None
@@ -1038,7 +1051,7 @@ class ClaudeAnomalyModelTestResponse(BaseModel):
     result: dict | None = None
 
 
-class Stage2ProviderSettings(BaseModel):
+class AnomalyLlmModelSettings(BaseModel):
     provider_key: str
     display_name: str | None = None
     enabled: bool = False
@@ -1056,7 +1069,7 @@ class Stage2ProviderSettings(BaseModel):
     @field_validator("provider_key")
     def validate_provider_key(cls, value):
         normalized = validate_non_empty_string(value, "provider_key").lower()
-        if normalized not in STAGE2_PROVIDER_KEYS:
+        if normalized not in ANOMALY_LLM_MODEL_PROVIDER_KEYS:
             raise ValueError("unsupported provider_key")
         return normalized
 
@@ -1067,15 +1080,80 @@ class Stage2ProviderSettings(BaseModel):
         return str(value).strip()
 
 
-class Stage2ProviderSettingsTestResponse(BaseModel):
+class AnomalyLlmModelSettingsTestResponse(BaseModel):
     provider_key: str
     ok: bool = False
     detail: str | None = None
     effective_base_url: str = ""
     effective_model_name: str = ""
     secret_present: bool = False
+    request_reached_provider: bool = False
+    normalized_result_returned: bool = False
+    provider_response_validated: bool = False
+    provider_response_shape: str | None = None
     last_test_status: str | None = None
     last_tested_at: str | None = None
+
+
+class LaurettaImageAttachment(BaseModel):
+    media_type: str = "application/octet-stream"
+    data_base64: str | None = None
+    data: str | None = None
+    object_key: str | None = None
+    uri: str | None = None
+    width: int | None = None
+    height: int | None = None
+    metadata: dict = Field(default_factory=dict)
+
+    @field_validator("media_type")
+    def validate_media_type(cls, value):
+        return validate_non_empty_string(value, "media_type")
+
+
+class LaurettaAnomalySubmissionRequest(BaseModel):
+    camera_id: int | None = None
+    user_id: str | None = None
+    prompt_template: str | None = None
+    prompt_text: str | None = None
+    expected_results_text: str | None = None
+    image_attachments: list[LaurettaImageAttachment] = Field(default_factory=list)
+    asset_references: list[AssetReference] = Field(default_factory=list)
+    metadata: dict = Field(default_factory=dict)
+
+    @model_validator(mode="after")
+    def validate_prompt(self):
+        prompt_value = (self.prompt_text or self.prompt_template or "").strip()
+        if not prompt_value:
+            raise ValueError("prompt_text or prompt_template is required")
+        self.prompt_text = prompt_value
+        return self
+
+
+class LaurettaSubmissionAssetRecord(BaseModel):
+    object_key: str
+    media_type: str | None = None
+    size_bytes: int
+    checksum_sha256: str
+    metadata: dict = Field(default_factory=dict)
+
+
+class LaurettaAnomalySubmissionResponse(BaseModel):
+    submission_id: str
+    status: str
+    camera_id: int | None = None
+    user_id: str | None = None
+    prompt_text: str | None = None
+    expected_results_text: str | None = None
+    processed_bucket: str
+    token_units_reserved: int
+    token_units_final: int
+    provider_key: str | None = None
+    provider_status: str | None = None
+    provider_error: str | None = None
+    assets: list[LaurettaSubmissionAssetRecord] = Field(default_factory=list)
+    result: dict = Field(default_factory=dict)
+    created_at: str | None = None
+    updated_at: str | None = None
 
 
 class ActionConnectorEndpoint(BaseModel):
@@ -1227,7 +1305,7 @@ class MonitoringOverview(BaseModel):
     latest_entities: list[AlgorithmEntityFeedItem] = Field(default_factory=list)
     latest_anomalies: list[AnomalyEvent] = Field(default_factory=list)
     recent_events: list[ResourceEventRecord] = Field(default_factory=list)
-    stage2_provider_settings: list[Stage2ProviderSettings] = Field(default_factory=list)
+    anomaly_llm_model_settings: list[AnomalyLlmModelSettings] = Field(default_factory=list)
     feed_endpoints: list[FeedEndpoint] = Field(default_factory=list)
 
 

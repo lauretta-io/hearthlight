@@ -1,6 +1,10 @@
-FROM anibali/pytorch:2.0.0-cuda11.8-ubuntu22.04
+ARG INGESTOR_BASE_IMAGE=python:3.10
+FROM ${INGESTOR_BASE_IMAGE}
 
 WORKDIR /app
+
+ARG TARGETARCH
+ARG HEARTHLIGHT_IMAGE_VARIANT=cpu
 
 USER root
 
@@ -42,16 +46,28 @@ RUN apt-get update && \
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+    pip install --no-cache-dir -r requirements.txt && \
+    if [ "$HEARTHLIGHT_IMAGE_VARIANT" = "cuda" ]; then \
+        pip install --no-cache-dir onnxruntime-gpu==1.22.0; \
+    elif [ "$TARGETARCH" = "arm64" ]; then \
+        pip install --no-cache-dir onnxruntime==1.22.0 torch==2.0.0 torchvision==0.15.0; \
+    else \
+        pip install --no-cache-dir onnxruntime==1.22.0 && \
+        pip install --no-cache-dir \
+            --index-url https://download.pytorch.org/whl/cpu \
+            torch==2.0.0 torchvision==0.15.0; \
+    fi
 
-RUN apt-get update && apt-get install -y wget gnupg && \
-    wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin && \
-    mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600 && \
-    wget https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda-repo-ubuntu2204-11-8-local_11.8.0-520.61.05-1_amd64.deb && \
-    dpkg -i cuda-repo-ubuntu2204-11-8-local_11.8.0-520.61.05-1_amd64.deb && \
-    cp /var/cuda-repo-ubuntu2204-11-8-local/cuda-*-keyring.gpg /usr/share/keyrings/ && \
-    apt-get update && apt-get install -y cuda-toolkit-11-8 && \
-    rm -rf /var/lib/apt/lists/*
+RUN if [ "$HEARTHLIGHT_IMAGE_VARIANT" = "cuda" ]; then \
+        apt-get update && apt-get install -y wget gnupg && \
+        wget https://developer.download.nvidia.com/compute/cuda/repos/ubuntu2204/x86_64/cuda-ubuntu2204.pin && \
+        mv cuda-ubuntu2204.pin /etc/apt/preferences.d/cuda-repository-pin-600 && \
+        wget https://developer.download.nvidia.com/compute/cuda/11.8.0/local_installers/cuda-repo-ubuntu2204-11-8-local_11.8.0-520.61.05-1_amd64.deb && \
+        dpkg -i cuda-repo-ubuntu2204-11-8-local_11.8.0-520.61.05-1_amd64.deb && \
+        cp /var/cuda-repo-ubuntu2204-11-8-local/cuda-*-keyring.gpg /usr/share/keyrings/ && \
+        apt-get update && apt-get install -y cuda-toolkit-11-8 && \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
 
 ENV CUDA_HOME=/usr/local/cuda
 ENV PATH=${CUDA_HOME}/bin:${PATH}

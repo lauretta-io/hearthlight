@@ -115,6 +115,10 @@ the Docker integration path for MLX is:
 That means MLX is integrated with the Dockerized control plane, but not embedded inside the Linux
 worker images.
 
+Use `hearthlight status` to inspect both layers. It prints Docker Compose services first, then the
+local worker supervisor health and per-worker PIDs when `hybrid-local-mlx` or another host-local
+worker runtime is active.
+
 On Apple Silicon onboarding/install paths, `requirements-mlx.txt` is now installed alongside the
 normal service requirements so the host worker environment can provide `mlx`, `mlx-lm`, and
 `mlx-vlm`.
@@ -135,6 +139,156 @@ Model-control endpoints are exposed on the same FastAPI port:
 - `GET /model-bindings`
 - `PUT /model-bindings`
 - `GET /system/model-health`
+
+## Hosted Production Compose
+
+The reference hosted path is Docker Compose plus two overlays:
+
+```bash
+docker compose \
+  -f docker-compose.yaml \
+  -f docker-compose.production.yaml \
+  -f docker-compose.gpu.yaml \
+  up -d db pgbouncer rabbitmq minio minio_init webapp reverse_proxy anomaly
+```
+
+`docker-compose.production.yaml` adds the production control-plane services:
+
+- `pgbouncer` in front of Postgres, with `webapp` and `anomaly` using `POSTGRES_HOST=pgbouncer`
+  and `POSTGRES_PORT=6432`
+- `webapp` replicas sized for ingress through `API_REPLICAS=3` by default. The production overlay
+  removes direct `webapp:8000` host publishing, so nginx on `WEBAPP_UI_HOST_PORT` is the canonical
+  API/UI entrypoint and Docker DNS can distribute requests across API replicas.
+- `minio` plus `minio_init` for the S3-compatible object store bucket
+- tuned ingress defaults for the API and worker path:
+  `API_WEB_CONCURRENCY=12`, `DB_POOL_SIZE=4`, `DB_MAX_OVERFLOW=4`,
+  `WORKER_CONCURRENCY=32`, `WORKER_POLL_SECONDS=0.05`,
+  `API_CLIENT_CACHE_TTL_SECONDS=15`
+- S3-backed ingress asset persistence through `HEARTHLIGHT_OBJECT_STORE_BACKEND=s3`
+
+The object-store settings are:
+
+```bash
+HEARTHLIGHT_OBJECT_STORE_BACKEND=s3
+HEARTHLIGHT_OBJECT_STORE_S3_BUCKET=hearthlight-assets
+HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL=http://minio:9000
+HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID=hearthlight
+HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY=<replace-me>
+```
+
+For a managed S3-compatible store, keep the same variables and replace the endpoint, bucket, and
+credentials. The local filesystem object store remains the default for development when
+`HEARTHLIGHT_OBJECT_STORE_BACKEND` is unset.
+
+`docker-compose.gpu.yaml` is the canonical root GPU overlay. It mirrors the CUDA worker overlay and
+requires an NVIDIA host with the container runtime configured. The hosted completion verifier still
+requires `media-smoke` and `end-to-end-smoke` to return `gpu_used=true`; Compose configuration alone
+does not prove the GPU path.
+The GPU overlay also pins the reference CUDA image tags (`hearthlight-webapp:cuda`,
+`hearthlight-anomaly:cuda`, `hearthlight-ingestor:cuda`, and `hearthlight-association:cuda`) unless
+deployment-specific `HEARTHLIGHT_*_GPU_IMAGE` variables are supplied.
+
+## Hosted Production Verification
+
+The Docker Compose hosted proof should be closed with the deployment verifier, not inferred from
+local smoke tests:
+
+First generate repeated queue-only ingress benchmark JSON with multiple client keys. Use labels in
+the command line so the report can prove multi-client metering without writing raw keys to disk:
+
+On the hosted API, configure accepted ingress clients by hash bootstrapping from env at startup:
+
+```bash
+HEARTHLIGHT_INGRESS_CLIENT_KEYS='client-a=<secret-a>,client-b=<secret-b>'
+HEARTHLIGHT_INGRESS_DAILY_QUOTA_640X480=100000
+HEARTHLIGHT_INGRESS_DAILY_QUOTA_1MP=50000
+HEARTHLIGHT_INGRESS_DAILY_QUOTA_2MP=25000
+```
+
+When ingress clients are configured, invalid or missing client keys return `401`, and each accepted
+submission writes reservation/final usage-ledger rows against the hashed client key and processed
+bucket.
+
+```bash
+python3 scripts/benchmark_queue_ingress.py \
+  --base-url https://hearthlight.example.com/api \
+  --endpoint /v1/hearthlight/anomaly-submissions \
+  --client-key client-a="$HEARTHLIGHT_CLIENT_KEY_A" \
+  --client-key client-b="$HEARTHLIGHT_CLIENT_KEY_B" \
+  --auth-header Authorization \
+  --auth-scheme bearer \
+  --repeat 3 \
+  --requests-per-repeat 1000 \
+  --concurrency 64 \
+  --output shared/output/benchmarks/queue_only_run_1.json
+```
+
+Run the queue-only benchmark more than once on the hosted stack, then pass each JSON file to the
+verifier. Next, run the settled end-to-end benchmark with workers, GPU resize, and a live provider enabled.
+The settled report is secondary evidence: record it even when settled throughput is still below
+the queue-only target.
+
+```bash
+python3 scripts/benchmark_settled_ingress.py \
+  --base-url https://hearthlight.example.com/api \
+  --endpoint /v1/hearthlight/anomaly-submissions \
+  --status-endpoint-template /v1/hearthlight/anomaly-submissions/{submission_id} \
+  --client-key client-a="$HEARTHLIGHT_CLIENT_KEY_A" \
+  --client-key client-b="$HEARTHLIGHT_CLIENT_KEY_B" \
+  --auth-header Authorization \
+  --auth-scheme bearer \
+  --requests 100 \
+  --concurrency 16 \
+  --settle-timeout-seconds 180 \
+  --output shared/output/benchmarks/settled_run_1.json
+```
+
+```bash
+python3 scripts/run_deployment_verification.py \
+  --base-url https://hearthlight.example.com \
+  --api-key "$HEARTHLIGHT_ADMIN_API_KEY" \
+  --provider-key openai \
+  --ingress-client-key "$HEARTHLIGHT_CLIENT_KEY_A" \
+  --invalid-ingress-client-key "$HEARTHLIGHT_INVALID_CLIENT_KEY" \
+  --queue-benchmark-json shared/output/benchmarks/queue_only_run_1.json \
+  --queue-benchmark-json shared/output/benchmarks/queue_only_run_2.json \
+  --settled-benchmark-json shared/output/benchmarks/settled_run_1.json
+```
+
+The verifier requires the hosted admin diagnostics sequence to pass:
+
+- `GET /v1/admin/diagnostics/runtime`
+- `POST /v1/admin/diagnostics/media-smoke`
+- `POST /v1/admin/diagnostics/provider-smoke`
+- `POST /v1/admin/diagnostics/end-to-end-smoke`
+
+Runtime diagnostics must include the reference hosted profile: `HEARTHLIGHT_LOCAL_STACK=false`,
+`POSTGRES_HOST=pgbouncer`, `POSTGRES_PORT=6432`, S3 object storage, `API_WEB_CONCURRENCY=12`,
+`DB_POOL_SIZE=4`, `DB_MAX_OVERFLOW=4`, `API_CLIENT_CACHE_TTL_SECONDS=15`,
+`WORKER_CONCURRENCY=32`, `WORKER_POLL_SECONDS=0.05`, and
+`INLINE_INFERENCE_AFTER_PREPROCESS=true`. The verifier enforces this by default; use
+`--skip-runtime-profile-check` only for local debugging, not hosted acceptance.
+
+Provider smoke is not treated as proven by HTTP 200 alone. The admin response must show
+`request_reached_provider=true`, `normalized_result_returned=true`, and
+`provider_response_validated=true`, with a provider-specific `provider_response_shape` such as
+`openai_chat_completions`, `claude_compatible_anomaly_result`, or
+`lauretta_anomaly_submission`.
+
+It also submits one queue-only ingress smoke with a valid client key and, when
+`--invalid-ingress-client-key` is supplied, confirms that invalid ingress credentials return `401`.
+The valid ingress smoke includes a small inline asset and reads it back through
+`/v1/hearthlight/anomaly-submissions/{submission_id}/assets/0`, proving object-store persistence
+and readback on the hosted stack.
+
+It also enforces the primary throughput gate: repeated queue-only benchmark JSON must show median
+submissions per second greater than or equal to 200, and the queue-only runs must include multiple
+client keys unless `--allow-single-client-key` is explicitly used for a non-acceptance debug run.
+If settled end-to-end benchmark JSON is provided, the verifier records min/median/max settled
+throughput as secondary evidence.
+
+Missing admin diagnostics, `gpu_used=false`, failed provider smoke, or low queue-only median are
+hard failures for hosted completion.
 
 ## Verification Checklist
 
@@ -247,6 +401,15 @@ python3 scripts/control_plane_smoke_test.py --manage-compose
 
 That brings up `db`, `rabbitmq`, and `webapp`, waits for readiness, exercises the mixed-source
 control plane, and tears the stack back down.
+
+For an already-running local stack behind the UI proxy, use the non-destructive defaults smoke:
+
+```bash
+python3 scripts/control_plane_smoke_test.py --base-url http://127.0.0.1:3000/api --defaults-only
+```
+
+That checks health, readiness, `/model-options`, `/model-bindings`, and `/status` without changing
+source rows or starting the pipeline.
 
 To upload a staged video source:
 

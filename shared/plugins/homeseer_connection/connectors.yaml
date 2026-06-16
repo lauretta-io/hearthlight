@@ -1,0 +1,27 @@
+homeseer:
+  label: HomeSeer Connection
+  description: Event, device, and scene execution across HomeSeer automations.
+  category: automation
+  enabled: true
+  requirements:
+    - base-url
+    - access-token
+    - device-ref
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: access_token
+      label: Access Token
+      secret: true
+    - key: device_ref
+      label: Device Ref
+    - key: event_name
+      label: Event Name
+    - key: command
+      label: Command
+    - key: parameters
+      label: JSON Parameters
+  delivery_capabilities:
+    - automation
+    - device_control
+    - sync

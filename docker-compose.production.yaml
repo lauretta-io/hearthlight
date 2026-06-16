@@ -1,0 +1,102 @@
+volumes:
+  minio_data:
+
+services:
+  pgbouncer:
+    image: bitnami/pgbouncer:latest
+    networks:
+      - mynetwork
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRESQL_HOST: db
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_USERNAME: ${POSTGRES_USER:-postgres}
+      POSTGRESQL_PASSWORD: ${POSTGRES_PASSWORD:-root}
+      POSTGRESQL_DATABASE: ${POSTGRES_DB:-hearthlight}
+      PGBOUNCER_PORT: 6432
+      PGBOUNCER_POOL_MODE: transaction
+      PGBOUNCER_MAX_CLIENT_CONN: ${PGBOUNCER_MAX_CLIENT_CONN:-2000}
+      PGBOUNCER_DEFAULT_POOL_SIZE: ${PGBOUNCER_DEFAULT_POOL_SIZE:-64}
+      PGBOUNCER_RESERVE_POOL_SIZE: ${PGBOUNCER_RESERVE_POOL_SIZE:-16}
+    ports:
+      - "${PGBOUNCER_HOST_BIND:-127.0.0.1}:${PGBOUNCER_HOST_PORT:-6432}:6432"
+    restart: unless-stopped
+
+  minio:
+    image: minio/minio:latest
+    networks:
+      - mynetwork
+    volumes:
+      - minio_data:/data
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-hearthlight}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-hearthlight-dev-secret}
+    command: server /data --console-address ":9001"
+    ports:
+      - "${MINIO_HOST_BIND:-127.0.0.1}:${MINIO_HOST_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_HOST_BIND:-127.0.0.1}:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    restart: unless-stopped
+
+  minio_init:
+    image: minio/mc:latest
+    networks:
+      - mynetwork
+    depends_on:
+      minio:
+        condition: service_started
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-hearthlight}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-hearthlight-dev-secret}
+      HEARTHLIGHT_OBJECT_STORE_S3_BUCKET: ${HEARTHLIGHT_OBJECT_STORE_S3_BUCKET:-hearthlight-assets}
+    entrypoint: >
+      /bin/sh -c '
+      until mc alias set hearthlight http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD"; do sleep 2; done &&
+      mc mb --ignore-existing "hearthlight/$$HEARTHLIGHT_OBJECT_STORE_S3_BUCKET"'
+
+  webapp:
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      minio_init:
+        condition: service_completed_successfully
+    ports: !reset []
+    deploy:
+      replicas: ${API_REPLICAS:-3}
+    environment:
+      HEARTHLIGHT_LOCAL_STACK: ${HEARTHLIGHT_LOCAL_STACK:-false}
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: 6432
+      API_WEB_CONCURRENCY: ${API_WEB_CONCURRENCY:-12}
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-4}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-4}
+      API_CLIENT_CACHE_TTL_SECONDS: ${API_CLIENT_CACHE_TTL_SECONDS:-15}
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-32}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-0.05}
+      INLINE_INFERENCE_AFTER_PREPROCESS: ${INLINE_INFERENCE_AFTER_PREPROCESS:-true}
+      HEARTHLIGHT_OBJECT_STORE_BACKEND: s3
+      HEARTHLIGHT_OBJECT_STORE_S3_BUCKET: ${HEARTHLIGHT_OBJECT_STORE_S3_BUCKET:-hearthlight-assets}
+      HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL: ${HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL:-http://minio:9000}
+      HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID: ${HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID:-hearthlight}
+      HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY: ${HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY:-hearthlight-dev-secret}
+
+  anomaly:
+    depends_on:
+      pgbouncer:
+        condition: service_started
+      minio_init:
+        condition: service_completed_successfully
+    environment:
+      POSTGRES_HOST: pgbouncer
+      POSTGRES_PORT: 6432
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-32}
+      WORKER_POLL_SECONDS: ${WORKER_POLL_SECONDS:-0.05}
+      INLINE_INFERENCE_AFTER_PREPROCESS: ${INLINE_INFERENCE_AFTER_PREPROCESS:-true}
+      HEARTHLIGHT_OBJECT_STORE_BACKEND: s3
+      HEARTHLIGHT_OBJECT_STORE_S3_BUCKET: ${HEARTHLIGHT_OBJECT_STORE_S3_BUCKET:-hearthlight-assets}
+      HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL: ${HEARTHLIGHT_OBJECT_STORE_S3_ENDPOINT_URL:-http://minio:9000}
+      HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID: ${HEARTHLIGHT_OBJECT_STORE_S3_ACCESS_KEY_ID:-hearthlight}
+      HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY: ${HEARTHLIGHT_OBJECT_STORE_S3_SECRET_ACCESS_KEY:-hearthlight-dev-secret}

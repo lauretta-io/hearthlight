@@ -1148,7 +1148,7 @@ class ModelRegistryTests(unittest.TestCase):
                 "chatgpt_api_stage_2",
                 {"artifact_ref": "openai-chatgpt-api", "adapter": "openai_compatible_stage_2", "runtime": {"provider": "openai"}},
             ),
-            "Chatgpt",
+            "ChatGPT",
         )
         self.assertEqual(
             build_model_display_name(
@@ -1203,6 +1203,7 @@ class ModelRegistryTests(unittest.TestCase):
         self.assertEqual(stage_two["chatgpt_api_stage_2"]["runtime"]["model_name"], "gpt-5.4-mini")
         self.assertEqual(stage_two["claude_api_stage_2"]["runtime"]["model_name"], "claude-sonnet-4-6")
         self.assertEqual(stage_two["lm_studio_stage_2"]["runtime"]["model_name"], "local-model")
+        self.assertEqual(stage_two["claude_compatible_stage_2"]["runtime"]["provider"], "claude_compatible")
 
     @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")
     def test_build_model_option_catalog_enriches_detector_classes_from_model_zoo_artifacts(self):
@@ -1210,7 +1211,7 @@ class ModelRegistryTests(unittest.TestCase):
             "shared.utils.model_registry._load_artifact_classes",
             return_value=["person", "bicycle", "car", "backpack", "handbag", "suitcase"],
         ):
-            catalog = build_model_option_catalog(load_registry_bundle())
+            catalog = build_model_option_catalog(load_registry_bundle(force_refresh=True))
         detector_stage = next(entry for entry in catalog["stages"] if entry["stage"] == "detector")
         self.assertFalse(any(entry["stage"] == "reid" for entry in catalog["stages"]))
         yolox_option = next(
@@ -1225,6 +1226,19 @@ class ModelRegistryTests(unittest.TestCase):
         )
         self.assertIn("mounted_models", catalog)
         self.assertTrue(yolox_option["is_mounted"])
+
+    @unittest.skipIf(build_model_option_catalog is None, "omegaconf is not installed")
+    def test_build_model_option_catalog_exposes_yaml_ui_metadata(self):
+        catalog = build_model_option_catalog(load_registry_bundle(force_refresh=True))
+        stage_two = next(entry for entry in catalog["stages"] if entry["stage"] == "anomaly_stage_2")
+        openai_option = next(
+            option for option in stage_two["options"] if option["model_key"] == "chatgpt_api_stage_2"
+        )
+
+        provider_ui = openai_option["ui"]["provider_settings"]
+        self.assertEqual(provider_ui["actions"]["configure"]["label"], "Configure")
+        self.assertEqual(provider_ui["actions"]["test_connection"]["aria_label"], "Test OpenAI Connection")
+        self.assertEqual(provider_ui["fields"]["base_url"]["placeholder"], "https://api.openai.com/v1")
 
     @unittest.skipIf(build_effective_mounted_models is None, "omegaconf is not installed")
     def test_build_effective_mounted_models_keeps_defaults_mounted(self):

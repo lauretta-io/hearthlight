@@ -1,0 +1,26 @@
+kasa:
+  label: TP-Link Kasa Connection
+  description: Smart plug, bulb, and strip actions through a Kasa bridge or local API proxy.
+  category: iot
+  enabled: true
+  requirements:
+    - base-url
+    - device-alias
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: username
+      label: Username
+    - key: password
+      label: Password
+      secret: true
+    - key: device_alias
+      label: Device Alias
+    - key: command
+      label: Command
+    - key: transition_seconds
+      label: Transition Seconds
+  delivery_capabilities:
+    - device_control
+    - light_control
+    - sync

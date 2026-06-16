@@ -43,8 +43,6 @@ numpy==1.23.3
 oauthlib==3.2.2
 omegaconf==2.3.0
 onnx==1.21.0
-onnxruntime==1.22.0; platform_machine == "aarch64"
-onnxruntime-gpu==1.22.0; platform_machine != "aarch64"
 opencv-python==4.10.0.84
 packaging==23.0
 pandas==2.2.3
@@ -80,15 +78,12 @@ six==1.16.0
 soupsieve==2.7
 SQLAlchemy==2.0.36
 sympy==1.14.0
-tensorrt==10.10.0.31; platform_machine != "aarch64"
 thop==0.1.1.post2209072238
 threadpoolctl==3.5.0
 tokenizers==0.21.1
 toolz==0.12.0
-torch==2.7.0
 tqdm==4.67.1
 transformers==4.53.0
-triton==3.3.0; platform_machine != "aarch64"
 typing_extensions==4.14.1
 tzdata==2024.2
 ultralytics==8.3.28

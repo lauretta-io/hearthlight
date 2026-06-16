@@ -1,0 +1,8 @@
+key: wiz_connection
+label: WiZ Connection
+version: "0.8.2"
+provider: WiZ
+description: Optional WiZ connector plugin for cloud lighting scenes, rooms, and brightness control.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

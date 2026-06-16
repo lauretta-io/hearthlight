@@ -9,6 +9,8 @@ import importlib
 import logging
 import platform
 import re
+import threading
+import time
 from typing import Any
 
 from omegaconf import OmegaConf
@@ -78,6 +80,11 @@ LEGACY_TRACKER_NAME_MAP = {
 }
 
 logger = logging.getLogger(__name__)
+_REGISTRY_BUNDLE_CACHE_LOCK = threading.RLock()
+_REGISTRY_BUNDLE_CACHE: tuple[float, dict[str, Any]] | None = None
+_REGISTRY_BUNDLE_CACHE_TTL_SECONDS = float(
+    os.environ.get("HEARTHLIGHT_REGISTRY_CACHE_TTL_SECONDS", "10")
+)
 
 STAGE_LABELS = {
     MODEL_STAGE_DETECTOR: "Detector",
@@ -314,7 +321,7 @@ def collect_required_mounted_models(
     return required
 
 
-def load_registry_bundle() -> dict[str, Any]:
+def _load_registry_bundle_uncached() -> dict[str, Any]:
     bundle = {
         "models": load_model_registries(),
         "bindings": load_model_bindings(),
@@ -326,6 +333,21 @@ def load_registry_bundle() -> dict[str, Any]:
         upstream_model_catalog=_load_upstream_master_catalog(),
     )
     return bundle
+
+
+def load_registry_bundle(*, force_refresh: bool = False) -> dict[str, Any]:
+    global _REGISTRY_BUNDLE_CACHE
+    now = time.monotonic()
+    with _REGISTRY_BUNDLE_CACHE_LOCK:
+        if (
+            not force_refresh
+            and _REGISTRY_BUNDLE_CACHE is not None
+            and now - _REGISTRY_BUNDLE_CACHE[0] < _REGISTRY_BUNDLE_CACHE_TTL_SECONDS
+        ):
+            return _REGISTRY_BUNDLE_CACHE[1]
+        bundle = _load_registry_bundle_uncached()
+        _REGISTRY_BUNDLE_CACHE = (now, bundle)
+        return bundle
 
 
 def _read_model_zoo_direct_url() -> dict[str, Any]:
@@ -512,7 +534,7 @@ def build_model_display_name(stage: str, model_key: str, registration: dict[str,
             if provider == "lauretta":
                 return "Lauretta API"
             if provider == "openai":
-                return "Chatgpt"
+                return "ChatGPT"
             return "OpenAI-Compatible API"
         if adapter == "claude_stage_2":
             return "Claude"
@@ -574,6 +596,7 @@ def build_model_option_catalog(bundle: dict[str, Any]) -> dict[str, Any]:
                     "healthcheck": dict(registration.get("healthcheck") or {}),
                     "requires_gpu": bool(registration.get("requires_gpu")),
                     "resource_profile": dict(registration.get("resource_profile") or {}),
+                    "ui": dict(registration.get("ui") or {}),
                     "source_path": source_path,
                     "option_origin": option_origin,
                     "comes_from_model_zoo": option_origin == "model_zoo",

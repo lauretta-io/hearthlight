@@ -1,0 +1,26 @@
+lifx:
+  label: LIFX Cloud Connection
+  description: Cloud-managed scenes, selectors, and brightness/color actions for LIFX lights.
+  category: lighting
+  enabled: true
+  requirements:
+    - api-token
+    - selector
+  fields:
+    - key: api_token
+      label: API Token
+      secret: true
+    - key: selector
+      label: Device Selector
+    - key: power_state
+      label: Power State
+    - key: color
+      label: Color or Theme
+    - key: brightness
+      label: Brightness
+    - key: duration_seconds
+      label: Transition Seconds
+  delivery_capabilities:
+    - light_control
+    - scene_activation
+    - async

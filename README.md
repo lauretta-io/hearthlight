@@ -269,6 +269,22 @@ connector set. The current Govee v1 scope is light control only through the HTTP
 If a valid Govee account has no bound devices, Hearthlight surfaces that as a clean empty discovery
 state rather than an authentication failure.
 
+The bundled optional connector plugin set now also includes common lighting, IoT, and automation
+systems that operators can expose through the Connector Zoo:
+
+- LIFX Cloud
+- TP-Link Kasa
+- Smart Life
+- Samsung SmartThings
+- SwitchBot
+- WiZ
+- TP-Link Tapo
+- Lutron Caseta and RA2 Select
+- eWeLink Smart Home
+- HomeSeer
+
+The planning notes for those additions live in [docs/connector_zoo_lighting_iot.md](docs/connector_zoo_lighting_iot.md).
+
 ## Startup
 
 Initialize any required submodules first:
@@ -353,7 +369,7 @@ Reset database state directly from the CLI:
 hearthlight reset-db
 ```
 
-Show service health/status from Docker Compose:
+Show service health/status from Docker Compose and, on hybrid local runtimes, the host-local worker supervisor:
 
 ```bash
 hearthlight status

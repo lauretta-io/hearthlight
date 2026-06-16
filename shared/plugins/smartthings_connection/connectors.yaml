@@ -1,0 +1,26 @@
+smartthings:
+  label: Samsung SmartThings Connection
+  description: Device and component command routing through the SmartThings API.
+  category: automation
+  enabled: true
+  requirements:
+    - personal-access-token
+    - device-id
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: personal_access_token
+      label: Personal Access Token
+      secret: true
+    - key: device_id
+      label: Device ID
+    - key: component
+      label: Component
+    - key: command
+      label: Command
+    - key: capability
+      label: Capability
+  delivery_capabilities:
+    - automation
+    - device_control
+    - sync

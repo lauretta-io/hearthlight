@@ -1,0 +1,27 @@
+lutron_caseta:
+  label: Lutron Caseta and RA2 Select Connection
+  description: Cloud lighting, dimmer, and shade automation for Lutron Caseta and RA2 Select systems.
+  category: lighting
+  enabled: true
+  requirements:
+    - base-url
+    - access-token
+    - device-id
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: access_token
+      label: Access Token
+      secret: true
+    - key: device_id
+      label: Device ID
+    - key: scene_id
+      label: Scene ID
+    - key: level
+      label: Dimmer Level
+    - key: shade_position
+      label: Shade Position
+  delivery_capabilities:
+    - light_control
+    - scene_activation
+    - sync

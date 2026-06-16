@@ -1,0 +1,26 @@
+wiz:
+  label: WiZ Connection
+  description: Cloud room, light, scene, and brightness automation for WiZ lighting.
+  category: lighting
+  enabled: true
+  requirements:
+    - base-url
+    - access-token
+  fields:
+    - key: base_url
+      label: API Base URL
+    - key: access_token
+      label: Access Token
+      secret: true
+    - key: room_id
+      label: Room ID
+    - key: light_id
+      label: Light ID
+    - key: scene_id
+      label: Scene ID
+    - key: brightness
+      label: Brightness
+  delivery_capabilities:
+    - light_control
+    - scene_activation
+    - sync

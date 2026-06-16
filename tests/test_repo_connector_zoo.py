@@ -12,6 +12,32 @@ from shared.utils.repo_connector_zoo import (
 
 
 class RepoConnectorZooTests(unittest.TestCase):
+    def test_default_repo_catalog_includes_common_lighting_iot_and_automation_connectors(self):
+        catalog = load_repo_connector_catalog_from_url(
+            (Path("shared/catalogs/connector_zoo_repo.yaml").resolve().as_uri())
+        )
+
+        connector_keys = {entry["key"] for entry in catalog["connectors"]}
+        govee = next(entry for entry in catalog["connectors"] if entry["key"] == "govee")
+
+        self.assertTrue(
+            {
+                "govee",
+                "lifx",
+                "kasa",
+                "smartlife",
+                "smartthings",
+                "switchbot",
+                "wiz",
+                "tplink_tapo",
+                "lutron_caseta",
+                "ewelink",
+                "homeseer",
+            }.issubset(connector_keys)
+        )
+        self.assertEqual(govee["ui"]["actions"]["install"]["label"], "Install")
+        self.assertEqual(govee["ui"]["actions"]["add_connection"]["aria_label"], "Add Connection")
+
     def test_load_repo_connector_catalog_resolves_relative_paths_against_catalog_url(self):
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -33,6 +59,14 @@ class RepoConnectorZooTests(unittest.TestCase):
                                 "plugin_files": {
                                     "connectors.yaml": "../plugins/govee_light_connection/connectors.yaml",
                                 },
+                                "ui": {
+                                    "actions": {
+                                        "install": {
+                                            "label": "Install",
+                                            "help": "Install from test catalog.",
+                                        }
+                                    }
+                                },
                                 "source_url": "../plugins/govee_light_connection/",
                             }
                         ],
@@ -48,6 +82,7 @@ class RepoConnectorZooTests(unittest.TestCase):
         self.assertTrue(connector["plugin_manifest_url"].endswith("/plugins/govee_light_connection/plugin.yaml"))
         self.assertTrue(connector["plugin_files"]["connectors.yaml"].endswith("/plugins/govee_light_connection/connectors.yaml"))
         self.assertTrue(connector["source_url"].endswith("/plugins/govee_light_connection/"))
+        self.assertEqual(connector["ui"]["actions"]["install"]["help"], "Install from test catalog.")
 
     def test_load_repo_connector_catalog_from_file_url_marks_installed_plugins(self):
         with tempfile.TemporaryDirectory() as temp_dir:

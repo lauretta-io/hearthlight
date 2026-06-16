@@ -36,7 +36,7 @@ DEFAULT_ORIGINS = [
     "http://127.0.0.1:3001",
     "http://127.0.0.1:3100",
 ]
-DEFAULT_LOCAL_ORIGIN_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+DEFAULT_LOCAL_ORIGIN_REGEX = r"^https?://([A-Za-z0-9.-]+|\[[0-9A-Fa-f:]+\])(:\d+)?$"
 
 
 def get_allowed_origins():
@@ -102,6 +102,17 @@ def _loopback_hosts_align(origin_host: str | None, host_name: str | None) -> boo
     return all(_is_loopback_host(host) for host in explicit_hosts)
 
 
+def _explicit_hosts_align(origin_host: str | None, host_name: str | None) -> bool:
+    explicit_hosts = [host for host in (origin_host, host_name) if host]
+    if not explicit_hosts:
+        return False
+    if _loopback_hosts_align(origin_host, host_name):
+        return True
+    if origin_host and host_name:
+        return origin_host.strip().lower() == host_name.strip().lower()
+    return True
+
+
 def _extract_hostname(header_value: str | None) -> str | None:
     raw_value = str(header_value or "").strip()
     if not raw_value:
@@ -129,7 +140,7 @@ def request_is_local_only(request: Request) -> bool:
     has_explicit_hosts = bool(origin_host or host_name)
 
     if has_explicit_hosts:
-        if not _loopback_hosts_align(origin_host, host_name):
+        if not _explicit_hosts_align(origin_host, host_name):
             return False
         if LOCAL_STACK_MODE:
             return True

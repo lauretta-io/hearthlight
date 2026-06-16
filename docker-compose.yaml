@@ -29,7 +29,10 @@ services:
 
   rabbitmq:
     image: ${HEARTHLIGHT_RABBITMQ_IMAGE:-hearthlight-rabbitmq:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
-    build: ./rabbitmq
+    build:
+      context: ./rabbitmq
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: ${HEARTHLIGHT_IMAGE_VARIANT:-cpu}
     networks:
       - mynetwork
     ports:
@@ -46,7 +49,10 @@ services:
 
   reset_db:
     image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
-    build: ./webapp
+    build:
+      context: ./webapp
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: ${HEARTHLIGHT_IMAGE_VARIANT:-cpu}
     networks:
       - mynetwork
     volumes:
@@ -66,7 +72,10 @@ services:
     image: ${HEARTHLIGHT_WEBAPP_IMAGE:-hearthlight-webapp:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    build: ./webapp
+    build:
+      context: ./webapp
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: ${HEARTHLIGHT_IMAGE_VARIANT:-cpu}
     networks:
       - mynetwork
     expose:
@@ -93,6 +102,10 @@ services:
       - HEARTHLIGHT_WORKER_RUNTIME=${HEARTHLIGHT_WORKER_RUNTIME:-docker}
       - HEARTHLIGHT_LOCAL_WORKER_URL=${HEARTHLIGHT_LOCAL_WORKER_URL:-http://host.docker.internal:8070}
       - HEARTHLIGHT_HOST_PROJECT_ROOT=${HEARTHLIGHT_HOST_PROJECT_ROOT:-}
+      - OMP_NUM_THREADS=${WEBAPP_OMP_NUM_THREADS:-1}
+      - OPENBLAS_NUM_THREADS=${WEBAPP_OPENBLAS_NUM_THREADS:-1}
+      - MKL_NUM_THREADS=${WEBAPP_MKL_NUM_THREADS:-1}
+      - NUMEXPR_NUM_THREADS=${WEBAPP_NUMEXPR_NUM_THREADS:-1}
     restart: unless-stopped
     healthcheck:
       test:
@@ -140,7 +153,11 @@ services:
     image: ${HEARTHLIGHT_INGESTOR_IMAGE:-hearthlight-ingestor:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
     extra_hosts:
       - "host.docker.internal:host-gateway"
-    build: ./ingestor
+    build:
+      context: ./ingestor
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: ${HEARTHLIGHT_IMAGE_VARIANT:-cpu}
+        INGESTOR_BASE_IMAGE: ${HEARTHLIGHT_INGESTOR_BASE_IMAGE:-python:3.10}
     networks:
       - mynetwork
     volumes:
@@ -155,7 +172,7 @@ services:
     env_file:
       - .env
     environment:
-      DISPLAY: ${DISPLAY}
+      DISPLAY: ${DISPLAY:-}
       QT_X11_NO_MITSHIM: "1"
       RELOAD: ${RELOAD:-}
       <<: *nvidia-env
@@ -165,7 +182,7 @@ services:
       until nc -z rabbitmq 15672; do 
         sleep 1; 
       done; 
-      if [ ! -z "$RELOAD" ]; then
+      if [ ! -z "$$RELOAD" ]; then
         hupper -m src.ingestor.main
       else
         python -um src.ingestor.main
@@ -173,7 +190,10 @@ services:
 
   association:
     image: ${HEARTHLIGHT_ASSOCIATION_IMAGE:-hearthlight-association:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
-    build: ./association
+    build:
+      context: ./association
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: ${HEARTHLIGHT_IMAGE_VARIANT:-cpu}
     networks:
       - mynetwork
     volumes:
@@ -194,7 +214,7 @@ services:
       until nc -z rabbitmq 15672;
       do sleep 1; 
       done; 
-      if [ ! -z "$RELOAD" ]; then
+      if [ ! -z "$$RELOAD" ]; then
         hupper -m src.association.main
       else
         python -um src.association.main
@@ -202,7 +222,10 @@ services:
 
   anomaly:
     image: ${HEARTHLIGHT_ANOMALY_IMAGE:-hearthlight-anomaly:${HEARTHLIGHT_IMAGE_VARIANT:-latest}}
-    build: ./anomaly
+    build:
+      context: ./anomaly
+      args:
+        HEARTHLIGHT_IMAGE_VARIANT: ${HEARTHLIGHT_IMAGE_VARIANT:-cpu}
     networks:
       - mynetwork
     volumes:
@@ -222,7 +245,7 @@ services:
       until nc -z rabbitmq 15672; do
         sleep 1;
       done;
-      if [ ! -z "$RELOAD" ]; then
+      if [ ! -z "$$RELOAD" ]; then
         hupper -m src.anomaly.main
       else
         python -um src.anomaly.main

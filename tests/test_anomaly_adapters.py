@@ -110,7 +110,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             {"OPENAI_API_KEY": "test-key", "OPENAI_MODEL_NAME": "gpt-5.5"},
             clear=False,
         ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://api.openai.com/v1",
@@ -146,7 +146,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
             "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
         ), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://api.openai.com/v1",
@@ -174,7 +174,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         with patch.dict("os.environ", {"OPENAI_API_KEY": "test-key"}, clear=False), patch(
             "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
         ), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://api.openai.com/v1",
@@ -228,7 +228,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             {"LM_STUDIO_MODEL_NAME": "qwen3-local", "LM_STUDIO_API_BASE_URL": "http://localhost:1234/v1"},
             clear=False,
         ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "http://localhost:1234/v1",
@@ -278,7 +278,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             }
         )
         with patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://saved.example/v1",
@@ -338,7 +338,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
                 },
                 clear=False,
             ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
-                "anomaly.adapters.build_runtime_stage2_provider_settings",
+                "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
                 return_value={
                     "enabled": True,
                     "base_url": "https://lauretta.example",
@@ -373,7 +373,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         with patch.dict("os.environ", {}, clear=True), patch(
             "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
         ), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://api.anthropic.com/v1",
@@ -423,7 +423,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             {"ANTHROPIC_API_KEY": "anthropic-test", "ANTHROPIC_MODEL_NAME": "claude-opus-4-7"},
             clear=False,
         ), patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://api.anthropic.com/v1",
@@ -475,7 +475,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
             }
         )
         with patch("anomaly.adapters.SessionLocal", return_value=_NullSessionContext()), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://claude-secure.example/v1",
@@ -509,7 +509,7 @@ class ThirdPartyStageTwoAdapterTests(unittest.TestCase):
         with patch.dict("os.environ", {"ANTHROPIC_API_KEY": "anthropic-test"}, clear=False), patch(
             "anomaly.adapters.SessionLocal", return_value=_NullSessionContext()
         ), patch(
-            "anomaly.adapters.build_runtime_stage2_provider_settings",
+            "anomaly.adapters.build_runtime_anomaly_llm_model_settings",
             return_value={
                 "enabled": True,
                 "base_url": "https://api.anthropic.com/v1",

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   BrowserRouter as Router,
   NavLink,
@@ -27,6 +27,48 @@ const PersistentPage = ({ active, children }) => (
   </section>
 );
 
+const compactControlText = (value) => String(value || '').replace(/\s+/g, ' ').trim();
+
+const buildButtonTitle = (button) => {
+  const label = compactControlText(
+    button.getAttribute('aria-label')
+    || button.getAttribute('data-help')
+    || button.textContent,
+  ) || 'this action';
+  return `Action: ${label}. Hover help keeps compact button labels understandable.`;
+};
+
+const buildFieldTitle = (field) => {
+  const explicitLabel = compactControlText(field.getAttribute('aria-label') || field.getAttribute('placeholder'));
+  const label = field.closest('label');
+  const nearbyLabel = compactControlText(label?.querySelector('span')?.textContent || label?.textContent);
+  const idLabel = field.id
+    ? compactControlText(document.querySelector(`label[for="${field.id}"]`)?.textContent)
+    : '';
+  const fieldName = nearbyLabel || idLabel || explicitLabel || field.getAttribute('name') || 'this field';
+  return `Field: ${fieldName}. Use this control to configure or filter the current Hearthlight view.`;
+};
+
+const applyAppControlTitles = (root) => {
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll('button').forEach((button) => {
+    if (!button.getAttribute('title')) {
+      button.setAttribute('title', buildButtonTitle(button));
+    }
+  });
+  root.querySelectorAll('input, select, textarea').forEach((field) => {
+    if (!field.getAttribute('title')) {
+      field.setAttribute('title', buildFieldTitle(field));
+    }
+    const label = field.closest('label');
+    if (label && !label.getAttribute('title')) {
+      label.setAttribute('title', buildFieldTitle(field));
+    }
+  });
+};
+
 const AppShell = ({
   appearanceError,
   appearanceLoaded,
@@ -37,6 +79,7 @@ const AppShell = ({
 }) => {
   const location = useLocation();
   const navigate = useNavigate();
+  const appRootRef = useRef(null);
 
   useEffect(() => {
     if (location.pathname === '/') {
@@ -88,8 +131,29 @@ const AppShell = ({
   const isModelLogsPath = location.pathname === '/model-logs';
   const isDetailPath = location.pathname.startsWith('/incident/');
 
+  useEffect(() => {
+    const root = appRootRef.current;
+    if (!root) {
+      return undefined;
+    }
+    applyAppControlTitles(root);
+    if (typeof MutationObserver === 'undefined') {
+      return undefined;
+    }
+    const observer = new MutationObserver(() => {
+      applyAppControlTitles(root);
+    });
+    observer.observe(root, {
+      childList: true,
+      subtree: true,
+    });
+    return () => {
+      observer.disconnect();
+    };
+  }, []);
+
   return (
-    <div className="app">
+    <div className="app" ref={appRootRef}>
       <nav className="top-nav">
         <div className="brand-block">
           <div className="brand-logo-shell">

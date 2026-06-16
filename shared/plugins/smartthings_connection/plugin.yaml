@@ -1,0 +1,8 @@
+key: smartthings_connection
+label: Samsung SmartThings Connection
+version: "0.8.2"
+provider: Samsung
+description: Optional SmartThings connector plugin for device and component command routing.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml

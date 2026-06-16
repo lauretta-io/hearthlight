@@ -25,9 +25,9 @@ from shared.utils.claude_anomaly_model import (
     validate_claude_anomaly_model_config,
 )
 from shared.utils.workspace_settings import get_workspace_setting_value
-from shared.utils.stage2_provider_settings import (
+from shared.utils.anomaly_llm_model_settings import (
     PROVIDER_KEY_CLAUDE_COMPATIBLE,
-    build_runtime_stage2_provider_settings,
+    build_runtime_anomaly_llm_model_settings,
 )
 
 logger = logging.getLogger(__name__)
@@ -433,7 +433,7 @@ class ClaudeCompatibleStageTwoAdapter(PassThroughStageTwoAdapter):
                 SETTING_KEY_CLAUDE_ANOMALY_MODEL,
                 default=default_claude_anomaly_model_config(),
             )
-            provider_settings = build_runtime_stage2_provider_settings(
+            provider_settings = build_runtime_anomaly_llm_model_settings(
                 db,
                 PROVIDER_KEY_CLAUDE_COMPATIBLE,
                 runtime_defaults={
@@ -562,7 +562,7 @@ class OpenAICompatibleStageTwoAdapter(RemoteAPIMixin):
 
     def _load_runtime_provider_config(self) -> dict[str, Any]:
         with SessionLocal() as db:
-            return build_runtime_stage2_provider_settings(
+            return build_runtime_anomaly_llm_model_settings(
                 db,
                 self.provider,
                 runtime_defaults={
@@ -679,7 +679,7 @@ class ClaudeStageTwoAdapter(RemoteAPIMixin):
 
     def _load_runtime_provider_config(self) -> dict[str, Any]:
         with SessionLocal() as db:
-            return build_runtime_stage2_provider_settings(
+            return build_runtime_anomaly_llm_model_settings(
                 db,
                 PROVIDER_KEY_CLAUDE_COMPATIBLE,
                 runtime_defaults={

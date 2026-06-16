@@ -139,7 +139,8 @@ Reset DB directly via host Python execution (instead of compose `reset_db` servi
 python3 -m hearthlight reset-db
 ```
 
-Inspect Docker Compose service status:
+Inspect Docker Compose service status. On hybrid local CPU/MLX runs, this also reports the
+host-local worker supervisor health and per-worker PIDs:
 
 ```bash
 python3 -m hearthlight status

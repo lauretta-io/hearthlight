@@ -10,6 +10,22 @@ from omegaconf import OmegaConf
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
+class ComposeYamlLoader(yaml.SafeLoader):
+    pass
+
+
+def _compose_tag_constructor(loader: ComposeYamlLoader, node):
+    if isinstance(node, yaml.SequenceNode):
+        return loader.construct_sequence(node)
+    if isinstance(node, yaml.MappingNode):
+        return loader.construct_mapping(node)
+    return loader.construct_scalar(node)
+
+
+for _tag in ("!reset", "!override"):
+    ComposeYamlLoader.add_constructor(_tag, _compose_tag_constructor)
+
+
 @dataclass(frozen=True)
 class YamlValidationFailure:
     path: Path
@@ -35,6 +51,8 @@ def _should_skip(path: Path, root: Path) -> bool:
 
 def classify_yaml_parser(path: Path, root: Path = REPO_ROOT) -> str:
     relative = path.relative_to(root)
+    if path.name.startswith("docker-compose") and path.suffix in {".yaml", ".yml"}:
+        return "compose"
     if relative.parts[:2] == (".github", "workflows"):
         return "pyyaml"
     return "omegaconf"
@@ -43,7 +61,9 @@ def classify_yaml_parser(path: Path, root: Path = REPO_ROOT) -> str:
 def validate_yaml_file(path: Path, root: Path = REPO_ROOT) -> None:
     parser_name = classify_yaml_parser(path, root)
     with path.open("r", encoding="utf-8") as handle:
-        if parser_name == "pyyaml":
+        if parser_name == "compose":
+            yaml.load(handle, Loader=ComposeYamlLoader)
+        elif parser_name == "pyyaml":
             yaml.safe_load(handle)
         else:
             OmegaConf.load(path)

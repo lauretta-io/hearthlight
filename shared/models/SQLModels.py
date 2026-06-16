@@ -606,10 +606,10 @@ class WorkspaceSetting(Base):
     deleted_at = mapped_column(DateTime)
 
 
-class Stage2ProviderSetting(Base):
-    __tablename__ = "stage2_provider_setting"
+class AnomalyLlmModelSetting(Base):
+    __tablename__ = "anomaly_llm_model_setting"
     __table_args__ = (
-        UniqueConstraint("provider_key", name="uq_stage2_provider_setting_key"),
+        UniqueConstraint("provider_key", name="uq_anomaly_llm_model_setting_key"),
         {"schema": "control"},
     )
 
@@ -617,6 +617,91 @@ class Stage2ProviderSetting(Base):
     provider_key = mapped_column(String(64), nullable=False)
     config_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
     secret_json_encrypted = mapped_column(Text, nullable=False, server_default=text("''"))
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class HearthlightSubmission(Base):
+    __tablename__ = "hearthlight_submission"
+    __table_args__ = (
+        UniqueConstraint("submission_id", name="uq_hearthlight_submission_id"),
+        {"schema": "control"},
+    )
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    submission_id = mapped_column(String(64), nullable=False)
+    status = mapped_column(String(32), nullable=False, server_default=text("'queued'"))
+    camera_id = mapped_column(Integer)
+    user_id = mapped_column(String(255))
+    client_key_hash = mapped_column(String(128))
+    prompt_raw_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
+    prompt_text = mapped_column(Text)
+    expected_results_text = mapped_column(Text)
+    metadata_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
+    result_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
+    provider_key = mapped_column(String(64))
+    provider_status = mapped_column(String(32), nullable=False, server_default=text("'skipped'"))
+    provider_error = mapped_column(Text)
+    processed_bucket = mapped_column(String(32), nullable=False, server_default=text("'640x480'"))
+    token_units_reserved = mapped_column(Integer, nullable=False, server_default=text("1"))
+    token_units_final = mapped_column(Integer, nullable=False, server_default=text("1"))
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class IngressClient(Base):
+    __tablename__ = "ingress_client"
+    __table_args__ = (
+        UniqueConstraint("client_key_hash", name="uq_ingress_client_key_hash"),
+        {"schema": "control"},
+    )
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    client_label = mapped_column(String(255), nullable=False)
+    client_key_hash = mapped_column(String(128), nullable=False)
+    enabled = mapped_column(Boolean, default=True, nullable=False)
+    quota_640x480 = mapped_column(Integer)
+    quota_1mp = mapped_column(Integer)
+    quota_2mp = mapped_column(Integer)
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class SubmissionAsset(Base):
+    __tablename__ = "submission_asset"
+    __table_args__ = {"schema": "control"}
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    submission_id = mapped_column(String(64), nullable=False)
+    asset_role = mapped_column(String(32), nullable=False, server_default=text("'original'"))
+    media_type = mapped_column(String(128))
+    object_key = mapped_column(Text, nullable=False)
+    checksum_sha256 = mapped_column(String(64), nullable=False)
+    size_bytes = mapped_column(Integer, nullable=False)
+    metadata_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
+    created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
+    is_deleted = mapped_column(Boolean, default=False, nullable=False)
+    deleted_at = mapped_column(DateTime)
+
+
+class UsageLedger(Base):
+    __tablename__ = "usage_ledger"
+    __table_args__ = {"schema": "control"}
+
+    id = mapped_column(Integer, primary_key=True, autoincrement=True)
+    submission_id = mapped_column(String(64), nullable=False)
+    client_key_hash = mapped_column(String(128))
+    bucket = mapped_column(String(32), nullable=False)
+    token_units = mapped_column(Integer, nullable=False)
+    event_type = mapped_column(String(32), nullable=False)
+    metadata_json = mapped_column(Text, nullable=False, server_default=text("'{}'"))
     created_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = mapped_column(DateTime, server_default=text("CURRENT_TIMESTAMP"))
     is_deleted = mapped_column(Boolean, default=False, nullable=False)

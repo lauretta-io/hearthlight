@@ -1,0 +1,8 @@
+key: smartlife_connection
+label: Smart Life Connection
+version: "0.8.2"
+provider: Smart Life
+description: Optional Smart Life connector plugin for Tuya-backed scenes and device automations.
+enabled_by_default: false
+components:
+  connector_file: connectors.yaml
