@@ -1,0 +1,29 @@
+{
+  "cameras": [
+    {
+      "id": "19073d51-e81a-45c7-ae90-01459b7ef8eb",
+      "name": "Camera 1 - Channel 4",
+      "source": "rtsp://192.168.0.12:554/unicast/c4/s1/live"
+    },
+    {
+      "id": "4d394bc1-13cb-414d-8eb8-e9a3ea0aabcf",
+      "name": "Camera 2 - Channel 6",
+      "source": "rtsp://192.168.0.12:554/unicast/c6/s1/live"
+    },
+    {
+      "id": "fcdad1f5-7889-4f2d-96ec-c345a6b918f6",
+      "name": "Camera 3 - Channel 8",
+      "source": "rtsp://192.168.0.12:554/unicast/c8/s1/live",
+      "building_exit": {
+        "id": "building-channel8-right",
+        "name": "Building exit \u2014 far-right doorway",
+        "region": [
+          0.91,
+          0.3,
+          1.0,
+          1.0
+        ]
+      }
+    }
+  ]
+}

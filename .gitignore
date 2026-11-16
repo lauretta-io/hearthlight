@@ -179,3 +179,19 @@ shared/model-zoo
 
 shared/ReID_Bench
 shared/reid-bench
+
+# Runtime media, model weights, private recovery data
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.gguf
+*.sqlite3
+*.dump
+*.pem
+*.key

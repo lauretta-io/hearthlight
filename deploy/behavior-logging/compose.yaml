@@ -1,0 +1,39 @@
+name: hearthlight-behavior
+services:
+  logger:
+    image: hearthlight-behavior:zone-capture-reviewed
+    build:
+      context: ../..
+      dockerfile: deploy/behavior-logging/Dockerfile
+    volumes:
+      - ../../var/behavior-logging/cameras.json:/config/cameras.json:ro
+      - ../../var/behavior-logging/models:/models
+      - ../../var/behavior-logging/logs:/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      BEHAVIOR_RUNTIME_URL: http://host.docker.internal:8787/api/behavior/runtime
+      BEHAVIOR_RUNTIME_TOKEN_FILE: /logs/behavior-runtime.token
+      BEHAVIOR_INTERVAL_SECONDS: "30"
+      BEHAVIOR_DEVICE: cuda
+      BEHAVIOR_SAMPLE_FRAMES: "16"
+      BEHAVIOR_SAMPLE_FPS: "2"
+      BEHAVIOR_FRAME_WIDTH: "1280"
+      BEHAVIOR_REID_PROTOTYPES: "8"
+      BEHAVIOR_REID_RELAXED_THRESHOLD: "0.76"
+      BEHAVIOR_CLIP_RETENTION_HOURS: "120"
+      BEHAVIOR_VLM_MODEL: Qwen/Qwen3-VL-2B-Instruct
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
+    mem_limit: 10g
+    cpus: 4
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 45s
+    restart: unless-stopped

@@ -1,0 +1,17 @@
+{
+  "database": "/var/lib/delos/person-history/person-activities.sqlite3",
+  "tenantId": "tenant-delos-main",
+  "cameras": {
+    "19073d51-e81a-45c7-ae90-01459b7ef8eb": "19073d51-e81a-45c7-ae90-01459b7ef8eb",
+    "4d394bc1-13cb-414d-8eb8-e9a3ea0aabcf": "4d394bc1-13cb-414d-8eb8-e9a3ea0aabcf",
+    "fcdad1f5-7889-4f2d-96ec-c345a6b918f6": "fcdad1f5-7889-4f2d-96ec-c345a6b918f6"
+  },
+  "sourceId": "hearthlight",
+  "gallery": "/var/lib/delos/person-history/person-gallery.sqlite3",
+  "theftAgent": {
+    "enabled": true,
+    "exitCameraId": "fcdad1f5-7889-4f2d-96ec-c345a6b918f6",
+    "exitId": "building-channel8-right",
+    "activatedAt": "2026-11-13T22:55:20.860272Z"
+  }
+}

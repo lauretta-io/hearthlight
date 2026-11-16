@@ -1,0 +1,37 @@
+{
+  "format_version": 1,
+  "huggingface": [
+    {
+      "repo": "google/siglip-base-patch16-224",
+      "revision": "7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed",
+      "url": "https://huggingface.co/google/siglip-base-patch16-224/tree/7fd15f0689c79d79e38b1c2e2e2370a7bf2761ed"
+    },
+    {
+      "repo": "Qwen/Qwen3-VL-2B-Instruct",
+      "revision": "89644892e4d85e24eaac8bacfd4f463576704203",
+      "url": "https://huggingface.co/Qwen/Qwen3-VL-2B-Instruct/tree/89644892e4d85e24eaac8bacfd4f463576704203"
+    }
+  ],
+  "files": [
+    {
+      "filename": "yolov8n.pt",
+      "url": "https://github.com/ultralytics/assets/releases/download/v8.3.0/yolov8n.pt",
+      "sha256": "f59b3d833e2ff32e194b5bb8e08d211dc7c5bdf144b90d2c8412c47ccfc83b36"
+    },
+    {
+      "filename": "transreid_market1501.pth",
+      "url": "https://drive.usercontent.google.com/download?id=11p4RjmpCGGAS-876VEt7OoFrUeHTUlyO&export=download&confirm=t",
+      "sha256": "843055293e160da027d152e1b9cccb75e34c73e0a9714204012c0f2825f9c4e5"
+    }
+  ],
+  "model_zoo": {
+    "repository": "https://github.com/lauretta-io/hearthlight_model_zoo.git",
+    "commit": "4bba4c57be76b18d40a54c8a2a45285d34f6eec2"
+  },
+  "base_image_source": {
+    "repository": "https://github.com/lauretta-io/dhs-passenger-detection.git",
+    "commit": "9775a7fc8d29817d91f8546c09fab8e44a6153a5",
+    "dockerfile": "ingestor/Dockerfile",
+    "image": "dhs-passenger-detection-ingestor:latest"
+  }
+}
