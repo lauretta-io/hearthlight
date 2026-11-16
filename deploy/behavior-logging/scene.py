@@ -160,7 +160,7 @@ def parse_scene(raw, request, frames):
                 issues.append("invalid_interactions")
             else:
                 pending_interactions = list(pending_interactions)
-            if not isinstance(events, list) or len(events) > 8:
+            if not isinstance(events, list) or len(events) > 16:
                 issues.append("invalid_activity_events")
                 events = []
             indices = {detection["frame_index"] for detection in catalog[track_id]["detections"]}
