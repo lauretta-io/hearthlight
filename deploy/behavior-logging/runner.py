@@ -5,6 +5,7 @@ No database, frontend, notification connectors, or external inference API is nee
 """
 from __future__ import annotations
 from zone_crossings import attach_crossings,ground_exit_descriptions
+from compact_context import model_input
 
 import argparse
 from datetime import datetime, timezone
@@ -130,7 +131,7 @@ def sample_frames(source):
 
 def scene_token_budget(request):
     # Long track catalogs otherwise truncate valid JSON and discard every report.
-    return min(8192, max(2048, 512 + 384*len(request.get('tracks', [])) + 128*len(request.get('zones', []))))
+    return min(8192, max(1536, 256 + 256*len(request.get('tracks', []))))
 
 
 class Models:
@@ -184,14 +185,15 @@ class Models:
         return {"description": self.describe(images, PROMPT), "visual_matches": self.visual_matches(images),
                 "frame_count": len(images), "model_revisions": self.revisions}
 
-    def describe(self, images, prompt, max_new_tokens=160):
+    def describe(self, images, prompt, max_new_tokens=160, frame_indices=None):
         import torch
         content = []
-        for index in range(len(images)):
+        indices = frame_indices if frame_indices is not None else list(range(len(images)))
+        for index in indices:
             content.extend([{"type": "text", "text": f"Frame {index}:"}, {"type": "image"}])
         content.append({"type": "text", "text": (
-            f"There are exactly {len(images)} frames, numbered 0 through {len(images) - 1}. "
-            "All frame indices in your answer must be within that range. " + prompt
+            f"There are exactly {len(images)} supplied images. Their original frame indices are {indices}. "
+            "Use only these original frame indices for evidence endpoints. Do not output tracking geometry or repeat the track catalog. " + prompt
         )})
         messages = [{"role": "user", "content": content}]
         text = self.vlm_processor.apply_chat_template(messages, add_generation_prompt=True)
@@ -278,13 +280,19 @@ def analyze_sample(detector, models, frames, sample, store, operations, reid=Non
     raw_output = analysis = None
     status, error_code = "inference_failed", None
     try:
-        model_request = {**{k:v for k,v in request.items() if k != "recorded_clip"}, "tracks": [{k: v for k, v in track.items() if not k.startswith("snapshot_")}
-                                               for track in request["tracks"]]}
-        raw_output = models.describe(labeled_frames(frames, request),
-                                     SCENE_PROMPT + configurable_prompt(sample.get("capture_settings")) + "\n\nINPUT_JSON:\n" + json.dumps(model_request),
-                                     max_new_tokens=scene_token_budget(request))
+        image_count = min(8,len(frames))
+        indices = sorted({round(i*(len(frames)-1)/max(1,image_count-1)) for i in range(image_count)})
+        model_request, model_catalog = model_input(request, indices)
+        labeled = labeled_frames(frames, model_catalog)
+        inference_started = time.monotonic()
+        raw_output = models.describe([labeled[i] for i in indices],
+                                     configurable_prompt(sample.get("capture_settings")) + "\n\nRequired output protocol:\n" + SCENE_PROMPT + "\n\nINPUT_JSON:\n" + json.dumps(model_request,separators=(',',':')),
+                                     max_new_tokens=scene_token_budget(model_catalog),frame_indices=indices)
+        emit(operations,state="scene_inference_timing",sample_id=sample['sample_id'],camera_id=sample['camera_id'],
+             seconds=round(time.monotonic()-inference_started,3),input_characters=len(json.dumps(model_request)),
+             supplied_images=len(indices),model_tracks=len(model_catalog['tracks']),raw_tracks=len(request['tracks']),output_characters=len(raw_output))
         status = "invalid_response"
-        analysis = parse_scene(raw_output, request, frames)
+        analysis = parse_scene(raw_output, model_catalog, frames)
         status = "analyzed"
     except (ValueError, TypeError) as error:
         error_code = type(error).__name__
@@ -292,7 +300,11 @@ def analyze_sample(detector, models, frames, sample, store, operations, reid=Non
     except Exception as error:
         error_code = type(error).__name__
         emit(operations, state="scene_inference_error", error_type=error_code, **sample)
-    analysis = attach_crossings(analysis, request)
+    if os.environ.get('BEHAVIOR_INDEPENDENT_EXIT_TRACKING') == '1':
+        if analysis is not None:
+            for report in analysis['persons']: report['exits'] = []
+    else:
+        analysis = attach_crossings(analysis, request)
     if analysis is not None and (analysis["errors"] or any(
             report["analysis_status"] != "analyzed" for report in analysis["persons"])):
         emit(operations, state="person_analysis_incomplete", issues=analysis["errors"], **sample)

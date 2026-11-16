@@ -21,7 +21,7 @@ ENV PYTHONPATH=/opt/model-zoo/src \
     PYTHONUNBUFFERED=1
 COPY shared/model_zoo/src/hearthlight_model_zoo /opt/model-zoo/src/hearthlight_model_zoo
 COPY deploy/behavior-logging/tracking.py deploy/behavior-logging/person_reid.py deploy/behavior-logging/rerank.py deploy/behavior-logging/activity.py deploy/behavior-logging/scene.py deploy/behavior-logging/history.py /opt/behavior/
-COPY deploy/behavior-logging/runner.py /opt/behavior/runner.py
+COPY deploy/behavior-logging/runner.py deploy/behavior-logging/exit_tracker.py deploy/behavior-logging/compact_context.py /opt/behavior/
 COPY deploy/behavior-logging/moments.py /opt/behavior/moments.py
 COPY deploy/behavior-logging/zone_crossings.py /opt/behavior/zone_crossings.py
 COPY deploy/behavior-logging/zone_explanations.py /opt/behavior/zone_explanations.py

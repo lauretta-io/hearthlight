@@ -34,7 +34,7 @@ docker compose -f deploy/behavior-logging/compose.yaml run --rm logger --smoke-t
     'transreid_market1501.pth.tmp' | sha256sum -c - &&
   mv transreid_market1501.pth.tmp transreid_market1501.pth
 )
-docker compose -f deploy/behavior-logging/compose.yaml up -d logger
+docker compose -f deploy/behavior-logging/compose.yaml up -d
 ```
 
 The smoke test uses synthetic images and writes `logs/smoke-test.json`. It is not

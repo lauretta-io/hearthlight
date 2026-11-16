@@ -1,7 +1,7 @@
 name: hearthlight-behavior
 services:
   logger:
-    image: hearthlight-behavior:retail-interaction-exit
+    image: hearthlight-behavior:continuous-exit-tracking
     build:
       context: ../..
       dockerfile: deploy/behavior-logging/Dockerfile
@@ -12,6 +12,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:
+      BEHAVIOR_INDEPENDENT_EXIT_TRACKING: "1"
       BEHAVIOR_RUNTIME_URL: http://host.docker.internal:8787/api/behavior/runtime
       BEHAVIOR_RUNTIME_TOKEN_FILE: /logs/behavior-runtime.token
       BEHAVIOR_INTERVAL_SECONDS: "30"
@@ -36,4 +37,29 @@ services:
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     stop_grace_period: 45s
+    restart: unless-stopped
+
+  exit-tracker:
+    image: hearthlight-behavior:continuous-exit-tracking
+    entrypoint: ["python", "/opt/behavior/exit_tracker.py"]
+    command: []
+    volumes:
+      - ../../var/behavior-logging/models:/models:ro
+      - ../../var/behavior-logging/logs:/logs
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      BEHAVIOR_RUNTIME_URL: http://host.docker.internal:8787/api/behavior/runtime
+      BEHAVIOR_RUNTIME_TOKEN_FILE: /logs/behavior-runtime.token
+      BEHAVIOR_REID_PROTOTYPES: "8"
+      BEHAVIOR_REID_RELAXED_THRESHOLD: "0.76"
+      BEHAVIOR_CLIP_RETENTION_HOURS: "120"
+      OMP_NUM_THREADS: "2"
+      MKL_NUM_THREADS: "2"
+    mem_limit: 4g
+    cpus: 4
+    init: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    stop_grace_period: 15s
     restart: unless-stopped

@@ -34,7 +34,7 @@ docker compose -f deploy/behavior-logging/compose.yaml build logger
 docker compose -f deploy/behavior-logging/compose.yaml run --rm --entrypoint python \
   -v "$PWD/deploy/behavior-logging/recovery:/recovery:ro" logger /recovery/pull-models.py
 docker compose -f deploy/behavior-logging/compose.yaml run --rm logger --smoke-test
-docker compose -f deploy/behavior-logging/compose.yaml up -d logger
+docker compose -f deploy/behavior-logging/compose.yaml up -d
 ```
 
 Start Delos with its `person-history.yml` overlay pointing at this host's logs
@@ -49,3 +49,14 @@ static recovery starts a fresh history and does not recreate prior identities.
 The model cache is reproducible; weights are not trained from this repository.
 Remote model availability/access and old dependency packages are external
 requirements. A checkpoint hash mismatch must be investigated, never ignored.
+
+## Continuous exit tracker
+
+The Compose deployment has two services: `logger` performs sampled VLM behavior
+analysis; `exit-tracker` performs independent continuous exit tracking using the
+shared camera configuration, model cache and history directory. Start both with
+`docker compose -f deploy/behavior-logging/compose.yaml up -d`. Check them with
+`docker compose -f deploy/behavior-logging/compose.yaml ps` and inspect errors with
+`docker compose -f deploy/behavior-logging/compose.yaml logs --tail 100 logger exit-tracker`.
+The runtime API must be reachable on the configured host/port, and the shared token
+and camera credentials must be valid before either service can ingest cameras.

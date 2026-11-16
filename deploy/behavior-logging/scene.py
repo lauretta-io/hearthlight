@@ -52,15 +52,16 @@ Use prior_state, person_description and behavior_context as historical context, 
 proof of current activity. For an existing object optionally copy its reference_key
 exactly; use its existing item and appearance for endings. Do not invent references.
 Possible changes must retain certainty:unclear. Never turn disappearance into release.
-Include every configured zone by name in scene_description: purpose, relevant layout,
-current activity or no observed activity, and outbound direction for exit zones.
-Use supplied zone_reports for measured sampled occupancy and tracked crossings.
-Zone descriptions are fixed context; counts are observations. Do not infer hand contact
-from a tracked foot point in a zone. Black camera borders are not doors or exits.
-Tracker zone crossings are included independently. Optional visual exits need exit_id
-from building_exit, direction:outbound, certainty:clear, start_frame, end_frame and
-evidence of the visible crossing. Standing near a door or disappearing is insufficient.
-Keep descriptions/evidence short, avoid repeated sentences and technical frame names.
+scene_description must be one short sentence about visible activity. Mention a zone
+name only when relevant; do not repeat zone configuration, geometry, counts or track
+summaries. Those are recorded by the tracker. Black camera borders are not exits.
+Always return exits:[]; the independent directional tracker handles exits.
+Keep each person description and evidence field under 15 words. Do not repeat prior
+history or narrate every frame. Use [] for unchanged or unsupported candidates.
+An object contact entry must include all fields, for example:
+{"target_kind":"object","interaction_type":"touch","actor_track_id":1,"certainty":"clear","item":"keyboard","appearance":"black","evidence":"Hand contacts keyboard.","start_frame":0,"end_frame":15}
+Use the actual supplied actor and visible original frame indices, not these example values.
+Return one persons entry for EVERY supplied track_id, and persons:[] if tracks is empty.
 Return JSON only, without Markdown or legacy events/interactions fields.'''
 
 

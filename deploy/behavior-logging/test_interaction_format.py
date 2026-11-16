@@ -9,6 +9,6 @@ class InteractionFormatTests(unittest.TestCase):
   person={**value,'target_kind':'person','target_track_id':2};self.assertEqual(normalize_object_kind(person),person)
   self.assertEqual(normalize_object_kind({**value,'item':'person'}),{**value,'item':'person'})
  def test_multi_track_response_budget_scales_and_is_bounded(self):
-  self.assertEqual(scene_token_budget({'tracks':[{}],'zones':[]}),2048)
+  self.assertEqual(scene_token_budget({'tracks':[{}],'zones':[]}),1536)
   self.assertGreater(scene_token_budget({'tracks':[{}]*11,'zones':[{}]}),2048)
   self.assertEqual(scene_token_budget({'tracks':[{}]*100,'zones':[{}]*20}),8192)

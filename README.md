@@ -594,3 +594,12 @@ For more detail, see `docs/testing.md` and `docs/containers.md`.
   frontend test execution is still blocked until the npm installation is fixed.
 - Container preflight can be checked without Docker startup by running
   `python3 scripts/container_preflight.py`.
+
+## Delos demo setup
+
+Use the private [demo_config setup guide](https://github.com/lauretta-io/demo_config#readme)
+to recreate the pinned demo workspace, static settings and model references.
+The [recorder recovery instructions](deploy/behavior-logging/recovery/README.md)
+cover model download, shared runtime token, GPU setup and startup of both the
+behavior logger and continuous exit tracker. Private credentials and historical
+databases must be configured or restored separately.
