@@ -25,7 +25,7 @@ def prune_clips(database):
 
 
 def capture_clip(frames, request, database):
-    if not any(t.get('detections') for t in request['tracks']):
+    if not frames:
         return
     fps = float(request['sample_fps'])
     if fps <= 0 or len(frames) < 2:
@@ -47,7 +47,7 @@ def capture_clip(frames, request, database):
             raise RuntimeError('sample_clip_encoding_failed')
         os.chmod(temporary,0o600)
         temporary.replace(path)
-        index = min(d['frame_index'] for t in request['tracks'] for d in t.get('detections', []))
+        index = min((d['frame_index'] for t in request['tracks'] for d in t.get('detections', [])),default=0)
         frames[index].convert('RGB').save(path.with_suffix('.jpg'),format='JPEG',quality=80)
         os.chmod(path.with_suffix('.jpg'),0o600)
     finally:

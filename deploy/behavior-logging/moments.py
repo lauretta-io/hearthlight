@@ -16,7 +16,8 @@ are not behavior changes. Possession and interaction transitions are independent
 verified from the supplied structured evidence. Never add actions or object IDs.
 Evaluate supplied alert_rules against the aggregate, including prior possessions
 and current confirmed events. A rule match needs supporting evidence, not just a
-similar description or historical action. For theft_exit, require a current clear
+similar description or historical action. For theft_exit with condition.retailInteractionExit.enabled, a current confirmed outbound exit plus earlier clear merchandise/display interaction or contact with an item-holding fixture/area is sufficient. No pickup or continuing possession is required for the contact path. A newly held item matching earlier camera evidence can also qualify for review without a pickup. Contact ending or returning an item does not erase this contact history. Mere presence in a zone is not interaction.
+For legacy theft_exit without that policy, require a current clear
 outbound exit through the configured exit AND either an observed pickup still carried
 or, when condition.fixtureInteractionExit.enabled is true, a confirmed prior table
 or shelf interaction since the previous recorded exit. The current exit must be
@@ -26,6 +27,7 @@ contact need not remain active and requires no possession. Mere proximity is ins
 first seen carrying, bag removal, disappearance or being near the doorway alone
 are not enough. This is an observable rule pattern, not a finding of ownership
 or criminal intent. Respect requirePoi using person_flags.isPoi when supplied.
+Use current confirmed exits and measured track_zone_motion for exit statements. Narrative descriptions alone do not establish exit direction or a crossing. Never describe roomward movement as an outbound exit.
 Return only IDs supplied in alert_rules.
 Return exactly JSON: {"summary": "concise current behavior", "behavior_changed": true|false, "matched_rule_ids": []}.
 Preserve meaningful changes such as stationary to moving. Keep summary to one short sentence of current behavior, without rule commentary, crime commentary, frame names or IDs.'''
@@ -59,7 +61,7 @@ def confirmed(row):
 
 def signature(row):
     return '|'.join([row.get('target_kind', 'object'), row.get('interaction_type', row.get('action', '')),
-                     object_key(row), str(row.get('target_person_id', row.get('target_track_id', '')))])
+                     object_key(row), str(row.get('target_person_id', row.get('target_track_id', ''))),str(row.get('interaction_area_id',''))])
 
 
 def existing_context(db, persons, before, camera_id=None):
@@ -147,6 +149,10 @@ def prepare(db, sample, track, report, scene_description, evaluate_text, persons
     interaction_states = {key: dict(value) for key, value in (previous or {}).get('interaction_states', {}).items()}
     current_contacts = {object_key(row): row for row in interactions if row.get('target_kind') == 'object'}
     for key, row in current_contacts.items():
+        old=interaction_states.get(key)
+        if old and old.get('status')!='active':
+            changes.append({'kind':'interaction_change','item':key,'current':'active','source':'confirmed_contact'})
+            if row not in changed_interactions:changed_interactions.append(row)
         interaction_states[key] = {'item': row.get('item'), 'appearance': row.get('appearance'),
             'type': row.get('interaction_type'), 'status': 'active', 'missed_logs': 0,
             'last_observed_at': sample['sampled_at'], 'scene_id': sample['sample_id']}
@@ -190,7 +196,7 @@ def prepare(db, sample, track, report, scene_description, evaluate_text, persons
                'person_flags': sample.get('person_flags', {}).get(person_id, {}),
                'camera_description': sample.get('scene_context', {}).get('camera_description', ''),
                'scene_description': scene_description, 'zones': sample.get('scene_context', {}).get('zones', []),
-               'zone_reports': sample.get('zone_reports', []), 'alert_rules': sample.get('alert_rules', []),
+               'zone_reports': sample.get('zone_reports', []), 'track_zone_motion':report.get('zone_motion',[]), 'alert_rules': sample.get('alert_rules', []),
                'possessions_before': (previous or {}).get('possessions', {}),
                'possessions_after': possessions, 'interaction_states': interaction_states, 'structured_changes': changes,
                'prior_interactions': [row for row in track.get('prior_state', []) if row.get('target_kind') == 'object' and is_fixed_fixture(row.get('item'))],
@@ -214,9 +220,19 @@ def prepare(db, sample, track, report, scene_description, evaluate_text, persons
     except Exception as error:
         return {**base, 'evaluation_status': 'failed', 'keyframe': False,
                 'error_code': type(error).__name__, 'moment_id': None}
+    if not report.get('exits') and re.search(r'(?:exit(?:s|ed|ing)?|leav(?:e|es|ing)|left)\s+(?:the\s+)?(?:building|premises|room)|through\s+(?:the\s+)?[\"\']?(?:exit|leave)\s+zone',assessment['summary'],re.I):
+        motion=report.get('zone_motion',[])
+        if any(row.get('motion')=='toward_room' for row in motion):
+            assessment['summary']='Tracked movement is toward the room; no outbound exit-zone crossing was recorded in this sample.'
+        elif any(row.get('motion')=='toward_exit' for row in motion):
+            assessment['summary']='Tracked movement is toward the exit zone; no complete outbound crossing was recorded in this sample.'
+        else:
+            assessment['summary']='No outbound exit-zone crossing was recorded in this sample.'
     if previous is None or assessment['behavior_changed']:
         changes.append({'kind': 'behavior_change'})
-    evidence_frames = sorted({row[key] for row in [*changed_events, *changed_interactions, *report.get('exits', [])]
+    end_evidence=report.get('state_changes',{}).get('ended_interactions',[])
+    uncertain_evidence=[row for rows in report.get('state_changes',{}).values() for row in rows if not confirmed(row)]
+    evidence_frames = sorted({row[key] for row in [*changed_events, *changed_interactions, *end_evidence, *uncertain_evidence, *report.get('exits', [])]
                               for key in ('start_frame', 'end_frame') if type(row.get(key)) is int})
     keyframe_frame = evidence_frames[-1] if evidence_frames else track.get('snapshot_frame')
     keyframe_timestamp = sample['sampled_at']
@@ -278,6 +294,7 @@ def prepare_reports(db, sample, request, analysis, evaluate_text, aliases_for=No
         reports = group['reports']
         combined = {'description': ' '.join(dict.fromkeys(row['description'] for row in reports))[:4000],
                     'analysis_status': 'analyzed' if all(row.get('analysis_status') == 'analyzed' for row in reports) else 'partial'}
+        combined['zone_motion']=[motion for row in reports for motion in row.get('zone_motion',[])]
         combined['state_changes']=empty_changes()
         for category in combined['state_changes']:
             values={json.dumps(event,sort_keys=True):event for row in reports for event in row.get('state_changes',{}).get(category,[])}

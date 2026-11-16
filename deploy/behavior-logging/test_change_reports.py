@@ -43,6 +43,25 @@ class ChangeReportTests(unittest.TestCase):
   self.assertEqual(two['possessions']['bottle|white']['state'],'with_person')
   self.assertEqual(two['state_changes']['ended_possessions'][0]['certainty'],'unclear')
   self.assertTrue(two['keyframe']);db.close()
+ def test_actor_track_id_is_explicit_and_must_match_the_catalog_actor(self):
+  value=self.interaction(actor_track_id=1,actor='person')
+  result=self.parse(self.report(new_interactions=[value]))
+  self.assertEqual(result['interactions'][0]['actor'],'target')
+  bad=self.parse(self.report(new_interactions=[{**value,'actor_track_id':2}]))
+  self.assertEqual(bad['interactions'],[])
+ def test_same_evidence_cannot_be_both_start_and_end(self):
+  value=self.interaction()
+  result=self.parse(self.report(new_interactions=[value],ended_interactions=[value]))
+  self.assertEqual(len(result['interactions']),1)
+  self.assertEqual(result['state_changes']['ended_interactions'],[])
+ def test_ongoing_contact_cannot_silently_clear_state_when_misfiled_as_an_end(self):
+  value=self.interaction(evidence="The person's hand is on the laptop keyboard.",item='laptop',appearance='black')
+  result=self.parse(self.report(ended_interactions=[value]))
+  self.assertEqual(result['state_changes']['ended_interactions'],[])
+  self.assertEqual(len(result['state_changes']['new_interactions']),1)
+ def test_unsupported_clear_end_stays_uncertain_candidate(self):
+  result=self.parse(self.report(ended_interactions=[self.interaction(evidence='The person is beside the shelf.')]))
+  self.assertEqual(result['state_changes']['ended_interactions'][0]['certainty'],'unclear')
  def test_explicit_contact_end_creates_keyframe_and_ends_active_contact(self):
   db=sqlite3.connect(':memory:');initialize(db)
   track=self.request['tracks'][0]

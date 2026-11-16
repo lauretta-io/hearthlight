@@ -31,6 +31,12 @@ class ClipTests(unittest.TestCase):
             capture_clip([],request,Path(folder)/'db.sqlite3')
             self.assertNotIn('recorded_clip',request)
 
+    def test_camera_scene_remains_reviewable_when_no_person_was_detected(self):
+        with TemporaryDirectory() as folder:
+            request={'camera_id':'empty-camera','sample_fps':2,'sampled_at':'2026-11-16T12:00:00+00:00','tracks':[]}
+            capture_clip([Image.new('RGB',(64,64),'white')]*2,request,Path(folder)/'db.sqlite3')
+            self.assertIn('recorded_clip',request)
+            self.assertTrue((Path(folder)/'person-clips'/request['recorded_clip']['file']).is_file())
     def test_expiry_uses_the_selected_thirty_day_policy_and_preserves_newer_footage(self):
         with TemporaryDirectory() as folder:
             root=Path(folder)/'person-clips'/'a'

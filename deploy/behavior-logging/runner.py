@@ -4,7 +4,7 @@ This deliberately does not use the catalog's no-op detector or anomaly fallbacks
 No database, frontend, notification connectors, or external inference API is needed.
 """
 from __future__ import annotations
-from zone_crossings import attach_crossings
+from zone_crossings import attach_crossings,ground_exit_descriptions
 
 import argparse
 from datetime import datetime, timezone
@@ -245,6 +245,7 @@ def analyze_sample(detector, models, frames, sample, store, operations, reid=Non
                     merges=gallery.bank.merge_window(time.time(),sample['sample_id'],active_ids={p for p in person_ids if p})
                     person_ids=[gallery.bank.resolve(p) if p else None for p in person_ids]
                 if merges:emit(operations,state="reid_identities_merged",merge_count=len(merges),**sample)
+                emit(operations,state="identity_merge_check_completed",merge_count=len(merges),**sample)
             gallery.record_tracks(sample, tracks, person_ids)
         except Exception as error:
             emit(operations, state="person_reid_error", error_type=type(error).__name__, **sample)
@@ -297,6 +298,7 @@ def analyze_sample(detector, models, frames, sample, store, operations, reid=Non
         emit(operations, state="person_analysis_incomplete", issues=analysis["errors"], **sample)
     if analysis is not None:
         refine_reports(models, frames, request, analysis)
+        analysis=ground_exit_descriptions(analysis,request)
         moment_sample = {**sample, "activity_model": models.vlm_id,
                          "activity_model_revision": models.revisions[models.vlm_id]}
         aliases_for = gallery.bank.group if gallery is not None and isinstance(getattr(gallery, "bank", None), FeatureBank) else None

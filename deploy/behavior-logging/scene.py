@@ -7,6 +7,7 @@ from zone_explanations import zone_reports
 from exit_observations import parse_exits
 from activity import parse_activity
 from interactions import parse_interactions
+from interaction_areas import annotate_contact
 from interaction_format import normalize_object_kind
 from change_reports import change_inputs,empty_changes,RELEASES
 
@@ -21,15 +22,23 @@ that might be a new start. ended_interactions: evidence of contact ending.
 new_possessions: first-seen holding/carrying or visible acquisition of an object.
 ended_possessions: visible put_down/give, or uncertain loss-of-sight candidates.
 An object/person interaction entry requires target_kind (object or person),
-interaction_type, actor (target or unclear), certainty (clear or unclear), evidence,
-start_frame and end_frame. target means THIS track, not a different visible person.
+interaction_type, actor_track_id (integer equal to THIS track_id), certainty (clear or unclear), evidence,
+start_frame and end_frame. Use actor:"unclear" only when attribution is ambiguous. The numeric actor_track_id explicitly names the actor; never use actor:"person".
 Object interactions also need item and appearance of the OBJECT, not clothing.
 Their target_kind is always the literal "object", never "laptop", "table" or "shelf".
-Object interaction types: touch, use, open, close, move. Person interaction types:
+Object interaction types: touch, use, open, close, move.
+For visible contact with merchandise or fixtures in a configured itemHoldingArea,
+include interaction_area_id equal to that supplied zone ID and interaction_target_role
+as displayed_item or item_holding_area. Tag only actual handling/touch/use of the
+area or its displayed objects, never mere presence or personal-item use nearby.
+These interactions can qualify for an exit review without a pickup or possession. The same area/role fields can be attached to a held/handled displayed item in new_possessions when the display association is visible; do not tag personal belongings merely used nearby.
+Do not invent display zones or tag an object merely because it is near a person. Person interaction types:
 talk, gesture, approach, follow, physical_contact, give, receive, help. Person targets
 need target_track_id from the supplied catalog; never invent an off-camera counterpart.
 For ended_interactions use the original interaction_type (such as touch or use).
-Each possession entry requires action, item, appearance, actor, certainty, evidence,
+Ended means visible withdrawal, stopping use or separation. A hand still on a keyboard
+is ongoing contact in new_interactions, NEVER an ended interaction.
+Each possession entry requires action, item, appearance, actor_track_id, certainty, evidence,
 start_frame and end_frame. Start actions: hold, carry, pick_up, receive,
 put_in_bag, take_out_of_bag. End actions: put_down, give. Use no_longer_visible with
 certainty:unclear when an item is occluded or missing; this is NOT confirmed release.
@@ -180,6 +189,12 @@ def parse_scene(raw, request, frames):
                     parsed = parse_activity(json.dumps({"description": report["description"], "events": [event]}), len(frames), frames)
                     if any(item["start_frame"] not in indices or item["end_frame"] not in indices for item in parsed["events"]):
                         raise ValueError("event_outside_person_track")
+                    if event.get('interaction_area_id') is not None:
+                        try:
+                            scoped=annotate_contact([{**row,'target_kind':'object'} for row in parsed['events']],event,request,catalog[track_id])
+                            for row,location in zip(parsed['events'],scoped):
+                                row['interaction_area_id']=location['interaction_area_id'];row['interaction_target_role']=location['interaction_target_role']
+                        except ValueError as error:issues.append(str(error))
                     valid_events.extend(parsed["events"])
                     for item in parsed["events"]:
                         category="ended_possessions" if item["action"] in RELEASES or event in inputs["ended_possessions"] else "new_possessions"
@@ -194,6 +209,8 @@ def parse_scene(raw, request, frames):
                 interaction = normalize_object_kind(interaction)
                 try:
                     accepted=parse_interactions([interaction], track_id, catalog, frames)
+                    try:accepted=annotate_contact(accepted,interaction,request,catalog[track_id])
+                    except ValueError as error:issues.append(str(error))
                     valid_interactions.extend(accepted)
                     state_changes["new_interactions"].extend(accepted)
                 except (ValueError, TypeError) as error:

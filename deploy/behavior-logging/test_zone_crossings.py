@@ -1,5 +1,5 @@
 import unittest
-from zone_crossings import crossing_events,attach_crossings
+from zone_crossings import crossing_events,attach_crossings,ground_exit_descriptions
 
 class ZoneCrossingTests(unittest.TestCase):
  def request(self,xs=None):
@@ -28,5 +28,24 @@ class ZoneCrossingTests(unittest.TestCase):
   analysis={'persons':[{'track_id':1,'description':'Walking','events':[],'exits':[{'exit_id':'building-exit'}]}]}
   report=attach_crossings(analysis,self.request())['persons'][0]
   self.assertEqual(len(report['exits']),1);self.assertEqual(report['exits'][0]['evidence_method'],'tracked_zone_crossing')
+
+class DirectionalGateTests(unittest.TestCase):
+ def test_visible_passage_inside_oversized_area_crosses_calibrated_lines(self):
+  values=[.785,.802,.818,.830,.823,.827,.813,.816,.828,.843,.905]
+  request=ZoneCrossingTests().request(values)
+  request['zones'][0].update(entryGate=.4,exitGate=.7)
+  result=crossing_events(request)
+  self.assertEqual(len(result[1]),1);self.assertEqual(result[1][0]['end_frame'],10)
+  request['tracks'][0]['detections'].reverse()
+  for i,d in enumerate(request['tracks'][0]['detections']):d['frame_index']=i
+  self.assertEqual(crossing_events(request),{})
+
+class DirectionGroundingTests(unittest.TestCase):
+ def test_roomward_tracks_cannot_be_described_as_outbound(self):
+  request=ZoneCrossingTests().request([.9,.85,.8,.7,.6])
+  value={'persons':[{'track_id':1,'description':'A person walks left to right through the Leave zone.','exits':[]}]}
+  report=ground_exit_descriptions(value,request)['persons'][0]
+  self.assertIn('right to left',report['description']);self.assertIn('toward the room',report['description'])
+  self.assertIn('left to right',report['model_description_before_zone_check'])
 
 if __name__=='__main__':unittest.main()

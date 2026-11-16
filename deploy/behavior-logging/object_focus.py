@@ -18,17 +18,17 @@ Return exactly JSON {"description":"brief visible object handling","new_interact
 All four arrays are mandatory and contain proposed changes; continuing visible contact
 is a candidate in new_interactions and will be deduplicated. Put visible contact endings
 in ended_interactions using the original touch/use type. A confirmed end needs two
-distinct frames. In ended_possessions use put_down/give for visible release, or
+distinct frames and evidence of withdrawal/stopping/separation. A hand still on a keyboard is ongoing contact in new_interactions, never ended_interactions. In ended_possessions use put_down/give for visible release, or
 no_longer_visible with certainty:unclear for loss of view. Do not infer release
 from absence. Do not return legacy events/interactions fields.
 For possession events action must be pick_up, hold, carry, put_down, put_in_bag,
 take_out_of_bag, give or receive. Each event needs action,item,appearance,start_frame,
-end_frame,actor (target or unclear),certainty (clear or unclear),evidence.
+end_frame,actor_track_id (the supplied integer),certainty (clear or unclear),evidence.
 Every object interaction MUST include ALL these keys with exact allowed values:
-{"target_kind":"object","interaction_type":"touch","item":"table","appearance":"white flat surface","start_frame":0,"end_frame":0,"actor":"target","certainty":"clear","evidence":"The visible hand contacts the table surface."}
+{"target_kind":"object","interaction_type":"touch","item":"table","appearance":"white flat surface","start_frame":0,"end_frame":0,"actor_track_id":1,"certainty":"clear","evidence":"The visible hand contacts the table surface."}
 This is a format example, NOT evidence that this object/action appears in the images.
-Choose interaction_type from touch,use,open,close,move. actor must be target or unclear;
-certainty must be clear or unclear. Do not omit actor or certainty. Include item,
+Choose interaction_type from touch,use,open,close,move. actor_track_id must be the supplied track integer;
+certainty must be clear or unclear. Do not omit actor_track_id or certainty. Include item,
 appearance, evidence and both local frame indices. No person interactions.
 Use local frame indices, beginning at zero. Unclear evidence must not be clear.
 Return empty arrays when no object handling is visible. JSON only.'''
@@ -38,6 +38,8 @@ def needed(track, report):
     if not report.get('description') or not track.get('detections'):
         return False
     events = report.get('events', [])
+    if any(row.get('interaction_area_id') for row in events+report.get('interactions',[])):
+        return False
     for event in events:
         item = str(event.get('item', '')).lower()
         appearance = str(event.get('appearance', '')).lower()
@@ -54,8 +56,9 @@ def refine(models, frames, track, report, scene_description=''):
     positions = sorted({round(i * (len(detections) - 1) / min(5, len(detections) - 1)) for i in range(min(6, len(detections)))}) if len(detections) > 1 else [0]
     selected = [(detections[i]['frame_index'], detections[i]['box_xyxy']) for i in positions]
     crops = activity_images(frames, selected)
-    prompt = PROMPT + '\nScene context (not evidence of handling):\n' + scene_description[:2000]
+    prompt = PROMPT.replace('\"actor_track_id\":1',f'\"actor_track_id\":{track["track_id"]}') + f'\nThe actor_track_id for this boxed track is {track["track_id"]}. Include this integer as actor_track_id on every entry. Do not use actor:"person".\n' + '\nScene context (not evidence of handling):\n' + scene_description[:2000]
     raw = models.describe(crops, prompt, max_new_tokens=768)
+    models.last_object_review_output=raw
     text = raw.strip()
     if text.startswith('```'):
         text = text.split('\n', 1)[1].rsplit('```', 1)[0].strip()
@@ -127,7 +130,7 @@ def refine_reports(models, frames, request, analysis):
                 continue
             preserved=[row for row in report.get('events',[]) if row.get('action') in RELEASES]
             report['events'] = list({json.dumps(row,sort_keys=True):row for row in preserved+result['events']}.values())
-            report['interactions'] = [row for row in report.get('interactions', []) if row.get('target_kind') == 'person'] + result['interactions']
+            report['interactions'] = [row for row in report.get('interactions', []) if row.get('target_kind') == 'person' or row.get('interaction_area_id')] + result['interactions']
             changes=report.setdefault('state_changes',empty_changes())
             for category in ('ended_interactions','ended_possessions'):
                 changes[category]=list({json.dumps(row,sort_keys=True):row for row in changes.get(category,[])+result['state_changes'][category]}.values())
@@ -137,6 +140,6 @@ def refine_reports(models, frames, request, analysis):
                 report['description'] = (report['description'] + ' ' + result['description'])[:4000]
             report['object_refinement'] = {'status': 'evaluated', **result}
         except Exception as error:
-            report['object_refinement'] = {'status': 'failed', 'error_code': type(error).__name__}
+            report['object_refinement'] = {'status': 'failed', 'error_code': type(error).__name__,'validation_issue':str(error)[:200],'raw_model_output':getattr(models,'last_object_review_output','')[:8000]}
         results.append(report['object_refinement'])
     return results

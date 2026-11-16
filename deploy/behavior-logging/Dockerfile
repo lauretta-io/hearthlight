@@ -27,6 +27,7 @@ COPY deploy/behavior-logging/zone_crossings.py /opt/behavior/zone_crossings.py
 COPY deploy/behavior-logging/zone_explanations.py /opt/behavior/zone_explanations.py
 COPY deploy/behavior-logging/interaction_format.py /opt/behavior/interaction_format.py
 COPY deploy/behavior-logging/change_reports.py /opt/behavior/change_reports.py
+COPY deploy/behavior-logging/interaction_areas.py /opt/behavior/interaction_areas.py
 COPY deploy/behavior-logging/object_focus.py deploy/behavior-logging/review_objects.py deploy/behavior-logging/object_semantics.py /opt/behavior/
 COPY deploy/behavior-logging/interactions.py /opt/behavior/interactions.py
 COPY deploy/behavior-logging/snapshots.py /opt/behavior/snapshots.py

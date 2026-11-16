@@ -29,8 +29,9 @@ def zone_explanation(reports):
         l,t,r,b=zone['region']
         geometry=f"bounds left {l:.0%}, top {t:.0%}, right {r:.0%}, bottom {b:.0%}"
         heading=f"{zone['name']} ({'exit' if zone['kind']=='exit' else 'scene area'}): {zone['description']}"
+        if zone.get('itemHoldingArea'):heading+=' Item-holding/merchandise area.'
         if zone['kind']=='exit':
-            heading+=f" Outbound: {DIRECTIONS[zone['outboundDirection']]}."
+            heading+=f" Outbound: {DIRECTIONS[zone['outboundDirection']]}. Directional lines: entry {zone.get('entryGate',0):.0%}, exit {zone.get('exitGate',1):.0%} through the area."
         observed=(f"Occupied in {zone['occupied_frames']}/{zone['frame_count']} sampled frames; {zone['outbound_crossings']} outbound crossings."
                   if zone['tracking_status']=='ready' else 'Zone tracking was unavailable for this sample.')
         lines.append(f"{heading} Area: {geometry}. {observed}")

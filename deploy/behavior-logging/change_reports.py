@@ -1,6 +1,9 @@
 """Explicit proposed starts/ends; the state reducer confirms actual transitions."""
 KEYS=('new_interactions','ended_interactions','new_possessions','ended_possessions')
+import json
+import re
 from object_semantics import is_fixed_fixture
+from interaction_format import normalize_object_kind
 RELEASES={'put_down','give'}
 
 
@@ -26,6 +29,12 @@ def change_inputs(report,track):
         for value in rows[:8]:
             if not isinstance(value,dict):issues.append('invalid_'+key);continue
             row=dict(value);reference=row.get('reference_key')
+            actor_id=row.get('actor_track_id')
+            if actor_id is not None:
+                if isinstance(actor_id,str) and actor_id.isdecimal():actor_id=int(actor_id)
+                if type(actor_id) is not int or actor_id!=track.get('track_id'):
+                    issues.append('change_actor_track_mismatch');continue
+                if row.get('actor')!='unclear':row['actor']='target'
             if reference is not None:
                 if not isinstance(reference,str) or reference not in prior:
                     issues.append('unrecognized_change_reference');continue
@@ -40,6 +49,33 @@ def change_inputs(report,track):
                 issues.append('release_must_be_in_ended_possessions');continue
             valid.append(row)
         values[key]=valid
+    if explicit:
+        endings=[]
+        for row in values['ended_interactions']:
+            evidence=str(row.get('evidence','')).lower()
+            ending=bool(re.search(r"\b(away|withdraw|withdrew|stop|stops|stopped|cease|ceased|ended|ends|finish|finished|release|released|separat|disengag)\w*\b|no longer|(?:hand|fingers?) (?:leaves?|left) (?:the )?(?:shelf|table|keyboard|surface)|hand.{0,30}(off|clear)|lift.{0,20}(off|clear)",evidence))
+            continuing=bool(re.search(r"\b(is|are) (using|typing|touching|operating)|hand.{0,40}\b(on|touching|contact)|continues? (to )?(use|touch|typ)",evidence))
+            if not ending and continuing:
+                values['new_interactions'].append(row)
+                issues.append('ongoing_contact_misfiled_as_end')
+            else:
+                if not ending and row.get('certainty')=='clear':
+                    row={**row,'certainty':'unclear'}
+                    issues.append('end_evidence_incomplete')
+                endings.append(row)
+        values['ended_interactions']=endings
+    fields=('target_kind' ,'interaction_type','item','appearance','actor','certainty','start_frame','end_frame','evidence')
+    def identity(row):
+        row=normalize_object_kind(row)
+        return json.dumps([row.get(field) for field in fields],sort_keys=True)
+    values['new_interactions']=list({identity(row):row for row in values['new_interactions']}.values())
+    starts={identity(row) for row in values['new_interactions']}
+    endings=[]
+    for row in values['ended_interactions']:
+        if identity(row) in starts:
+            issues.append('duplicated_start_end_evidence')
+        else:endings.append(row)
+    values['ended_interactions']=endings
     return values,issues
 
 

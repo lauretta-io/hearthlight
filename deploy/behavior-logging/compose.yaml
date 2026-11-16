@@ -1,7 +1,7 @@
 name: hearthlight-behavior
 services:
   logger:
-    image: hearthlight-behavior:zone-capture-reviewed
+    image: hearthlight-behavior:retail-interaction-exit
     build:
       context: ../..
       dockerfile: deploy/behavior-logging/Dockerfile

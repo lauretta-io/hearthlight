@@ -259,6 +259,7 @@ class ActivityStore:
                     "moment": report.get("moment"),
                     "object_refinement": report.get("object_refinement"),
                     "state_changes": report.get("state_changes", {}),
+                    "zone_motion":report.get("zone_motion",[]),"zone_grounding":report.get("zone_grounding"),"model_description_before_zone_check":report.get("model_description_before_zone_check"),
                     "analysis_status": report["analysis_status"], "error_code": report["error_code"],
                     "detections": track["detections"],
                     "snapshot_file": track.get("snapshot_file"),
